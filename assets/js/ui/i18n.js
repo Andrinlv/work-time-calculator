@@ -1,0 +1,1214 @@
+/* ==========================================================================
+   ZEITKONTO — Sprachen
+   --------------------------------------------------------------------------
+   Deutsch ist die Leitsprache; Englisch, Französisch und Italienisch sind
+   vollständig gepflegt. Fehlt ein Schlüssel, greift automatisch Deutsch.
+   Platzhalter im Format {name} werden von t() ersetzt.
+   ========================================================================== */
+(function (root, factory) {
+  if (typeof module === "object" && module.exports) module.exports = factory();
+  else { root.ZK = root.ZK || {}; root.ZK.I18n = factory(); }
+})(typeof self !== "undefined" ? self : globalThis, function () {
+  "use strict";
+
+  var DICT = {};
+
+  /* ==================================================================== */
+  /* DEUTSCH                                                               */
+  /* ==================================================================== */
+  DICT.de = {
+    "lang.name": "Deutsch",
+    "app.name": "Zeitkonto",
+    "app.tagline": "Arbeitszeit, die sich selbst erklärt",
+
+    "nav.today": "Heute",
+    "nav.calendar": "Kalender",
+    "nav.week": "Woche",
+    "nav.stats": "Statistik",
+    "nav.reports": "Berichte",
+    "nav.achievements": "Erfolge",
+    "nav.settings": "Einstellungen",
+    "nav.section.time": "Zeit",
+    "nav.section.insight": "Auswertung",
+    "nav.section.system": "System",
+    "nav.menu": "Menü",
+
+    "common.save": "Speichern",
+    "common.saved": "Gespeichert",
+    "common.cancel": "Abbrechen",
+    "common.delete": "Löschen",
+    "common.close": "Schliessen",
+    "common.add": "Hinzufügen",
+    "common.remove": "Entfernen",
+    "common.reset": "Zurücksetzen",
+    "common.today": "Heute",
+    "common.yesterday": "Gestern",
+    "common.tomorrow": "Morgen",
+    "common.now": "Jetzt",
+    "common.all": "Alle",
+    "common.none": "Keine",
+    "common.ok": "OK",
+    "common.yes": "Ja",
+    "common.no": "Nein",
+    "common.undo": "Rückgängig",
+    "common.redo": "Wiederherstellen",
+    "common.export": "Exportieren",
+    "common.import": "Importieren",
+    "common.print": "Drucken",
+    "common.search": "Suchen",
+    "common.back": "Zurück",
+    "common.next": "Weiter",
+    "common.finish": "Fertig",
+    "common.apply": "Übernehmen",
+    "common.copy": "Kopieren",
+    "common.copied": "In die Zwischenablage kopiert",
+    "common.edit": "Bearbeiten",
+    "common.minutes": "Minuten",
+    "common.hours": "Stunden",
+    "common.days": "Tage",
+    "common.day": "Tag",
+    "common.week": "Woche",
+    "common.month": "Monat",
+    "common.year": "Jahr",
+    "common.from": "Von",
+    "common.to": "Bis",
+    "common.total": "Total",
+    "common.average": "Ø",
+    "common.optional": "optional",
+    "common.empty": "Noch nichts erfasst",
+    "common.min": "min",
+    "common.h": "h",
+
+    "day.title": "Tageserfassung",
+    "day.clockIn": "Kommen",
+    "day.clockOut": "Gehen",
+    "day.breaks": "Pausen",
+    "day.addBreak": "Pause hinzufügen",
+    "day.lunch": "Mittagspause",
+    "day.note": "Notiz",
+    "day.notePlaceholder": "Was war heute los?",
+    "day.type": "Tagesart",
+    "day.location": "Arbeitsort",
+    "day.target": "Sollzeit",
+    "day.targetOverride": "Abweichende Sollzeit",
+    "day.net": "Netto-Arbeitszeit",
+    "day.balance": "Tagessaldo",
+    "day.presence": "Anwesenheit",
+    "day.breakTotal": "Pausen gesamt",
+    "day.requiredBreak": "Pflichtpause",
+    "day.autoDeducted": "Automatisch abgezogen",
+    "day.recommendedLeave": "Feierabend um",
+    "day.remaining": "Noch zu leisten",
+    "day.start": "Start",
+    "day.end": "Ende",
+    "day.label": "Bezeichnung",
+    "day.paid": "bezahlt",
+    "day.halfDay": "Halbtag",
+    "day.factor": "Anteil",
+    "day.clearDay": "Tag leeren",
+    "day.copyPrevious": "Vortag übernehmen",
+    "day.template": "Standardtag",
+    "day.stampIn": "Kommen stempeln",
+    "day.stampOut": "Gehen stempeln",
+    "day.startBreak": "Pause starten",
+    "day.endBreak": "Pause beenden",
+    "day.running": "Läuft seit {time}",
+    "day.onBreak": "Pause seit {time}",
+    "day.goalReached": "Soll erreicht",
+    "day.overtimeNow": "Du bist {v} über dem Soll",
+    "day.untilGoal": "Noch {v} bis zum Soll",
+    "day.timeline": "Tagesverlauf",
+    "day.work": "Arbeit",
+    "day.break": "Pause",
+    "day.enterClockIn": "Kommen-Zeit eingeben, dann rechnet alles Weitere von selbst.",
+    "day.explain": "Enthält {breaks} Pause und {target} Sollzeit.",
+    "day.nextDay": "+{n} Tag",
+    "day.nextDays": "+{n} Tage",
+    "day.credited": "Gutschrift",
+    "day.noTarget": "Kein Soll an diesem Tag",
+    "day.holidayName": "Feiertag: {name}",
+    "day.progress": "vom Soll",
+
+    "type.work": "Arbeit",
+    "type.vacation": "Ferien",
+    "type.holiday": "Feiertag",
+    "type.sick": "Krankheit",
+    "type.accident": "Unfall",
+    "type.military": "Militär / Zivilschutz",
+    "type.comp": "Kompensation",
+    "type.training": "Weiterbildung",
+    "type.unpaid": "Unbezahlt frei",
+    "type.free": "Arbeitsfrei",
+
+    "loc.office": "Betrieb",
+    "loc.home": "Homeoffice",
+    "loc.field": "Aussendienst",
+    "loc.travel": "Unterwegs",
+
+    "warn.title": "Hinweise",
+    "warn.break-auto": "{v} Pflichtpause automatisch abgezogen — es sind nur {have} erfasst.",
+    "warn.break-short": "Pflichtpause nicht erreicht: {v} fehlen (Vorgabe {required}).",
+    "warn.break-overlap": "Überlappende Pausen wurden zusammengefasst.",
+    "warn.break-outside": "{v} Pause lagen ausserhalb der Anwesenheit und wurden gekürzt.",
+    "warn.over-daily-max": "Tageshöchstarbeitszeit um {v} überschritten.",
+    "warn.rest-short": "Ruhezeit zum Vortag beträgt nur {v}.",
+    "warn.worked-on-holiday": "Am Feiertag {name} gearbeitet — die Zeit zählt zusätzlich.",
+    "warn.no-break": "Über 6 Stunden ohne erfasste Pause.",
+    "warn.invalid-start": "Kommen-Zeit ist unlesbar.",
+    "warn.invalid-end": "Gehen-Zeit ist unlesbar.",
+    "warn.invalid-break": "{count} Pausenzeile(n) unvollständig.",
+    "warn.missing-end": "Kommen erfasst, Gehen fehlt — dieser Tag wird nicht ins Konto gerechnet.",
+    "warn.presence-implausible": "Anwesenheit von {v} — bitte prüfen.",
+    "warn.allGood": "Alles sauber erfasst.",
+
+    "cal.title": "Kalender",
+    "cal.lede": "Ein Monat auf einen Blick. Klick auf einen Tag, um ihn zu bearbeiten.",
+    "cal.monthBalance": "Monatssaldo",
+    "cal.monthTarget": "Soll",
+    "cal.monthActual": "Ist",
+    "cal.bulk": "Zeitraum ausfüllen",
+    "cal.bulkLede": "Ferien, Krankheit oder Kompensation für mehrere Tage auf einmal setzen.",
+    "cal.bulkApply": "Zeitraum setzen",
+    "cal.bulkSkipFree": "Wochenenden und Feiertage überspringen",
+    "cal.bulkDone": "{n} Tage gesetzt",
+    "cal.legend": "Legende",
+    "cal.jumpToday": "Zu heute",
+
+    "week.title": "Wochenübersicht",
+    "week.lede": "Wie sich die Woche verteilt — und wo Zeit liegen bleibt.",
+    "week.kw": "KW {n}",
+    "week.total": "Wochentotal",
+    "week.target": "Wochensoll",
+
+    "stats.title": "Statistik",
+    "stats.lede": "Muster erkennen statt Zahlen raten.",
+    "stats.period": "Zeitraum",
+    "stats.balanceTrend": "Saldo-Verlauf",
+    "stats.weeklyHours": "Stunden pro Woche",
+    "stats.dayOfWeek": "Durchschnitt nach Wochentag",
+    "stats.arrival": "Ankunft & Feierabend",
+    "stats.breakCompliance": "Pausen-Disziplin",
+    "stats.heatmap": "Jahresübersicht",
+    "stats.distribution": "Tagesarten",
+    "stats.gaps": "Nicht erfasste Arbeitstage",
+    "stats.gapsHint": "Diese Tage haben ein Soll, aber keinen Eintrag. Sie zählen nicht ins Konto.",
+    "stats.noGaps": "Keine Lücken — vorbildlich.",
+    "stats.avgStart": "Ø Arbeitsbeginn",
+    "stats.avgEnd": "Ø Feierabend",
+    "stats.avgNet": "Ø Netto pro Tag",
+    "stats.longestDay": "Längster Tag",
+    "stats.workedDays": "Gearbeitete Tage",
+    "stats.recordedDays": "Erfasste Tage",
+    "stats.overtimeDays": "Tage im Plus",
+    "stats.undertimeDays": "Tage im Minus",
+    "stats.compliant": "regelkonform",
+    "stats.quota": "Kontingente",
+    "stats.vacationUsed": "Ferien bezogen",
+    "stats.vacationLeft": "Ferien offen",
+    "stats.sickDays": "Absenztage",
+    "stats.compDays": "Kompensationstage",
+    "stats.needData": "Für Auswertungen fehlen noch Daten. Erfasse ein paar Tage.",
+
+    "report.title": "Berichte & Export",
+    "report.lede": "Monatsrapport zum Ausdrucken oder Weitergeben — plus alle Rohdaten.",
+    "report.monthly": "Monatsrapport",
+    "report.employee": "Mitarbeitende/r",
+    "report.employeePlaceholder": "Name für den Rapport",
+    "report.period": "Zeitraum",
+    "report.created": "Erstellt am",
+    "report.signEmployee": "Unterschrift Mitarbeitende/r",
+    "report.signSupervisor": "Unterschrift Vorgesetzte/r",
+    "report.exportCsv": "CSV (Excel)",
+    "report.exportJson": "JSON-Sicherung",
+    "report.exportIcs": "Kalender (.ics)",
+    "report.exportText": "Als Text kopieren",
+    "report.printNow": "Rapport drucken",
+    "report.carryIn": "Übertrag Vormonat",
+    "report.carryOut": "Übertrag Folgemonat",
+    "report.rangeAll": "Gesamter Datenbestand",
+    "report.gapNote": "{gaps} von {days} Arbeitstagen im Zeitraum sind nicht erfasst. Sie stecken im Soll, verändern den Saldo aber nicht.",
+
+    "ach.title": "Erfolge",
+    "ach.lede": "Kleine Belohnungen für ein gepflegtes Zeitkonto.",
+    "ach.level": "Stufe {n}",
+    "ach.xpToNext": "Noch {n} XP bis Stufe {next}",
+    "ach.streak": "Serie",
+    "ach.currentStreak": "Aktuelle Serie",
+    "ach.bestStreak": "Bestserie",
+    "ach.dayStreak": "{n} Tage",
+    "ach.unlocked": "Freigeschaltet am {date}",
+    "ach.locked": "Noch nicht freigeschaltet",
+    "ach.newBadge": "Neues Abzeichen!",
+    "ach.progressOf": "{a} / {b}",
+
+    "set.title": "Einstellungen",
+    "set.lede": "Einmal einrichten, danach passt alles.",
+    "set.appearance": "Darstellung",
+    "set.theme": "Erscheinungsbild",
+    "set.theme.auto": "Automatisch",
+    "set.theme.light": "Hell",
+    "set.theme.dark": "Dunkel",
+    "set.language": "Sprache",
+    "set.density": "Dichte",
+    "set.density.compact": "Kompakt",
+    "set.density.normal": "Normal",
+    "set.density.cozy": "Luftig",
+    "set.contrast": "Erhöhter Kontrast",
+    "set.contrastHint": "Stärkere Linien und dunklere Sekundärtexte.",
+    "set.durationStyle": "Zeitformat",
+    "set.durationStyle.hm": "8 h 24 min",
+    "set.durationStyle.clock": "8:24",
+    "set.durationStyle.decimal": "8.40 h",
+    "set.firstDay": "Wochenbeginn",
+    "set.showSeconds": "Sekunden in der Uhr",
+
+    "set.model": "Arbeitsmodell",
+    "set.preset": "Vorlage",
+    "set.workload": "Beschäftigungsgrad",
+    "set.workloadHint": "Skaliert alle Sollzeiten. 80 % bedeutet 80 % der Wochenstunden.",
+    "set.weekdayTargets": "Sollzeit je Wochentag",
+    "set.weekdayHint": "Format h:mm oder Minuten. 0 = arbeitsfrei.",
+    "set.weeklyTotal": "Wochensoll",
+
+    "set.breaks": "Pausen",
+    "set.breakRuleset": "Gesetzliche Grundlage",
+    "set.autoDeduct": "Pflichtpause automatisch abziehen",
+    "set.autoDeductHint": "Fehlt eine gesetzlich nötige Pause, wird sie rechnerisch abgezogen statt nur bemängelt.",
+    "set.defaultLunch": "Standard-Mittagspause",
+    "set.customTiers": "Eigene Staffel",
+
+    "set.rounding": "Rundung",
+    "set.roundStep": "Schrittweite",
+    "set.roundStep.0": "Keine Rundung",
+    "set.roundMode": "Rundungsart",
+    "set.roundMode.nearest": "Kaufmännisch",
+    "set.roundMode.up": "Aufrunden",
+    "set.roundMode.down": "Abrunden",
+
+    "set.account": "Zeitkonto",
+    "set.carryOver": "Startsaldo",
+    "set.carryOverHint": "Dein Gleitzeitsaldo, bevor du diese App benutzt hast. Format +12:30 oder -3:15.",
+    "set.carryOverFrom": "Konto zählt ab",
+    "set.capPlus": "Obergrenze Plus",
+    "set.capMinus": "Untergrenze Minus",
+    "set.capHint": "Leer lassen für keine Kappung.",
+    "set.countMissing": "Nicht erfasste Arbeitstage als Minus werten",
+    "set.countMissingHint": "Aus: Lücken werden nur angezeigt, nicht verrechnet. Empfohlen.",
+
+    "set.quotas": "Kontingente",
+    "set.vacationDays": "Ferientage pro Jahr",
+    "set.vacationCarry": "Übertrag aus Vorjahr",
+
+    "set.holidays": "Feiertage",
+    "set.region": "Region",
+    "set.autoHolidays": "Feiertage automatisch setzen",
+    "set.holidayPreview": "Nächste Feiertage",
+
+    "set.compliance": "Arbeitsschutz",
+    "set.maxDaily": "Tageshöchstarbeitszeit",
+    "set.minRest": "Mindestruhezeit",
+    "set.minRestUnit": "Stunden",
+
+    "set.comfort": "Komfort",
+    "set.reminder": "Feierabend-Erinnerung",
+    "set.reminderHint": "Benachrichtigung kurz vor Erreichen der Sollzeit.",
+    "set.reminderLead": "Vorlaufzeit",
+    "set.confetti": "Konfetti bei Erfolgen",
+    "set.notifPermission": "Benachrichtigungen erlauben",
+    "set.notifDenied": "Der Browser blockiert Benachrichtigungen.",
+
+    "set.data": "Daten",
+    "set.dataHint": "Alles liegt ausschliesslich auf diesem Gerät. Kein Konto, kein Server, keine Auswertung durch Dritte.",
+    "set.exportAll": "Alles sichern (JSON)",
+    "set.importData": "Sicherung einlesen",
+    "set.importDrop": "Datei hierher ziehen oder klicken — JSON oder CSV",
+    "set.importMode": "Beim Import",
+    "set.importMode.merge": "Zusammenführen (neue gewinnen)",
+    "set.importMode.merge-keep": "Zusammenführen (bestehende behalten)",
+    "set.importMode.replace": "Alles ersetzen",
+    "set.importResult": "{added} neu, {updated} aktualisiert, {skipped} übersprungen",
+    "set.resetAll": "Alle Daten löschen",
+    "set.resetConfirm": "Wirklich alles löschen? Das lässt sich nur mit einer Sicherung rückgängig machen.",
+    "set.storage": "Belegter Speicher",
+    "set.diagnostics": "Diagnose",
+    "set.install": "App installieren",
+    "set.installHint": "Als eigenständige App auf dem Gerät ablegen — funktioniert danach auch offline.",
+    "set.about": "Über",
+    "set.version": "Version",
+    "set.privacy": "Datenschutz",
+
+    "onb.welcome": "Willkommen",
+    "onb.welcomeText": "In vier kurzen Schritten ist dein Zeitkonto eingerichtet. Alles bleibt auf diesem Gerät.",
+    "onb.step.lang": "Sprache",
+    "onb.step.model": "Arbeitsmodell",
+    "onb.step.region": "Feiertage",
+    "onb.step.carry": "Startsaldo",
+    "onb.startNow": "Los geht's",
+    "onb.skip": "Später einrichten",
+    "onb.done": "Fertig eingerichtet",
+    "onb.doneText": "Du kannst alles jederzeit in den Einstellungen ändern. Drücke {key} für die Schnellsuche.",
+
+    "cmd.placeholder": "Befehl oder Datum eingeben …",
+    "cmd.noResults": "Nichts gefunden",
+    "cmd.group.nav": "Navigation",
+    "cmd.group.actions": "Aktionen",
+    "cmd.group.jump": "Datum",
+    "cmd.jumpTo": "Springe zu {date}",
+    "cmd.open": "Öffnen",
+
+    "toast.stampedIn": "Kommen um {time} gestempelt",
+    "toast.stampedOut": "Gehen um {time} gestempelt",
+    "toast.breakStarted": "Pause gestartet",
+    "toast.breakEnded": "Pause beendet · {v}",
+    "toast.dayCleared": "Tag geleert",
+    "toast.copied": "Vortag übernommen",
+    "toast.undone": "Rückgängig gemacht",
+    "toast.redone": "Wiederhergestellt",
+    "toast.exported": "Datei erstellt",
+    "toast.imported": "Import abgeschlossen",
+    "toast.saved": "Gespeichert",
+    "toast.storageFull": "Speicher voll — bitte alte Daten exportieren und löschen.",
+    "toast.offline": "Offline — die App läuft trotzdem weiter.",
+    "toast.updateReady": "Neue Version bereit",
+    "toast.reload": "Neu laden",
+    "toast.goalReached": "Sollzeit erreicht. Feierabend!",
+
+    "kbd.title": "Tastenkürzel",
+    "kbd.palette": "Schnellsuche",
+    "kbd.stamp": "Kommen / Gehen stempeln",
+    "kbd.prevDay": "Vorheriger Tag",
+    "kbd.nextDay": "Nächster Tag",
+    "kbd.today": "Zu heute",
+    "kbd.theme": "Hell / Dunkel",
+    "kbd.save": "Speichern erzwingen",
+    "kbd.help": "Diese Hilfe"
+  };
+
+  /* ==================================================================== */
+  /* ENGLISCH                                                              */
+  /* ==================================================================== */
+  DICT.en = {
+    "lang.name": "English",
+    "app.name": "Zeitkonto",
+    "app.tagline": "Working time that explains itself",
+
+    "nav.today": "Today", "nav.calendar": "Calendar", "nav.week": "Week",
+    "nav.stats": "Statistics", "nav.reports": "Reports", "nav.achievements": "Achievements",
+    "nav.settings": "Settings", "nav.section.time": "Time", "nav.section.insight": "Insight",
+    "nav.section.system": "System", "nav.menu": "Menu",
+
+    "common.save": "Save", "common.saved": "Saved", "common.cancel": "Cancel",
+    "common.delete": "Delete", "common.close": "Close", "common.add": "Add",
+    "common.remove": "Remove", "common.reset": "Reset", "common.today": "Today",
+    "common.yesterday": "Yesterday", "common.tomorrow": "Tomorrow", "common.now": "Now",
+    "common.all": "All", "common.none": "None", "common.ok": "OK", "common.yes": "Yes",
+    "common.no": "No", "common.undo": "Undo", "common.redo": "Redo",
+    "common.export": "Export", "common.import": "Import", "common.print": "Print",
+    "common.search": "Search", "common.back": "Back", "common.next": "Next",
+    "common.finish": "Done", "common.apply": "Apply", "common.copy": "Copy",
+    "common.copied": "Copied to clipboard", "common.edit": "Edit",
+    "common.minutes": "minutes", "common.hours": "hours", "common.days": "days",
+    "common.day": "day", "common.week": "week", "common.month": "month", "common.year": "year",
+    "common.from": "From", "common.to": "To", "common.total": "Total", "common.average": "Avg",
+    "common.optional": "optional", "common.empty": "Nothing recorded yet",
+    "common.min": "min", "common.h": "h",
+
+    "day.title": "Day entry", "day.clockIn": "Clock in", "day.clockOut": "Clock out",
+    "day.breaks": "Breaks", "day.addBreak": "Add break", "day.lunch": "Lunch break",
+    "day.note": "Note", "day.notePlaceholder": "What happened today?",
+    "day.type": "Day type", "day.location": "Work location", "day.target": "Target",
+    "day.targetOverride": "Custom target", "day.net": "Net working time",
+    "day.balance": "Day balance", "day.presence": "Presence", "day.breakTotal": "Total breaks",
+    "day.requiredBreak": "Required break", "day.autoDeducted": "Auto-deducted",
+    "day.recommendedLeave": "Leave at", "day.remaining": "Still to work",
+    "day.start": "Start", "day.end": "End", "day.label": "Label", "day.paid": "paid",
+    "day.halfDay": "Half day", "day.factor": "Share", "day.clearDay": "Clear day",
+    "day.copyPrevious": "Copy previous day", "day.template": "Standard day",
+    "day.stampIn": "Stamp in", "day.stampOut": "Stamp out",
+    "day.startBreak": "Start break", "day.endBreak": "End break",
+    "day.running": "Running since {time}", "day.onBreak": "On break since {time}",
+    "day.goalReached": "Target reached", "day.overtimeNow": "You are {v} over target",
+    "day.untilGoal": "{v} left until target", "day.timeline": "Day timeline",
+    "day.work": "Work", "day.break": "Break",
+    "day.enterClockIn": "Enter your clock-in time — everything else follows automatically.",
+    "day.explain": "Includes {breaks} of breaks and {target} target time.",
+    "day.nextDay": "+{n} day", "day.nextDays": "+{n} days", "day.credited": "Credited",
+    "day.noTarget": "No target on this day", "day.holidayName": "Public holiday: {name}",
+    "day.progress": "of target",
+
+    "type.work": "Work", "type.vacation": "Vacation", "type.holiday": "Public holiday",
+    "type.sick": "Sick leave", "type.accident": "Accident", "type.military": "Military service",
+    "type.comp": "Time off in lieu", "type.training": "Training",
+    "type.unpaid": "Unpaid leave", "type.free": "Non-working day",
+
+    "loc.office": "On site", "loc.home": "Home office", "loc.field": "Field work", "loc.travel": "Travelling",
+
+    "warn.title": "Notices",
+    "warn.break-auto": "{v} of mandatory break deducted automatically — only {have} recorded.",
+    "warn.break-short": "Mandatory break not met: {v} short (requires {required}).",
+    "warn.break-overlap": "Overlapping breaks were merged.",
+    "warn.break-outside": "{v} of break time fell outside presence and was trimmed.",
+    "warn.over-daily-max": "Daily maximum exceeded by {v}.",
+    "warn.rest-short": "Only {v} of rest since the previous day.",
+    "warn.worked-on-holiday": "Worked on {name} — the time counts on top.",
+    "warn.no-break": "Over 6 hours without any recorded break.",
+    "warn.invalid-start": "Clock-in time cannot be read.",
+    "warn.invalid-end": "Clock-out time cannot be read.",
+    "warn.invalid-break": "{count} break row(s) incomplete.",
+    "warn.missing-end": "Clock-in recorded but no clock-out — this day is left out of the account.",
+    "warn.presence-implausible": "Presence of {v} — please check.",
+    "warn.allGood": "All clean.",
+
+    "cal.title": "Calendar", "cal.lede": "A month at a glance. Click a day to edit it.",
+    "cal.monthBalance": "Month balance", "cal.monthTarget": "Target", "cal.monthActual": "Actual",
+    "cal.bulk": "Fill a range", "cal.bulkLede": "Set vacation, sick leave or time off for many days at once.",
+    "cal.bulkApply": "Apply to range", "cal.bulkSkipFree": "Skip weekends and holidays",
+    "cal.bulkDone": "{n} days set", "cal.legend": "Legend", "cal.jumpToday": "Go to today",
+
+    "week.title": "Week overview", "week.lede": "How the week is distributed — and where time is left behind.",
+    "week.kw": "Week {n}", "week.total": "Week total", "week.target": "Week target",
+
+    "stats.title": "Statistics", "stats.lede": "Spot patterns instead of guessing numbers.",
+    "stats.period": "Period", "stats.balanceTrend": "Balance trend",
+    "stats.weeklyHours": "Hours per week", "stats.dayOfWeek": "Average by weekday",
+    "stats.arrival": "Arrival & departure", "stats.breakCompliance": "Break discipline",
+    "stats.heatmap": "Year overview", "stats.distribution": "Day types",
+    "stats.gaps": "Unrecorded working days",
+    "stats.gapsHint": "These days have a target but no entry. They do not affect the account.",
+    "stats.noGaps": "No gaps — exemplary.",
+    "stats.avgStart": "Avg start", "stats.avgEnd": "Avg finish", "stats.avgNet": "Avg net per day",
+    "stats.longestDay": "Longest day", "stats.workedDays": "Days worked",
+    "stats.recordedDays": "Days recorded", "stats.overtimeDays": "Days in credit",
+    "stats.undertimeDays": "Days in debit", "stats.compliant": "compliant",
+    "stats.quota": "Quotas", "stats.vacationUsed": "Vacation taken",
+    "stats.vacationLeft": "Vacation left", "stats.sickDays": "Absence days",
+    "stats.compDays": "Days off in lieu",
+    "stats.needData": "Not enough data yet. Record a few days first.",
+
+    "report.title": "Reports & export",
+    "report.lede": "A monthly report to print or hand over — plus all raw data.",
+    "report.monthly": "Monthly report", "report.employee": "Employee",
+    "report.employeePlaceholder": "Name for the report", "report.period": "Period",
+    "report.created": "Created on", "report.signEmployee": "Employee signature",
+    "report.signSupervisor": "Supervisor signature", "report.exportCsv": "CSV (Excel)",
+    "report.exportJson": "JSON backup", "report.exportIcs": "Calendar (.ics)",
+    "report.exportText": "Copy as text", "report.printNow": "Print report",
+    "report.carryIn": "Carried in", "report.carryOut": "Carried forward",
+    "report.rangeAll": "All data",
+    "report.gapNote": "{gaps} of {days} working days in this period have no entry. They count towards the target but do not move the balance.",
+
+    "ach.title": "Achievements", "ach.lede": "Small rewards for a well-kept time account.",
+    "ach.level": "Level {n}", "ach.xpToNext": "{n} XP to level {next}",
+    "ach.streak": "Streak", "ach.currentStreak": "Current streak", "ach.bestStreak": "Best streak",
+    "ach.dayStreak": "{n} days", "ach.unlocked": "Unlocked on {date}",
+    "ach.locked": "Not unlocked yet", "ach.newBadge": "New badge!", "ach.progressOf": "{a} / {b}",
+
+    "set.title": "Settings", "set.lede": "Set it up once, then it just fits.",
+    "set.appearance": "Appearance", "set.theme": "Theme", "set.theme.auto": "Automatic",
+    "set.theme.light": "Light", "set.theme.dark": "Dark", "set.language": "Language",
+    "set.density": "Density", "set.density.compact": "Compact", "set.density.normal": "Normal",
+    "set.density.cozy": "Comfortable", "set.contrast": "Higher contrast",
+    "set.contrastHint": "Stronger lines and darker secondary text.",
+    "set.durationStyle": "Time format", "set.durationStyle.hm": "8 h 24 min",
+    "set.durationStyle.clock": "8:24", "set.durationStyle.decimal": "8.40 h",
+    "set.firstDay": "Week starts on", "set.showSeconds": "Seconds in the clock",
+
+    "set.model": "Work model", "set.preset": "Preset", "set.workload": "Workload",
+    "set.workloadHint": "Scales every target. 80 % means 80 % of the weekly hours.",
+    "set.weekdayTargets": "Target per weekday",
+    "set.weekdayHint": "Format h:mm or minutes. 0 = non-working day.",
+    "set.weeklyTotal": "Weekly target",
+
+    "set.breaks": "Breaks", "set.breakRuleset": "Legal basis",
+    "set.autoDeduct": "Deduct mandatory break automatically",
+    "set.autoDeductHint": "If a legally required break is missing, it is deducted instead of only flagged.",
+    "set.defaultLunch": "Default lunch break", "set.customTiers": "Custom tiers",
+
+    "set.rounding": "Rounding", "set.roundStep": "Step", "set.roundStep.0": "No rounding",
+    "set.roundMode": "Mode", "set.roundMode.nearest": "Nearest",
+    "set.roundMode.up": "Round up", "set.roundMode.down": "Round down",
+
+    "set.account": "Time account", "set.carryOver": "Opening balance",
+    "set.carryOverHint": "Your flexitime balance before using this app. Format +12:30 or -3:15.",
+    "set.carryOverFrom": "Account counts from", "set.capPlus": "Cap credit",
+    "set.capMinus": "Cap debit", "set.capHint": "Leave empty for no cap.",
+    "set.countMissing": "Count unrecorded working days as debit",
+    "set.countMissingHint": "Off: gaps are shown but not charged. Recommended.",
+
+    "set.quotas": "Quotas", "set.vacationDays": "Vacation days per year",
+    "set.vacationCarry": "Carried over from last year",
+
+    "set.holidays": "Public holidays", "set.region": "Region",
+    "set.autoHolidays": "Apply holidays automatically", "set.holidayPreview": "Upcoming holidays",
+
+    "set.compliance": "Health & safety", "set.maxDaily": "Daily maximum",
+    "set.minRest": "Minimum rest", "set.minRestUnit": "hours",
+
+    "set.comfort": "Comfort", "set.reminder": "Clock-out reminder",
+    "set.reminderHint": "Notification shortly before you reach your target.",
+    "set.reminderLead": "Lead time", "set.confetti": "Confetti on achievements",
+    "set.notifPermission": "Allow notifications", "set.notifDenied": "The browser blocks notifications.",
+
+    "set.data": "Data",
+    "set.dataHint": "Everything stays on this device. No account, no server, no third-party analytics.",
+    "set.exportAll": "Back up everything (JSON)", "set.importData": "Restore a backup",
+    "set.importDrop": "Drop a file here or click — JSON or CSV", "set.importMode": "On import",
+    "set.importMode.merge": "Merge (incoming wins)",
+    "set.importMode.merge-keep": "Merge (keep existing)",
+    "set.importMode.replace": "Replace everything",
+    "set.importResult": "{added} new, {updated} updated, {skipped} skipped",
+    "set.resetAll": "Delete all data",
+    "set.resetConfirm": "Really delete everything? Only a backup can undo this.",
+    "set.storage": "Storage used", "set.diagnostics": "Diagnostics",
+    "set.install": "Install app",
+    "set.installHint": "Put it on your device as a standalone app — works offline afterwards.",
+    "set.about": "About", "set.version": "Version", "set.privacy": "Privacy",
+
+    "onb.welcome": "Welcome",
+    "onb.welcomeText": "Four short steps and your time account is ready. Everything stays on this device.",
+    "onb.step.lang": "Language", "onb.step.model": "Work model",
+    "onb.step.region": "Holidays", "onb.step.carry": "Opening balance",
+    "onb.startNow": "Let's go", "onb.skip": "Set up later", "onb.done": "All set",
+    "onb.doneText": "You can change everything later in the settings. Press {key} for quick search.",
+
+    "cmd.placeholder": "Type a command or a date …", "cmd.noResults": "Nothing found",
+    "cmd.group.nav": "Navigation", "cmd.group.actions": "Actions", "cmd.group.jump": "Date",
+    "cmd.jumpTo": "Jump to {date}", "cmd.open": "Open",
+
+    "toast.stampedIn": "Clocked in at {time}", "toast.stampedOut": "Clocked out at {time}",
+    "toast.breakStarted": "Break started", "toast.breakEnded": "Break ended · {v}",
+    "toast.dayCleared": "Day cleared", "toast.copied": "Previous day copied",
+    "toast.undone": "Undone", "toast.redone": "Redone", "toast.exported": "File created",
+    "toast.imported": "Import complete", "toast.saved": "Saved",
+    "toast.storageFull": "Storage full — please export and remove old data.",
+    "toast.offline": "Offline — the app keeps working.",
+    "toast.updateReady": "New version available", "toast.reload": "Reload",
+    "toast.goalReached": "Target reached. Go home!",
+
+    "kbd.title": "Keyboard shortcuts", "kbd.palette": "Quick search",
+    "kbd.stamp": "Clock in / out", "kbd.prevDay": "Previous day", "kbd.nextDay": "Next day",
+    "kbd.today": "Go to today", "kbd.theme": "Light / dark", "kbd.save": "Force save",
+    "kbd.help": "This help"
+  };
+
+  /* ==================================================================== */
+  /* FRANZÖSISCH                                                           */
+  /* ==================================================================== */
+  DICT.fr = {
+    "lang.name": "Français",
+    "app.name": "Zeitkonto",
+    "app.tagline": "Le temps de travail qui s'explique",
+
+    "nav.today": "Aujourd'hui", "nav.calendar": "Calendrier", "nav.week": "Semaine",
+    "nav.stats": "Statistiques", "nav.reports": "Rapports", "nav.achievements": "Succès",
+    "nav.settings": "Réglages", "nav.section.time": "Temps", "nav.section.insight": "Analyse",
+    "nav.section.system": "Système", "nav.menu": "Menu",
+
+    "common.save": "Enregistrer", "common.saved": "Enregistré", "common.cancel": "Annuler",
+    "common.delete": "Supprimer", "common.close": "Fermer", "common.add": "Ajouter",
+    "common.remove": "Retirer", "common.reset": "Réinitialiser", "common.today": "Aujourd'hui",
+    "common.yesterday": "Hier", "common.tomorrow": "Demain", "common.now": "Maintenant",
+    "common.all": "Tout", "common.none": "Aucun", "common.ok": "OK", "common.yes": "Oui",
+    "common.no": "Non", "common.undo": "Annuler", "common.redo": "Rétablir",
+    "common.export": "Exporter", "common.import": "Importer", "common.print": "Imprimer",
+    "common.search": "Rechercher", "common.back": "Retour", "common.next": "Suivant",
+    "common.finish": "Terminé", "common.apply": "Appliquer", "common.copy": "Copier",
+    "common.copied": "Copié dans le presse-papiers", "common.edit": "Modifier",
+    "common.minutes": "minutes", "common.hours": "heures", "common.days": "jours",
+    "common.day": "jour", "common.week": "semaine", "common.month": "mois", "common.year": "année",
+    "common.from": "Du", "common.to": "Au", "common.total": "Total", "common.average": "Moy.",
+    "common.optional": "facultatif", "common.empty": "Rien de saisi",
+    "common.min": "min", "common.h": "h",
+
+    "day.title": "Saisie du jour", "day.clockIn": "Arrivée", "day.clockOut": "Départ",
+    "day.breaks": "Pauses", "day.addBreak": "Ajouter une pause", "day.lunch": "Pause de midi",
+    "day.note": "Note", "day.notePlaceholder": "Quoi de neuf aujourd'hui ?",
+    "day.type": "Type de jour", "day.location": "Lieu de travail", "day.target": "Temps dû",
+    "day.targetOverride": "Temps dû personnalisé", "day.net": "Temps de travail net",
+    "day.balance": "Solde du jour", "day.presence": "Présence", "day.breakTotal": "Total des pauses",
+    "day.requiredBreak": "Pause obligatoire", "day.autoDeducted": "Déduit automatiquement",
+    "day.recommendedLeave": "Départ à", "day.remaining": "Reste à faire",
+    "day.start": "Début", "day.end": "Fin", "day.label": "Libellé", "day.paid": "payée",
+    "day.halfDay": "Demi-journée", "day.factor": "Part", "day.clearDay": "Vider le jour",
+    "day.copyPrevious": "Copier la veille", "day.template": "Journée type",
+    "day.stampIn": "Pointer l'arrivée", "day.stampOut": "Pointer le départ",
+    "day.startBreak": "Démarrer la pause", "day.endBreak": "Terminer la pause",
+    "day.running": "En cours depuis {time}", "day.onBreak": "En pause depuis {time}",
+    "day.goalReached": "Objectif atteint", "day.overtimeNow": "Vous dépassez de {v}",
+    "day.untilGoal": "Encore {v} avant l'objectif", "day.timeline": "Déroulé de la journée",
+    "day.work": "Travail", "day.break": "Pause",
+    "day.enterClockIn": "Saisissez l'heure d'arrivée — le reste se calcule tout seul.",
+    "day.explain": "Comprend {breaks} de pause et {target} de temps dû.",
+    "day.nextDay": "+{n} jour", "day.nextDays": "+{n} jours", "day.credited": "Crédité",
+    "day.noTarget": "Aucun temps dû ce jour", "day.holidayName": "Jour férié : {name}",
+    "day.progress": "de l'objectif",
+
+    "type.work": "Travail", "type.vacation": "Vacances", "type.holiday": "Jour férié",
+    "type.sick": "Maladie", "type.accident": "Accident", "type.military": "Service militaire",
+    "type.comp": "Compensation", "type.training": "Formation",
+    "type.unpaid": "Congé non payé", "type.free": "Jour non travaillé",
+
+    "loc.office": "Sur site", "loc.home": "Télétravail", "loc.field": "Service externe", "loc.travel": "En déplacement",
+
+    "warn.title": "Remarques",
+    "warn.break-auto": "{v} de pause obligatoire déduits automatiquement — seulement {have} saisis.",
+    "warn.break-short": "Pause obligatoire non atteinte : il manque {v} (exigé {required}).",
+    "warn.break-overlap": "Les pauses qui se chevauchaient ont été fusionnées.",
+    "warn.break-outside": "{v} de pause hors présence ont été rognés.",
+    "warn.over-daily-max": "Durée maximale journalière dépassée de {v}.",
+    "warn.rest-short": "Seulement {v} de repos depuis la veille.",
+    "warn.worked-on-holiday": "Travail le jour de {name} — ce temps s'ajoute.",
+    "warn.no-break": "Plus de 6 heures sans pause saisie.",
+    "warn.invalid-start": "Heure d'arrivée illisible.",
+    "warn.invalid-end": "Heure de départ illisible.",
+    "warn.invalid-break": "{count} ligne(s) de pause incomplète(s).",
+    "warn.missing-end": "Arrivée saisie sans départ — ce jour n'entre pas dans le compte.",
+    "warn.presence-implausible": "Présence de {v} — à vérifier.",
+    "warn.allGood": "Tout est correct.",
+
+    "cal.title": "Calendrier", "cal.lede": "Un mois d'un coup d'œil. Cliquez sur un jour pour le modifier.",
+    "cal.monthBalance": "Solde du mois", "cal.monthTarget": "Dû", "cal.monthActual": "Effectif",
+    "cal.bulk": "Remplir une période", "cal.bulkLede": "Vacances, maladie ou compensation sur plusieurs jours.",
+    "cal.bulkApply": "Appliquer", "cal.bulkSkipFree": "Ignorer week-ends et jours fériés",
+    "cal.bulkDone": "{n} jours définis", "cal.legend": "Légende", "cal.jumpToday": "Aujourd'hui",
+
+    "week.title": "Vue hebdomadaire", "week.lede": "Comment la semaine se répartit — et où le temps s'accumule.",
+    "week.kw": "Semaine {n}", "week.total": "Total semaine", "week.target": "Dû hebdomadaire",
+
+    "stats.title": "Statistiques", "stats.lede": "Repérer des tendances plutôt que deviner.",
+    "stats.period": "Période", "stats.balanceTrend": "Évolution du solde",
+    "stats.weeklyHours": "Heures par semaine", "stats.dayOfWeek": "Moyenne par jour",
+    "stats.arrival": "Arrivée & départ", "stats.breakCompliance": "Discipline des pauses",
+    "stats.heatmap": "Vue annuelle", "stats.distribution": "Types de jours",
+    "stats.gaps": "Jours ouvrés non saisis",
+    "stats.gapsHint": "Ces jours ont un temps dû mais aucune saisie. Ils n'affectent pas le compte.",
+    "stats.noGaps": "Aucune lacune — exemplaire.",
+    "stats.avgStart": "Arrivée moy.", "stats.avgEnd": "Départ moy.", "stats.avgNet": "Net moy. / jour",
+    "stats.longestDay": "Journée la plus longue", "stats.workedDays": "Jours travaillés",
+    "stats.recordedDays": "Jours saisis", "stats.overtimeDays": "Jours en plus",
+    "stats.undertimeDays": "Jours en moins", "stats.compliant": "conformes",
+    "stats.quota": "Quotas", "stats.vacationUsed": "Vacances prises",
+    "stats.vacationLeft": "Vacances restantes", "stats.sickDays": "Jours d'absence",
+    "stats.compDays": "Jours de compensation",
+    "stats.needData": "Pas encore assez de données. Saisissez quelques jours.",
+
+    "report.title": "Rapports & export",
+    "report.lede": "Un rapport mensuel à imprimer ou transmettre — et toutes les données brutes.",
+    "report.monthly": "Rapport mensuel", "report.employee": "Collaborateur/trice",
+    "report.employeePlaceholder": "Nom pour le rapport", "report.period": "Période",
+    "report.created": "Créé le", "report.signEmployee": "Signature collaborateur/trice",
+    "report.signSupervisor": "Signature supérieur/e", "report.exportCsv": "CSV (Excel)",
+    "report.exportJson": "Sauvegarde JSON", "report.exportIcs": "Calendrier (.ics)",
+    "report.exportText": "Copier en texte", "report.printNow": "Imprimer le rapport",
+    "report.carryIn": "Report entrant", "report.carryOut": "Report sortant",
+    "report.rangeAll": "Toutes les données",
+    "report.gapNote": "{gaps} des {days} jours ouvrés de la période ne sont pas saisis. Ils comptent dans le dû mais pas dans le solde.",
+
+    "ach.title": "Succès", "ach.lede": "De petites récompenses pour un compte bien tenu.",
+    "ach.level": "Niveau {n}", "ach.xpToNext": "Encore {n} XP jusqu'au niveau {next}",
+    "ach.streak": "Série", "ach.currentStreak": "Série actuelle", "ach.bestStreak": "Meilleure série",
+    "ach.dayStreak": "{n} jours", "ach.unlocked": "Débloqué le {date}",
+    "ach.locked": "Pas encore débloqué", "ach.newBadge": "Nouveau badge !", "ach.progressOf": "{a} / {b}",
+
+    "set.title": "Réglages", "set.lede": "Une configuration, et tout s'ajuste.",
+    "set.appearance": "Apparence", "set.theme": "Thème", "set.theme.auto": "Automatique",
+    "set.theme.light": "Clair", "set.theme.dark": "Sombre", "set.language": "Langue",
+    "set.density": "Densité", "set.density.compact": "Compact", "set.density.normal": "Normal",
+    "set.density.cozy": "Aéré", "set.contrast": "Contraste renforcé",
+    "set.contrastHint": "Lignes plus marquées et textes secondaires plus foncés.",
+    "set.durationStyle": "Format d'heure", "set.durationStyle.hm": "8 h 24 min",
+    "set.durationStyle.clock": "8:24", "set.durationStyle.decimal": "8.40 h",
+    "set.firstDay": "Début de semaine", "set.showSeconds": "Secondes dans l'horloge",
+
+    "set.model": "Modèle de travail", "set.preset": "Modèle", "set.workload": "Taux d'activité",
+    "set.workloadHint": "Met à l'échelle tous les temps dus. 80 % = 80 % des heures hebdomadaires.",
+    "set.weekdayTargets": "Temps dû par jour",
+    "set.weekdayHint": "Format h:mm ou minutes. 0 = jour non travaillé.",
+    "set.weeklyTotal": "Dû hebdomadaire",
+
+    "set.breaks": "Pauses", "set.breakRuleset": "Base légale",
+    "set.autoDeduct": "Déduire la pause obligatoire",
+    "set.autoDeductHint": "Si une pause légale manque, elle est déduite plutôt que simplement signalée.",
+    "set.defaultLunch": "Pause de midi par défaut", "set.customTiers": "Paliers personnalisés",
+
+    "set.rounding": "Arrondi", "set.roundStep": "Pas", "set.roundStep.0": "Sans arrondi",
+    "set.roundMode": "Mode", "set.roundMode.nearest": "Au plus proche",
+    "set.roundMode.up": "Vers le haut", "set.roundMode.down": "Vers le bas",
+
+    "set.account": "Compte temps", "set.carryOver": "Solde initial",
+    "set.carryOverHint": "Votre solde avant l'utilisation de l'app. Format +12:30 ou -3:15.",
+    "set.carryOverFrom": "Compte à partir du", "set.capPlus": "Plafond positif",
+    "set.capMinus": "Plafond négatif", "set.capHint": "Laisser vide pour aucun plafond.",
+    "set.countMissing": "Compter les jours non saisis en négatif",
+    "set.countMissingHint": "Désactivé : les lacunes sont affichées mais pas décomptées. Recommandé.",
+
+    "set.quotas": "Quotas", "set.vacationDays": "Jours de vacances par an",
+    "set.vacationCarry": "Report de l'année précédente",
+
+    "set.holidays": "Jours fériés", "set.region": "Région",
+    "set.autoHolidays": "Appliquer automatiquement", "set.holidayPreview": "Prochains jours fériés",
+
+    "set.compliance": "Protection des travailleurs", "set.maxDaily": "Maximum journalier",
+    "set.minRest": "Repos minimal", "set.minRestUnit": "heures",
+
+    "set.comfort": "Confort", "set.reminder": "Rappel de fin de journée",
+    "set.reminderHint": "Notification peu avant d'atteindre le temps dû.",
+    "set.reminderLead": "Anticipation", "set.confetti": "Confettis pour les succès",
+    "set.notifPermission": "Autoriser les notifications", "set.notifDenied": "Le navigateur bloque les notifications.",
+
+    "set.data": "Données",
+    "set.dataHint": "Tout reste sur cet appareil. Aucun compte, aucun serveur, aucune analyse externe.",
+    "set.exportAll": "Tout sauvegarder (JSON)", "set.importData": "Restaurer une sauvegarde",
+    "set.importDrop": "Déposez un fichier ici ou cliquez — JSON ou CSV", "set.importMode": "À l'import",
+    "set.importMode.merge": "Fusionner (nouveau prioritaire)",
+    "set.importMode.merge-keep": "Fusionner (garder l'existant)",
+    "set.importMode.replace": "Tout remplacer",
+    "set.importResult": "{added} nouveaux, {updated} mis à jour, {skipped} ignorés",
+    "set.resetAll": "Supprimer toutes les données",
+    "set.resetConfirm": "Vraiment tout supprimer ? Seule une sauvegarde permet de revenir en arrière.",
+    "set.storage": "Espace utilisé", "set.diagnostics": "Diagnostic",
+    "set.install": "Installer l'app",
+    "set.installHint": "Installez-la comme application autonome — elle fonctionne ensuite hors ligne.",
+    "set.about": "À propos", "set.version": "Version", "set.privacy": "Confidentialité",
+
+    "onb.welcome": "Bienvenue",
+    "onb.welcomeText": "Quatre étapes et votre compte temps est prêt. Tout reste sur cet appareil.",
+    "onb.step.lang": "Langue", "onb.step.model": "Modèle", "onb.step.region": "Jours fériés",
+    "onb.step.carry": "Solde initial", "onb.startNow": "C'est parti", "onb.skip": "Plus tard",
+    "onb.done": "Configuration terminée",
+    "onb.doneText": "Tout est modifiable dans les réglages. Appuyez sur {key} pour la recherche rapide.",
+
+    "cmd.placeholder": "Commande ou date …", "cmd.noResults": "Aucun résultat",
+    "cmd.group.nav": "Navigation", "cmd.group.actions": "Actions", "cmd.group.jump": "Date",
+    "cmd.jumpTo": "Aller au {date}", "cmd.open": "Ouvrir",
+
+    "toast.stampedIn": "Arrivée pointée à {time}", "toast.stampedOut": "Départ pointé à {time}",
+    "toast.breakStarted": "Pause démarrée", "toast.breakEnded": "Pause terminée · {v}",
+    "toast.dayCleared": "Jour vidé", "toast.copied": "Veille copiée",
+    "toast.undone": "Annulé", "toast.redone": "Rétabli", "toast.exported": "Fichier créé",
+    "toast.imported": "Import terminé", "toast.saved": "Enregistré",
+    "toast.storageFull": "Mémoire pleine — exportez puis supprimez d'anciennes données.",
+    "toast.offline": "Hors ligne — l'app continue de fonctionner.",
+    "toast.updateReady": "Nouvelle version disponible", "toast.reload": "Recharger",
+    "toast.goalReached": "Objectif atteint. Bonne soirée !",
+
+    "kbd.title": "Raccourcis clavier", "kbd.palette": "Recherche rapide",
+    "kbd.stamp": "Pointer arrivée / départ", "kbd.prevDay": "Jour précédent",
+    "kbd.nextDay": "Jour suivant", "kbd.today": "Aujourd'hui", "kbd.theme": "Clair / sombre",
+    "kbd.save": "Forcer l'enregistrement", "kbd.help": "Cette aide"
+  };
+
+  /* ==================================================================== */
+  /* ITALIENISCH                                                           */
+  /* ==================================================================== */
+  DICT.it = {
+    "lang.name": "Italiano",
+    "app.name": "Zeitkonto",
+    "app.tagline": "L'orario di lavoro che si spiega da sé",
+
+    "nav.today": "Oggi", "nav.calendar": "Calendario", "nav.week": "Settimana",
+    "nav.stats": "Statistiche", "nav.reports": "Rapporti", "nav.achievements": "Traguardi",
+    "nav.settings": "Impostazioni", "nav.section.time": "Tempo", "nav.section.insight": "Analisi",
+    "nav.section.system": "Sistema", "nav.menu": "Menu",
+
+    "common.save": "Salva", "common.saved": "Salvato", "common.cancel": "Annulla",
+    "common.delete": "Elimina", "common.close": "Chiudi", "common.add": "Aggiungi",
+    "common.remove": "Rimuovi", "common.reset": "Ripristina", "common.today": "Oggi",
+    "common.yesterday": "Ieri", "common.tomorrow": "Domani", "common.now": "Adesso",
+    "common.all": "Tutto", "common.none": "Nessuno", "common.ok": "OK", "common.yes": "Sì",
+    "common.no": "No", "common.undo": "Annulla", "common.redo": "Ripeti",
+    "common.export": "Esporta", "common.import": "Importa", "common.print": "Stampa",
+    "common.search": "Cerca", "common.back": "Indietro", "common.next": "Avanti",
+    "common.finish": "Fatto", "common.apply": "Applica", "common.copy": "Copia",
+    "common.copied": "Copiato negli appunti", "common.edit": "Modifica",
+    "common.minutes": "minuti", "common.hours": "ore", "common.days": "giorni",
+    "common.day": "giorno", "common.week": "settimana", "common.month": "mese", "common.year": "anno",
+    "common.from": "Dal", "common.to": "Al", "common.total": "Totale", "common.average": "Media",
+    "common.optional": "facoltativo", "common.empty": "Ancora nulla",
+    "common.min": "min", "common.h": "h",
+
+    "day.title": "Registrazione giornaliera", "day.clockIn": "Entrata", "day.clockOut": "Uscita",
+    "day.breaks": "Pause", "day.addBreak": "Aggiungi pausa", "day.lunch": "Pausa pranzo",
+    "day.note": "Nota", "day.notePlaceholder": "Com'è andata oggi?",
+    "day.type": "Tipo di giorno", "day.location": "Luogo di lavoro", "day.target": "Ore dovute",
+    "day.targetOverride": "Ore dovute personalizzate", "day.net": "Lavoro netto",
+    "day.balance": "Saldo del giorno", "day.presence": "Presenza", "day.breakTotal": "Pause totali",
+    "day.requiredBreak": "Pausa obbligatoria", "day.autoDeducted": "Dedotta automaticamente",
+    "day.recommendedLeave": "Uscita alle", "day.remaining": "Ancora da fare",
+    "day.start": "Inizio", "day.end": "Fine", "day.label": "Etichetta", "day.paid": "pagata",
+    "day.halfDay": "Mezza giornata", "day.factor": "Quota", "day.clearDay": "Svuota giorno",
+    "day.copyPrevious": "Copia giorno precedente", "day.template": "Giornata standard",
+    "day.stampIn": "Timbra entrata", "day.stampOut": "Timbra uscita",
+    "day.startBreak": "Inizia pausa", "day.endBreak": "Termina pausa",
+    "day.running": "In corso dalle {time}", "day.onBreak": "In pausa dalle {time}",
+    "day.goalReached": "Obiettivo raggiunto", "day.overtimeNow": "Sei oltre di {v}",
+    "day.untilGoal": "Mancano {v} all'obiettivo", "day.timeline": "Andamento della giornata",
+    "day.work": "Lavoro", "day.break": "Pausa",
+    "day.enterClockIn": "Inserisci l'orario di entrata — il resto si calcola da solo.",
+    "day.explain": "Include {breaks} di pausa e {target} di ore dovute.",
+    "day.nextDay": "+{n} giorno", "day.nextDays": "+{n} giorni", "day.credited": "Accreditato",
+    "day.noTarget": "Nessun obbligo in questo giorno", "day.holidayName": "Festivo: {name}",
+    "day.progress": "dell'obiettivo",
+
+    "type.work": "Lavoro", "type.vacation": "Vacanze", "type.holiday": "Giorno festivo",
+    "type.sick": "Malattia", "type.accident": "Infortunio", "type.military": "Servizio militare",
+    "type.comp": "Compensazione", "type.training": "Formazione",
+    "type.unpaid": "Congedo non pagato", "type.free": "Giorno non lavorativo",
+
+    "loc.office": "In sede", "loc.home": "Telelavoro", "loc.field": "Servizio esterno", "loc.travel": "In viaggio",
+
+    "warn.title": "Avvisi",
+    "warn.break-auto": "{v} di pausa obbligatoria dedotti automaticamente — registrati solo {have}.",
+    "warn.break-short": "Pausa obbligatoria non raggiunta: mancano {v} (richiesti {required}).",
+    "warn.break-overlap": "Le pause sovrapposte sono state unite.",
+    "warn.break-outside": "{v} di pausa fuori dalla presenza sono stati tagliati.",
+    "warn.over-daily-max": "Massimo giornaliero superato di {v}.",
+    "warn.rest-short": "Solo {v} di riposo dal giorno precedente.",
+    "warn.worked-on-holiday": "Lavoro nel giorno di {name} — il tempo si aggiunge.",
+    "warn.no-break": "Oltre 6 ore senza pause registrate.",
+    "warn.invalid-start": "Orario di entrata illeggibile.",
+    "warn.invalid-end": "Orario di uscita illeggibile.",
+    "warn.invalid-break": "{count} riga/righe di pausa incomplete.",
+    "warn.missing-end": "Entrata registrata senza uscita — questo giorno resta fuori dal conto.",
+    "warn.presence-implausible": "Presenza di {v} — da verificare.",
+    "warn.allGood": "Tutto in ordine.",
+
+    "cal.title": "Calendario", "cal.lede": "Un mese a colpo d'occhio. Clicca un giorno per modificarlo.",
+    "cal.monthBalance": "Saldo del mese", "cal.monthTarget": "Dovute", "cal.monthActual": "Effettive",
+    "cal.bulk": "Compila un periodo", "cal.bulkLede": "Vacanze, malattia o compensazione su più giorni.",
+    "cal.bulkApply": "Applica", "cal.bulkSkipFree": "Salta fine settimana e festivi",
+    "cal.bulkDone": "{n} giorni impostati", "cal.legend": "Legenda", "cal.jumpToday": "Vai a oggi",
+
+    "week.title": "Panoramica settimanale", "week.lede": "Come si distribuisce la settimana.",
+    "week.kw": "Settimana {n}", "week.total": "Totale settimana", "week.target": "Dovute settimana",
+
+    "stats.title": "Statistiche", "stats.lede": "Riconoscere schemi invece di indovinare numeri.",
+    "stats.period": "Periodo", "stats.balanceTrend": "Andamento del saldo",
+    "stats.weeklyHours": "Ore per settimana", "stats.dayOfWeek": "Media per giorno",
+    "stats.arrival": "Entrata e uscita", "stats.breakCompliance": "Disciplina delle pause",
+    "stats.heatmap": "Panoramica annuale", "stats.distribution": "Tipi di giorno",
+    "stats.gaps": "Giorni lavorativi non registrati",
+    "stats.gapsHint": "Questi giorni hanno un obbligo ma nessuna registrazione. Non incidono sul conto.",
+    "stats.noGaps": "Nessuna lacuna — esemplare.",
+    "stats.avgStart": "Entrata media", "stats.avgEnd": "Uscita media", "stats.avgNet": "Netto medio",
+    "stats.longestDay": "Giornata più lunga", "stats.workedDays": "Giorni lavorati",
+    "stats.recordedDays": "Giorni registrati", "stats.overtimeDays": "Giorni in positivo",
+    "stats.undertimeDays": "Giorni in negativo", "stats.compliant": "conformi",
+    "stats.quota": "Contingenti", "stats.vacationUsed": "Vacanze godute",
+    "stats.vacationLeft": "Vacanze residue", "stats.sickDays": "Giorni di assenza",
+    "stats.compDays": "Giorni di compensazione",
+    "stats.needData": "Dati ancora insufficienti. Registra qualche giorno.",
+
+    "report.title": "Rapporti ed esportazione",
+    "report.lede": "Un rapporto mensile da stampare o consegnare — più tutti i dati grezzi.",
+    "report.monthly": "Rapporto mensile", "report.employee": "Collaboratore/trice",
+    "report.employeePlaceholder": "Nome per il rapporto", "report.period": "Periodo",
+    "report.created": "Creato il", "report.signEmployee": "Firma collaboratore/trice",
+    "report.signSupervisor": "Firma superiore", "report.exportCsv": "CSV (Excel)",
+    "report.exportJson": "Backup JSON", "report.exportIcs": "Calendario (.ics)",
+    "report.exportText": "Copia come testo", "report.printNow": "Stampa rapporto",
+    "report.carryIn": "Riporto precedente", "report.carryOut": "Riporto successivo",
+    "report.rangeAll": "Tutti i dati",
+    "report.gapNote": "{gaps} dei {days} giorni lavorativi del periodo non sono registrati. Rientrano nelle ore dovute ma non nel saldo.",
+
+    "ach.title": "Traguardi", "ach.lede": "Piccole ricompense per un conto ben tenuto.",
+    "ach.level": "Livello {n}", "ach.xpToNext": "Ancora {n} XP al livello {next}",
+    "ach.streak": "Serie", "ach.currentStreak": "Serie attuale", "ach.bestStreak": "Serie record",
+    "ach.dayStreak": "{n} giorni", "ach.unlocked": "Sbloccato il {date}",
+    "ach.locked": "Non ancora sbloccato", "ach.newBadge": "Nuovo distintivo!", "ach.progressOf": "{a} / {b}",
+
+    "set.title": "Impostazioni", "set.lede": "Configura una volta, poi funziona.",
+    "set.appearance": "Aspetto", "set.theme": "Tema", "set.theme.auto": "Automatico",
+    "set.theme.light": "Chiaro", "set.theme.dark": "Scuro", "set.language": "Lingua",
+    "set.density": "Densità", "set.density.compact": "Compatta", "set.density.normal": "Normale",
+    "set.density.cozy": "Ampia", "set.contrast": "Contrasto elevato",
+    "set.contrastHint": "Linee più marcate e testi secondari più scuri.",
+    "set.durationStyle": "Formato orario", "set.durationStyle.hm": "8 h 24 min",
+    "set.durationStyle.clock": "8:24", "set.durationStyle.decimal": "8.40 h",
+    "set.firstDay": "Inizio settimana", "set.showSeconds": "Secondi nell'orologio",
+
+    "set.model": "Modello di lavoro", "set.preset": "Preimpostazione", "set.workload": "Grado di occupazione",
+    "set.workloadHint": "Scala tutte le ore dovute. 80 % significa 80 % delle ore settimanali.",
+    "set.weekdayTargets": "Ore dovute per giorno",
+    "set.weekdayHint": "Formato h:mm o minuti. 0 = giorno non lavorativo.",
+    "set.weeklyTotal": "Ore settimanali",
+
+    "set.breaks": "Pause", "set.breakRuleset": "Base legale",
+    "set.autoDeduct": "Dedurre automaticamente la pausa obbligatoria",
+    "set.autoDeductHint": "Se manca una pausa di legge, viene dedotta invece che solo segnalata.",
+    "set.defaultLunch": "Pausa pranzo predefinita", "set.customTiers": "Soglie personalizzate",
+
+    "set.rounding": "Arrotondamento", "set.roundStep": "Passo", "set.roundStep.0": "Nessuno",
+    "set.roundMode": "Modalità", "set.roundMode.nearest": "Al più vicino",
+    "set.roundMode.up": "Per eccesso", "set.roundMode.down": "Per difetto",
+
+    "set.account": "Conto orario", "set.carryOver": "Saldo iniziale",
+    "set.carryOverHint": "Il saldo prima di usare questa app. Formato +12:30 o -3:15.",
+    "set.carryOverFrom": "Il conto parte dal", "set.capPlus": "Limite positivo",
+    "set.capMinus": "Limite negativo", "set.capHint": "Lascia vuoto per nessun limite.",
+    "set.countMissing": "Conta i giorni non registrati come negativi",
+    "set.countMissingHint": "Disattivato: le lacune sono mostrate ma non conteggiate. Consigliato.",
+
+    "set.quotas": "Contingenti", "set.vacationDays": "Giorni di vacanza all'anno",
+    "set.vacationCarry": "Riporto dall'anno precedente",
+
+    "set.holidays": "Giorni festivi", "set.region": "Regione",
+    "set.autoHolidays": "Applica automaticamente", "set.holidayPreview": "Prossimi festivi",
+
+    "set.compliance": "Protezione dei lavoratori", "set.maxDaily": "Massimo giornaliero",
+    "set.minRest": "Riposo minimo", "set.minRestUnit": "ore",
+
+    "set.comfort": "Comodità", "set.reminder": "Promemoria fine giornata",
+    "set.reminderHint": "Notifica poco prima di raggiungere le ore dovute.",
+    "set.reminderLead": "Anticipo", "set.confetti": "Coriandoli per i traguardi",
+    "set.notifPermission": "Consenti notifiche", "set.notifDenied": "Il browser blocca le notifiche.",
+
+    "set.data": "Dati",
+    "set.dataHint": "Tutto resta su questo dispositivo. Nessun account, nessun server, nessuna analisi esterna.",
+    "set.exportAll": "Salva tutto (JSON)", "set.importData": "Ripristina un backup",
+    "set.importDrop": "Trascina un file qui o clicca — JSON o CSV", "set.importMode": "All'importazione",
+    "set.importMode.merge": "Unisci (prevale il nuovo)",
+    "set.importMode.merge-keep": "Unisci (mantieni esistente)",
+    "set.importMode.replace": "Sostituisci tutto",
+    "set.importResult": "{added} nuovi, {updated} aggiornati, {skipped} saltati",
+    "set.resetAll": "Elimina tutti i dati",
+    "set.resetConfirm": "Eliminare davvero tutto? Solo un backup permette di tornare indietro.",
+    "set.storage": "Spazio occupato", "set.diagnostics": "Diagnostica",
+    "set.install": "Installa l'app",
+    "set.installHint": "Installala come app autonoma — poi funziona anche offline.",
+    "set.about": "Informazioni", "set.version": "Versione", "set.privacy": "Privacy",
+
+    "onb.welcome": "Benvenuto",
+    "onb.welcomeText": "Quattro passi e il tuo conto orario è pronto. Tutto resta su questo dispositivo.",
+    "onb.step.lang": "Lingua", "onb.step.model": "Modello", "onb.step.region": "Festivi",
+    "onb.step.carry": "Saldo iniziale", "onb.startNow": "Iniziamo", "onb.skip": "Più tardi",
+    "onb.done": "Configurazione completata",
+    "onb.doneText": "Puoi cambiare tutto nelle impostazioni. Premi {key} per la ricerca rapida.",
+
+    "cmd.placeholder": "Comando o data …", "cmd.noResults": "Nessun risultato",
+    "cmd.group.nav": "Navigazione", "cmd.group.actions": "Azioni", "cmd.group.jump": "Data",
+    "cmd.jumpTo": "Vai al {date}", "cmd.open": "Apri",
+
+    "toast.stampedIn": "Entrata timbrata alle {time}", "toast.stampedOut": "Uscita timbrata alle {time}",
+    "toast.breakStarted": "Pausa iniziata", "toast.breakEnded": "Pausa terminata · {v}",
+    "toast.dayCleared": "Giorno svuotato", "toast.copied": "Giorno precedente copiato",
+    "toast.undone": "Annullato", "toast.redone": "Ripetuto", "toast.exported": "File creato",
+    "toast.imported": "Importazione completata", "toast.saved": "Salvato",
+    "toast.storageFull": "Memoria piena — esporta ed elimina i dati vecchi.",
+    "toast.offline": "Offline — l'app continua a funzionare.",
+    "toast.updateReady": "Nuova versione disponibile", "toast.reload": "Ricarica",
+    "toast.goalReached": "Obiettivo raggiunto. Buona serata!",
+
+    "kbd.title": "Scorciatoie da tastiera", "kbd.palette": "Ricerca rapida",
+    "kbd.stamp": "Timbra entrata / uscita", "kbd.prevDay": "Giorno precedente",
+    "kbd.nextDay": "Giorno successivo", "kbd.today": "Vai a oggi", "kbd.theme": "Chiaro / scuro",
+    "kbd.save": "Forza salvataggio", "kbd.help": "Questa guida"
+  };
+
+  /* ==================================================================== */
+  /* ABZEICHEN — Namen und Beschreibungen                                  */
+  /* ==================================================================== */
+  var BADGE_TEXT = {
+    de: {
+      first:       ["Erster Stempel", "Den ersten Tag erfasst"],
+      week1:       ["Angekommen", "5 Tage erfasst"],
+      days30:      ["Routine", "30 Tage erfasst"],
+      days100:     ["Chronist", "100 Tage erfasst"],
+      days250:     ["Institution", "250 Tage erfasst"],
+      streak5:     ["Serie im Gang", "5 Arbeitstage am Stück"],
+      streak20:    ["Standhaft", "20 Arbeitstage am Stück"],
+      streak60:    ["Unaufhaltsam", "60 Arbeitstage am Stück"],
+      perfectWeek: ["Perfekte Woche", "Eine Woche vollständig und im Plus"],
+      perfect10:   ["Zehn von zehn", "10 perfekte Wochen"],
+      fullMonth:   ["Monat im Kasten", "Ein Monat lückenlos erfasst"],
+      zenMonth:    ["Ausgeglichen", "Monat mit Saldo unter einer Stunde"],
+      earlyBird:   ["Frühaufsteher", "10-mal vor 07:00 begonnen"],
+      nightOwl:    ["Nachteule", "10-mal nach 19:00 Feierabend"],
+      breakPro:    ["Pausen-Profi", "30 Tage mit korrekter Pause"],
+      punctual:    ["Punktlandung", "15-mal auf die Minute Feierabend"],
+      homeOffice:  ["Ortsunabhängig", "10 Tage im Homeoffice"],
+      vacation:    ["Erholt", "5 Ferientage geplant"],
+      marathon:    ["Marathon", "500 Stunden erfasst"],
+      millennium:  ["Gipfelstürmer", "2000 Stunden erfasst"],
+      chronicler:  ["Notizblock", "20 Tage mit Notiz"],
+      halfYear:    ["Halbjahr", "In 6 verschiedenen Monaten erfasst"],
+      archivist:   ["Archivar", "Erste Sicherung exportiert"],
+      balanced:    ["Nullsummenspiel", "Gesamtsaldo unter 30 Minuten"]
+    },
+    en: {
+      first:       ["First stamp", "Recorded your first day"],
+      week1:       ["Settled in", "5 days recorded"],
+      days30:      ["Routine", "30 days recorded"],
+      days100:     ["Chronicler", "100 days recorded"],
+      days250:     ["Institution", "250 days recorded"],
+      streak5:     ["On a roll", "5 working days in a row"],
+      streak20:    ["Steadfast", "20 working days in a row"],
+      streak60:    ["Unstoppable", "60 working days in a row"],
+      perfectWeek: ["Perfect week", "A full week, balance in credit"],
+      perfect10:   ["Ten out of ten", "10 perfect weeks"],
+      fullMonth:   ["Month complete", "A month without gaps"],
+      zenMonth:    ["In balance", "A month within one hour of target"],
+      earlyBird:   ["Early bird", "Started before 07:00 ten times"],
+      nightOwl:    ["Night owl", "Finished after 19:00 ten times"],
+      breakPro:    ["Break pro", "30 days with a proper break"],
+      punctual:    ["Bullseye", "Left right on target 15 times"],
+      homeOffice:  ["Location free", "10 days from home"],
+      vacation:    ["Rested", "5 vacation days planned"],
+      marathon:    ["Marathon", "500 hours recorded"],
+      millennium:  ["Summit", "2000 hours recorded"],
+      chronicler:  ["Notepad", "20 days with a note"],
+      halfYear:    ["Half a year", "Recorded across 6 different months"],
+      archivist:   ["Archivist", "Exported your first backup"],
+      balanced:    ["Zero sum", "Total balance within 30 minutes"]
+    },
+    fr: {
+      first:       ["Premier pointage", "Premier jour saisi"],
+      week1:       ["Bien installé", "5 jours saisis"],
+      days30:      ["Routine", "30 jours saisis"],
+      days100:     ["Chroniqueur", "100 jours saisis"],
+      days250:     ["Institution", "250 jours saisis"],
+      streak5:     ["Série lancée", "5 jours ouvrés d'affilée"],
+      streak20:    ["Constant", "20 jours ouvrés d'affilée"],
+      streak60:    ["Inarrêtable", "60 jours ouvrés d'affilée"],
+      perfectWeek: ["Semaine parfaite", "Une semaine complète et positive"],
+      perfect10:   ["Dix sur dix", "10 semaines parfaites"],
+      fullMonth:   ["Mois complet", "Un mois sans lacune"],
+      zenMonth:    ["Équilibré", "Un mois à moins d'une heure du dû"],
+      earlyBird:   ["Lève-tôt", "10 démarrages avant 07:00"],
+      nightOwl:    ["Couche-tard", "10 fins après 19:00"],
+      breakPro:    ["Pro des pauses", "30 jours avec pause correcte"],
+      punctual:    ["En plein dans le mille", "15 départs à l'heure exacte"],
+      homeOffice:  ["Sans attache", "10 jours en télétravail"],
+      vacation:    ["Reposé", "5 jours de vacances planifiés"],
+      marathon:    ["Marathon", "500 heures saisies"],
+      millennium:  ["Sommet", "2000 heures saisies"],
+      chronicler:  ["Bloc-notes", "20 jours annotés"],
+      halfYear:    ["Six mois", "Saisies sur 6 mois différents"],
+      archivist:   ["Archiviste", "Première sauvegarde exportée"],
+      balanced:    ["Somme nulle", "Solde total à moins de 30 minutes"]
+    },
+    it: {
+      first:       ["Prima timbratura", "Primo giorno registrato"],
+      week1:       ["Ambientato", "5 giorni registrati"],
+      days30:      ["Routine", "30 giorni registrati"],
+      days100:     ["Cronista", "100 giorni registrati"],
+      days250:     ["Istituzione", "250 giorni registrati"],
+      streak5:     ["Serie avviata", "5 giorni lavorativi di fila"],
+      streak20:    ["Costante", "20 giorni lavorativi di fila"],
+      streak60:    ["Inarrestabile", "60 giorni lavorativi di fila"],
+      perfectWeek: ["Settimana perfetta", "Una settimana completa e in positivo"],
+      perfect10:   ["Dieci su dieci", "10 settimane perfette"],
+      fullMonth:   ["Mese completo", "Un mese senza lacune"],
+      zenMonth:    ["In equilibrio", "Un mese entro un'ora dall'obiettivo"],
+      earlyBird:   ["Mattiniero", "10 inizi prima delle 07:00"],
+      nightOwl:    ["Nottambulo", "10 uscite dopo le 19:00"],
+      breakPro:    ["Maestro di pause", "30 giorni con pausa corretta"],
+      punctual:    ["Centro pieno", "15 uscite puntuali al minuto"],
+      homeOffice:  ["Senza confini", "10 giorni in telelavoro"],
+      vacation:    ["Riposato", "5 giorni di vacanza pianificati"],
+      marathon:    ["Maratona", "500 ore registrate"],
+      millennium:  ["Vetta", "2000 ore registrate"],
+      chronicler:  ["Taccuino", "20 giorni con nota"],
+      halfYear:    ["Sei mesi", "Registrazioni in 6 mesi diversi"],
+      archivist:   ["Archivista", "Primo backup esportato"],
+      balanced:    ["Somma zero", "Saldo totale entro 30 minuti"]
+    }
+  };
+
+  /* ==================================================================== */
+  /* ENGINE                                                                */
+  /* ==================================================================== */
+  var LANGS = ["de", "en", "fr", "it"];
+  var current = "de";
+
+  function setLang(lang) {
+    current = DICT[lang] ? lang : "de";
+    return current;
+  }
+
+  function getLang() { return current; }
+
+  function detect(navigatorLike) {
+    var nav = navigatorLike || (typeof navigator !== "undefined" ? navigator : null);
+    var prefs = (nav && (nav.languages || [nav.language])) || [];
+    for (var i = 0; i < prefs.length; i++) {
+      var code = String(prefs[i] || "").slice(0, 2).toLowerCase();
+      if (DICT[code]) return code;
+    }
+    return "de";
+  }
+
+  function t(key, vars) {
+    var dict = DICT[current] || DICT.de;
+    var value = dict[key];
+    if (value === undefined) value = DICT.de[key];
+    if (value === undefined) return key;
+    if (!vars) return value;
+    return value.replace(/\{(\w+)\}/g, function (m, name) {
+      return vars[name] !== undefined ? String(vars[name]) : m;
+    });
+  }
+
+  function badge(id) {
+    var set = BADGE_TEXT[current] || BADGE_TEXT.de;
+    var entry = set[id] || BADGE_TEXT.de[id] || [id, ""];
+    return { name: entry[0], desc: entry[1] };
+  }
+
+  /** Alle Tagesart-Bezeichnungen als flache Map (für Exporte). */
+  function typeLabels() {
+    var out = {};
+    ["work", "vacation", "holiday", "sick", "accident", "military", "comp", "training", "unpaid", "free"]
+      .forEach(function (k) { out[k] = t("type." + k); });
+    return out;
+  }
+
+  /* ---- Datums-/Zahlenformate ---------------------------------------- */
+  var LOCALES = { de: "de-CH", en: "en-GB", fr: "fr-CH", it: "it-CH" };
+
+  function locale() { return LOCALES[current] || "de-CH"; }
+
+  function formatDate(isoOrDate, opts) {
+    var d = typeof isoOrDate === "string"
+      ? new Date(+isoOrDate.slice(0, 4), +isoOrDate.slice(5, 7) - 1, +isoOrDate.slice(8, 10))
+      : isoOrDate;
+    if (!d || isNaN(d.getTime())) return String(isoOrDate || "");
+    try {
+      return new Intl.DateTimeFormat(locale(), opts || { day: "2-digit", month: "long", year: "numeric" }).format(d);
+    } catch (e) {
+      return d.toISOString().slice(0, 10);
+    }
+  }
+
+  function weekdayName(index, style) {
+    try {
+      var base = new Date(2024, 0, 7 + index); // 7.1.2024 war ein Sonntag
+      return new Intl.DateTimeFormat(locale(), { weekday: style || "short" }).format(base);
+    } catch (e) {
+      return ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"][index] || "";
+    }
+  }
+
+  function monthName(index, style) {
+    try {
+      return new Intl.DateTimeFormat(locale(), { month: style || "long" }).format(new Date(2024, index, 1));
+    } catch (e) {
+      return String(index + 1);
+    }
+  }
+
+  return {
+    LANGS: LANGS,
+    DICT: DICT,
+    setLang: setLang,
+    getLang: getLang,
+    detect: detect,
+    t: t,
+    badge: badge,
+    typeLabels: typeLabels,
+    locale: locale,
+    formatDate: formatDate,
+    weekdayName: weekdayName,
+    monthName: monthName
+  };
+});

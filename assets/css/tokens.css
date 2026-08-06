@@ -1,0 +1,261 @@
+/* ==========================================================================
+   ZEITKONTO — Design Tokens
+   --------------------------------------------------------------------------
+   Die Farbwelt orientiert sich am warmen Taupe-Grau des Logos.
+   Chroma wird bewusst sparsam eingesetzt: die Marke ist monochrom,
+   Farbe bedeutet immer eine Aussage (Plus, Minus, Warnung, Info).
+   ========================================================================== */
+
+:root {
+  /* ---- Markenskala (Taupe) ------------------------------------------- */
+  --brand-25:  #FBFAF9;
+  --brand-50:  #F6F4F2;
+  --brand-100: #EDEAE6;
+  --brand-200: #DCD6D0;
+  --brand-300: #C4BBB2;
+  --brand-400: #A79C92;
+  --brand-500: #857C74; /* Logo-Ton */
+  --brand-600: #6D655E;
+  --brand-700: #58514B;
+  --brand-800: #3F3A35;
+  --brand-900: #2A2622;
+  --brand-950: #1A1715;
+
+  /* ---- Funktionsfarben ----------------------------------------------- */
+  --plus:      #3F8F5B;
+  --plus-soft: rgba(63, 143, 91, .12);
+  --plus-line: rgba(63, 143, 91, .34);
+
+  --minus:      #BE5040;
+  --minus-soft: rgba(190, 80, 64, .12);
+  --minus-line: rgba(190, 80, 64, .34);
+
+  --warn:      #B8842A;
+  --warn-soft: rgba(184, 132, 42, .13);
+  --warn-line: rgba(184, 132, 42, .34);
+
+  --info:      #4E7396;
+  --info-soft: rgba(78, 115, 150, .12);
+  --info-line: rgba(78, 115, 150, .32);
+
+  --focus-ring: rgba(133, 124, 116, .45);
+
+  /* ---- Abwesenheitsarten (Kalenderfarben) ----------------------------
+     Identitätsfarben im Kalender. Sie stehen NIE allein: jede Zelle trägt
+     zusätzlich ein Textkürzel, jede Legende einen Namen.                */
+  --type-work:     var(--brand-500);
+  --type-vacation: #2F6FA8;
+  --type-holiday:  #7A4FA3;
+  --type-sick:     #B4442F;
+  --type-accident: #9C3B28;
+  --type-comp:     #9A6B12;
+  --type-military: #4F7A5A;
+  --type-training: #2E7D52;
+  --type-unpaid:   #8C8C8C;
+  --type-free:     #A79C92;
+
+  /* ---- Diagrammfarben ------------------------------------------------
+     Divergierendes Paar für Plus/Minus. Beide Werte sind mit
+     scripts/validate_palette.js geprüft (Helligkeitsband, Chroma,
+     Farbfehlsichtigkeit, Kontrast). Die Rot/Grün-Trennung liegt im
+     6–8-Band, deshalb steht die Farbe nie allein: Vorzeichen, Lage zur
+     Nulllinie und eine Schraffur auf negativen Flächen tragen dieselbe
+     Aussage.                                                            */
+  --chart-plus:   #2E7D52;
+  --chart-minus:  #C2551F;
+  --chart-mark:   #857C74;   /* einfarbige Balken/Linien */
+  --chart-mark-2: #A79C92;
+  --chart-zero:   #6D655E;
+
+  /* ---- Radien, Schatten, Bewegung ------------------------------------ */
+  --r-xs: 6px;
+  --r-sm: 10px;
+  --r-md: 14px;
+  --r-lg: 20px;
+  --r-xl: 28px;
+  --r-pill: 999px;
+
+  --ease: cubic-bezier(.34, .06, .16, 1);
+  --ease-out: cubic-bezier(.16, 1, .3, 1);
+  --t-fast: .14s var(--ease);
+  --t: .22s var(--ease);
+  --t-slow: .45s var(--ease-out);
+
+  /* ---- Typografie ----------------------------------------------------- */
+  --font-sans: "Inter var", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI",
+               "Helvetica Neue", Helvetica, Arial, "Noto Sans", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", "Roboto Mono",
+               Menlo, Consolas, "Liberation Mono", monospace;
+
+  --fs-3xs: 10px;
+  --fs-2xs: 11px;
+  --fs-xs:  12px;
+  --fs-sm:  13px;
+  --fs-md:  14px;
+  --fs-lg:  16px;
+  --fs-xl:  20px;
+  --fs-2xl: 26px;
+  --fs-3xl: 34px;
+  --fs-4xl: 46px;
+  --fs-hero: clamp(38px, 8vw, 62px);
+
+  /* ---- Raster ---------------------------------------------------------- */
+  --gap-1: 4px;
+  --gap-2: 8px;
+  --gap-3: 12px;
+  --gap-4: 16px;
+  --gap-5: 22px;
+  --gap-6: 30px;
+  --gap-7: 44px;
+
+  --sidebar-w: 232px;
+  --header-h: 62px;
+  --content-max: 1320px;
+}
+
+/* ==========================================================================
+   HELL (Standard) — Papierweiß mit Taupe-Tiefe
+   ========================================================================== */
+:root,
+[data-theme="light"] {
+  color-scheme: light;
+
+  --bg:            #F4F2EF;
+  --bg-veil-1:     rgba(133, 124, 116, .10);
+  --bg-veil-2:     rgba(196, 187, 178, .16);
+
+  --surface:       #FFFFFF;
+  --surface-2:     #FAF8F6;
+  --surface-3:     #F2EFEB;
+  --surface-inset: #EFEBE7;
+  --surface-invert:#2A2622;
+
+  --line:          rgba(42, 38, 34, .11);
+  --line-strong:   rgba(42, 38, 34, .20);
+  --line-faint:    rgba(42, 38, 34, .06);
+
+  --ink:           #221F1C;
+  --ink-2:         #56504A;
+  --ink-3:         #857C74;
+  --ink-invert:    #FBFAF9;
+
+  --accent:        #6D655E;
+  --accent-ink:    #FFFFFF;
+  --accent-soft:   rgba(109, 101, 94, .10);
+
+  --shadow-xs: 0 1px 2px rgba(42, 38, 34, .06);
+  --shadow-sm: 0 2px 6px rgba(42, 38, 34, .07), 0 1px 2px rgba(42, 38, 34, .04);
+  --shadow-md: 0 10px 26px rgba(42, 38, 34, .09), 0 2px 6px rgba(42, 38, 34, .05);
+  --shadow-lg: 0 26px 60px rgba(42, 38, 34, .16), 0 6px 16px rgba(42, 38, 34, .07);
+
+  --grid-line: rgba(42, 38, 34, .055);
+  --ring-track: rgba(42, 38, 34, .09);
+}
+
+/* ==========================================================================
+   DUNKEL — warmes Anthrazit, kein kaltes Blauschwarz
+   ========================================================================== */
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg:            #171512;
+  --bg-veil-1:     rgba(167, 156, 146, .10);
+  --bg-veil-2:     rgba(133, 124, 116, .08);
+
+  --surface:       #211E1A;
+  --surface-2:     #262320;
+  --surface-3:     #2E2A26;
+  --surface-inset: #131110;
+  --surface-invert:#F6F4F2;
+
+  --line:          rgba(246, 244, 242, .10);
+  --line-strong:   rgba(246, 244, 242, .20);
+  --line-faint:    rgba(246, 244, 242, .05);
+
+  --ink:           #F2EFEB;
+  --ink-2:         #B6ADA4;
+  --ink-3:         #8B827A;
+  --ink-invert:    #171512;
+
+  --accent:        #C4BBB2;
+  --accent-ink:    #221F1C;
+  --accent-soft:   rgba(196, 187, 178, .12);
+
+  --plus:      #5FBE83;
+  --plus-soft: rgba(95, 190, 131, .14);
+  --plus-line: rgba(95, 190, 131, .34);
+
+  --minus:      #E2796A;
+  --minus-soft: rgba(226, 121, 106, .14);
+  --minus-line: rgba(226, 121, 106, .34);
+
+  --warn:      #DCA84A;
+  --warn-soft: rgba(220, 168, 74, .14);
+  --warn-line: rgba(220, 168, 74, .32);
+
+  --info:      #7FA6CB;
+  --info-soft: rgba(127, 166, 203, .14);
+  --info-line: rgba(127, 166, 203, .32);
+
+  --type-work:     #C4BBB2;
+  --type-vacation: #6FA0D2;
+  --type-holiday:  #B08BDA;
+  --type-sick:     #E2796A;
+  --type-accident: #CE6754;
+  --type-comp:     #DCA84A;
+  --type-military: #7FB08D;
+  --type-training: #4CA476;
+  --type-unpaid:   #9A938C;
+  --type-free:     #7A736C;
+
+  /* Dunkelmodus-Diagrammfarben: eigene Stufen, kein automatisches
+     Umkehren der hellen Werte. Ebenfalls validiert gegen #211E1A.      */
+  --chart-plus:   #4CA476;
+  --chart-minus:  #D9743E;
+  --chart-mark:   #C4BBB2;
+  --chart-mark-2: #857C74;
+  --chart-zero:   #A79C92;
+
+  --focus-ring: rgba(196, 187, 178, .5);
+
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, .4);
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, .45);
+  --shadow-md: 0 12px 30px rgba(0, 0, 0, .5), 0 2px 8px rgba(0, 0, 0, .3);
+  --shadow-lg: 0 30px 70px rgba(0, 0, 0, .6), 0 8px 20px rgba(0, 0, 0, .35);
+
+  --grid-line: rgba(246, 244, 242, .05);
+  --ring-track: rgba(246, 244, 242, .09);
+}
+
+/* ==========================================================================
+   KONTRAST-MODUS (Barrierefreiheit)
+   ========================================================================== */
+[data-contrast="high"] {
+  --line:        rgba(42, 38, 34, .34);
+  --line-strong: rgba(42, 38, 34, .55);
+  --ink-2:       #3A342F;
+  --ink-3:       #56504A;
+}
+[data-theme="dark"][data-contrast="high"] {
+  --line:        rgba(246, 244, 242, .30);
+  --line-strong: rgba(246, 244, 242, .5);
+  --ink-2:       #DED7D0;
+  --ink-3:       #B6ADA4;
+}
+
+/* ==========================================================================
+   DICHTE — kompakt / normal / luftig
+   ========================================================================== */
+[data-density="compact"] {
+  --gap-3: 9px;
+  --gap-4: 12px;
+  --gap-5: 16px;
+  --gap-6: 22px;
+  --header-h: 54px;
+}
+[data-density="cozy"] {
+  --gap-3: 15px;
+  --gap-4: 20px;
+  --gap-5: 28px;
+  --gap-6: 38px;
+}

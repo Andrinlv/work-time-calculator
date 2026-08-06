@@ -1,0 +1,23 @@
+# Abhängigkeiten (die App hat keine — das hier gilt nur für Werkzeuge)
+node_modules/
+package-lock.json
+
+# Betriebssystem
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editoren
+.vscode/
+.idea/
+*.swp
+*~
+
+# Protokolle und Zwischenstände
+*.log
+.cache/
+tmp/
+
+# Hinweis: dist/zeitkonto.html wird bewusst mitversioniert.
+# Genau diese Datei ist der einfachste Installationsweg — sie soll
+# direkt aus dem Repository herunterladbar sein.
