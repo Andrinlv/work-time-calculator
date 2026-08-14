@@ -1,6 +1,6 @@
 {
   "name": "zeitkonto",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "description": "Arbeitszeit erfassen, Feierabend berechnen, Gleitzeitsaldo im Blick behalten. Läuft vollständig im Browser, offline, ohne Konto.",
   "license": "MIT",

@@ -292,11 +292,15 @@
       // Nur bewusst gesetzte Tagesarten und Feiertage bekommen ein Kürzel.
       // Ein Wochenende ist schon durch Spalte und Hintergrund erkennbar —
       // ein zusätzliches „Arbeitsfrei“ wäre nur Lärm.
-      var explicitType = !!App.record(iso).type;
+      var record = App.record(iso);
+      var explicitType = !!record.type;
+      var fromOutlook = record.source === "outlook";
       if (explicitType && res.type !== "work") {
         cell.appendChild(D.el("span.flag", {
-          text: I.t("type." + res.type) + (res.absenceFactor < 1 ? " " + Math.round(res.absenceFactor * 100) + "%" : ""),
-          style: { "--c": res.typeMeta.color }
+          text: (fromOutlook ? "◇ " : "") +
+            I.t("type." + res.type) + (res.absenceFactor < 1 ? " " + Math.round(res.absenceFactor * 100) + "%" : ""),
+          style: { "--c": res.typeMeta.color },
+          "data-tip": fromOutlook ? I.t("ol.fromCalendar") : null
         }));
       } else if (res.holiday) {
         cell.appendChild(D.el("span.flag", {

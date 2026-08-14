@@ -4,6 +4,41 @@ Alle nennenswerten Änderungen an Zeitkonto. Das Format folgt lose
 [Keep a Changelog](https://keepachangelog.com/de/1.1.0/), die Versionierung
 [SemVer](https://semver.org/lang/de/).
 
+## [1.1.0] — 2026-08-06
+
+### Neu — Outlook-Kalender
+
+- Anmeldung mit dem normalen Microsoft-Konto über OAuth 2.0 mit PKCE. Ohne
+  Server, ohne Client-Secret, ohne Fremdbibliothek — der Ablauf ist nach
+  Spezifikation von Hand umgesetzt, damit die App abhängigkeitsfrei bleibt.
+- Ferien, Krankheit, Unfall, Militär, Weiterbildung, Kompensation und
+  unbezahlt frei werden aus dem Kalender erkannt: über den Status *Abwesend*
+  sowie über Stichwörter in Betreff und Kategorien, in allen vier Sprachen.
+- Halbtage werden erkannt; zwei Halbtage derselben Art ergeben einen ganzen Tag.
+- *Woanders tätig* setzt den Arbeitsort auf Homeoffice, nicht die Tagesart.
+- Mehrere Kalender wählbar, Zuordnungsregeln frei bearbeitbar, Zeitraum
+  einstellbar, stiller Abgleich beim Start (höchstens alle vier Stunden).
+- Vorschau vor jeder Übernahme, jede Zeile einzeln abwählbar, mit
+  Rückgängig-Möglichkeit danach.
+- Tage mit eigenen Stempelungen sind geschützt und werden ausdrücklich
+  ausgewiesen statt still übergangen. Aus dem Kalender stammende Tage tragen
+  ein Kennzeichen und werden bei gelöschten Terminen wieder zurückgenommen.
+- Private Termine bleiben aussen vor; ihr Betreff wird auch bei erkannter
+  Abwesenheit nicht in die Notiz übernommen.
+
+### Geändert
+
+- Serviceworker-Version auf v1.1.0 erhöht — beim nächsten Aufruf meldet die
+  App die neue Fassung.
+- 40 zusätzliche Tests, insgesamt 148.
+
+### Grenzen
+
+- Die Einzeldatei-Fassung (`dist/zeitkonto.html`) bietet die Anbindung nicht an:
+  OAuth verlangt einen echten Origin, `file://` erfüllt das nicht.
+- Nötig ist eine Azure-App-Registrierung (Plattform „Einzelseitige Anwendung",
+  Berechtigung `Calendars.Read`). Die Einrichtung steht in der README.
+
 ## [1.0.0] — 2026-08-06
 
 Erste vollständige Fassung. Aus einem einzelnen Arbeitszeitrechner ist eine

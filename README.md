@@ -8,7 +8,7 @@ die Feiertage deines Kantons. Alles bleibt auf deinem Gerät.
 
 ```
   ◯ ◯      ZEITKONTO
-  ◯ ●      Version 1.0.0
+  ◯ ●      Version 1.1.0
 ```
 
 ---
@@ -111,6 +111,60 @@ Die Wirkung ist bewusst unterschiedlich:
 - **Export** als CSV (Excel-tauglich), JSON (vollständige Sicherung),
   ICS (Kalender) oder Text zum Kopieren. **Import** von JSON und CSV.
 
+### Outlook-Kalender
+
+Ferien, Krankheit und Homeoffice müssen nicht doppelt erfasst werden. Zeitkonto
+liest sie aus deinem Outlook-Kalender — **du trägst nur noch die Arbeitszeit ein.**
+
+- **Anmeldung mit dem normalen Microsoft-Konto.** OAuth 2.0 mit PKCE, ganz ohne
+  Server und ohne Client-Secret. Funktioniert auf allen Geräten, auch in der
+  installierten App.
+- **Erkannt wird**, was der Kalender hergibt: Termine mit Status *Abwesend*,
+  Stichwörter im Betreff oder in den Kategorien (Ferien, Krank, Militär,
+  Weiterbildung, Kompensation …) in allen vier Sprachen, Halbtage, und
+  *Woanders tätig* als Homeoffice.
+- **Nichts wird stillschweigend geändert.** Der Abgleich zeigt eine Vorschau;
+  jede Zeile lässt sich einzeln abwählen. Tage mit eigenen Stempelungen sind
+  geschützt und werden ausdrücklich als solche ausgewiesen.
+- **Gelesen wird nur.** Es gibt keinen Schreibzugriff auf deinen Kalender —
+  die Berechtigung lautet `Calendars.Read`.
+
+#### Einrichtung in Azure (einmalig, ca. 5 Minuten)
+
+Nötig ist eine App-Registrierung. Ohne sie gibt es keine Client-ID und damit
+keine Anmeldung.
+
+1. **portal.azure.com** → *Microsoft Entra ID* → *App-Registrierungen* → **Neue Registrierung**
+2. Name frei wählen, z. B. `Zeitkonto`
+3. **Unterstützte Kontotypen**
+   - nur Firmenkonten → später `tenant` = eure Mandanten-ID
+   - auch private Konten → `tenant` = `common` (Standard)
+4. **Umleitungs-URI**: Plattform **„Einzelseitige Anwendung (SPA)"** wählen —
+   *nicht* „Web". Das ist der häufigste Fehler; mit „Web" verlangt Microsoft ein
+   Client-Secret und die Anmeldung schlägt fehl.
+   Als Wert exakt das eintragen, was Zeitkonto unter *Einstellungen →
+   Outlook-Kalender → Umleitungs-URI* anzeigt, zum Beispiel:
+   ```
+   https://andrinlv.github.io/work-time-calculator/index.html
+   ```
+5. **Registrieren** → die *Anwendungs-ID (Client)* kopieren
+6. *API-Berechtigungen* → **Microsoft Graph** → **Delegierte Berechtigungen** →
+   `Calendars.Read` hinzufügen (`User.Read` ist meist schon vorhanden)
+7. Falls euer Mandant die Benutzerzustimmung gesperrt hat: **Administratorzustimmung
+   erteilen** — das macht die IT
+8. In Zeitkonto: *Einstellungen → Outlook-Kalender* → Client-ID einfügen → **Mit Outlook verbinden**
+
+Ein Client-Secret wird **nicht** gebraucht und darf auch nicht hinterlegt werden —
+im Browser gäbe es dafür kein Versteck. Genau dafür ist PKCE gemacht.
+
+#### Grenzen
+
+- Die **Einzeldatei-Fassung kann das nicht.** OAuth verlangt einen echten
+  Origin als Umleitungsziel; `file://` erfüllt das nicht. Die Funktion wird dort
+  ausgeblendet, alles andere bleibt.
+- Jede Umgebung braucht ihre eigene Umleitungs-URI in der Registrierung
+  (Produktivseite, Testserver, `localhost`).
+
 ### Und ein bisschen Spiel
 
 Serien, Stufen und 24 Abzeichen — vom *Ersten Stempel* über die *Perfekte Woche*
@@ -161,7 +215,7 @@ erreichbar und lässt sich von dort installieren.
 ## Entwicklung
 
 ```bash
-npm test      # 108 Tests für den Rechenkern
+npm test      # 148 Tests für Rechenkern und Kalenderabgleich
 npm run build # Icons erzeugen + Einzeldatei bauen
 npm start     # lokaler Server
 ```
@@ -193,12 +247,16 @@ assets/js/core/
 assets/js/data/
   store.js              Speicherung, Schema-Migration, Rückgängig
   exporters.js          CSV, ICS, Text, CSV-Import
+  msauth.js             OAuth 2.0 mit PKCE gegen Microsoft (ohne Fremdbibliothek)
+  graph.js              Microsoft Graph — calendarView, Kalenderliste
+  calendarsync.js       Termine → Tagesarten, Abgleichplan (reine Funktionen)
 
 assets/js/ui/
   i18n.js               vier Sprachen
   dom.js                DOM-Werkzeuge, Icons, Toasts, Modale
   charts.js             SVG-Diagramme von Hand
   onboarding.js         Erstkonfiguration
+  outlooksync.js        Ablauf und Vorschau des Kalenderabgleichs
   app.js                Zustand, Navigation, Tastatur, PWA
   views/                die sieben Ansichten
 
@@ -206,7 +264,7 @@ tools/
   make-icons.js         erzeugt alle PNG-Icons (ohne Fremdbibliotheken)
   build-single-file.js  baut dist/zeitkonto.html
 
-tests/                  Rechenkern, Regeln, Feiertage, Export, Speicher
+tests/                  Rechenkern, Regeln, Feiertage, Export, Speicher, Kalenderabgleich
 ```
 
 ### Grundsätze im Code

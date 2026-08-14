@@ -298,6 +298,11 @@
     grid.appendChild(hol.node);
 
     /* ================================================================ */
+    /* Outlook-Kalender                                                  */
+    /* ================================================================ */
+    grid.appendChild(outlookSection(App).node);
+
+    /* ================================================================ */
     /* Arbeitsschutz & Komfort                                           */
     /* ================================================================ */
     var comp = section(I.t("set.compliance"), "shield");
@@ -472,6 +477,162 @@
     kbdBtn.addEventListener("click", App.showShortcuts);
     about.body.appendChild(kbdBtn);
     grid.appendChild(about.node);
+  }
+
+  /* ==================================================================== */
+  /* Outlook-Kalender                                                      */
+  /* ==================================================================== */
+
+  function outlookSection(App) {
+    var OL = ZK.OutlookSync;
+    var box = section(I.t("ol.title"), "calendar");
+    var st = OL.status(App);
+    var s = st.settings;
+
+    box.body.appendChild(D.el("p.muted", {
+      text: I.t("ol.lede"),
+      style: { fontSize: "13px", marginBottom: "14px" }
+    }));
+
+    /* ---- Einzeldatei kann kein OAuth --------------------------------- */
+    if (!st.supported) {
+      var blocked = D.el("div.notice.warn");
+      blocked.innerHTML = D.icon("info") +
+        "<div><strong>" + D.esc(I.t("ol.needsHttps")) + "</strong></div>";
+      box.body.appendChild(blocked);
+      return box;
+    }
+
+    /* ---- Verbindung --------------------------------------------------- */
+    if (st.signedIn && st.account) {
+      var who = D.el("div.notice.plus.mb-4");
+      who.innerHTML = D.icon("check") +
+        "<div><strong>" + D.esc(I.t("ol.signedInAs", { name: st.account.name || st.account.username })) + "</strong>" +
+        (st.account.username ? "<div class='sub'>" + D.esc(st.account.username) + "</div>" : "") + "</div>";
+      box.body.appendChild(who);
+
+      var actions = D.el("div.row.mb-4");
+      var syncBtn = D.el("button.btn.primary", {
+        type: "button", html: D.icon("refresh") + "<span>" + D.esc(I.t("ol.syncNow")) + "</span>"
+      });
+      syncBtn.addEventListener("click", function () { OL.run(App); });
+      actions.appendChild(syncBtn);
+
+      var calBtn = D.el("button.btn.sm", {
+        type: "button", html: D.icon("calendar") + "<span>" + D.esc(I.t("ol.chooseCalendars")) + "</span>"
+      });
+      calBtn.addEventListener("click", function () { OL.chooseCalendars(App); });
+      actions.appendChild(calBtn);
+
+      var ruleBtn = D.el("button.btn.sm", {
+        type: "button", html: D.icon("filter") + "<span>" + D.esc(I.t("ol.editRules")) + "</span>"
+      });
+      ruleBtn.addEventListener("click", function () { OL.editRules(App); });
+      actions.appendChild(ruleBtn);
+
+      var outBtn = D.el("button.btn.sm.ghost", { type: "button", text: I.t("ol.signOut") });
+      outBtn.addEventListener("click", function () { OL.signOut(App); });
+      actions.appendChild(outBtn);
+      box.body.appendChild(actions);
+
+      box.body.appendChild(D.el("div", {
+        style: { fontSize: "11px", color: "var(--ink-3)", marginBottom: "8px" },
+        text: I.t("ol.lastSync") + ": " + (s.lastSyncAt
+          ? I.formatDate(s.lastSyncAt.slice(0, 10), { day: "2-digit", month: "2-digit", year: "numeric" }) +
+            " " + s.lastSyncAt.slice(11, 16)
+          : I.t("ol.never"))
+      }));
+
+      /* ---- Verhalten --------------------------------------------------- */
+      box.body.appendChild(rowSwitch(I.t("ol.autoSync"), I.t("ol.autoSyncHint"), s.autoSync !== false, function (on) {
+        OL.saveSettings(App, { autoSync: on });
+      }));
+      box.body.appendChild(rowSwitch(I.t("ol.importHomeOffice"), I.t("ol.importHomeOfficeHint"), s.importHomeOffice !== false, function (on) {
+        OL.saveSettings(App, { importHomeOffice: on });
+      }));
+      box.body.appendChild(rowSwitch(I.t("ol.copySubject"), "", s.copySubjectToNote !== false, function (on) {
+        OL.saveSettings(App, { copySubjectToNote: on });
+      }));
+      box.body.appendChild(rowSwitch(I.t("ol.ignorePrivate"), "", s.ignorePrivate !== false, function (on) {
+        OL.saveSettings(App, { ignorePrivate: on });
+      }));
+      box.body.appendChild(rowNumber(I.t("ol.pastDays"), "", s.pastDays, I.t("common.days"), function (v) {
+        OL.saveSettings(App, { pastDays: Math.max(0, Math.min(3650, Math.round(v))) });
+      }));
+      box.body.appendChild(rowNumber(I.t("ol.futureDays"), "", s.futureDays, I.t("common.days"), function (v) {
+        OL.saveSettings(App, { futureDays: Math.max(0, Math.min(3650, Math.round(v))) });
+      }));
+    } else {
+      /* ---- Einrichtung ------------------------------------------------- */
+      var setup = D.el("div.notice.info.mb-4");
+      setup.innerHTML = D.icon("info") +
+        "<div><strong>" + D.esc(I.t("ol.setup")) + "</strong>" +
+        "<div class='sub'>" + D.esc(I.t("ol.setupHint")) + "</div></div>";
+      box.body.appendChild(setup);
+
+      /* Umleitungs-URI zum Kopieren — der häufigste Stolperstein */
+      var uriField = D.el("div.field.mb-3");
+      uriField.appendChild(D.el("label", { text: I.t("ol.redirectUri") }));
+      var uriRow = D.el("div.row.tight.nowrap");
+      var uriInput = D.el("input.input.mono", {
+        type: "text", value: st.redirectUri || "", readonly: true,
+        style: { fontSize: "12px" }
+      });
+      uriInput.addEventListener("focus", function () { uriInput.select(); });
+      var copyBtn = D.el("button.btn.icon", {
+        type: "button", "aria-label": I.t("common.copy"), html: D.icon("copy")
+      });
+      copyBtn.addEventListener("click", function () {
+        D.copyText(st.redirectUri || "").then(function () { D.toast(I.t("common.copied")); });
+      });
+      uriRow.appendChild(uriInput);
+      uriRow.appendChild(copyBtn);
+      uriField.appendChild(uriRow);
+      uriField.appendChild(D.el("div.hint", { text: I.t("ol.redirectUriHint") }));
+      box.body.appendChild(uriField);
+
+      var idField = D.el("div.field.mb-3");
+      idField.appendChild(D.el("label", { text: I.t("ol.clientId") }));
+      var idInput = D.el("input.input.mono", {
+        type: "text", value: s.clientId || "",
+        placeholder: "00000000-0000-0000-0000-000000000000",
+        style: { fontSize: "12px" }
+      });
+      idInput.addEventListener("change", function () {
+        OL.saveSettings(App, { clientId: idInput.value.trim() });
+        App.renderView();
+      });
+      idField.appendChild(idInput);
+      idField.appendChild(D.el("div.hint", { text: I.t("ol.clientIdHint") }));
+      box.body.appendChild(idField);
+
+      var tenantField = D.el("div.field.mb-4");
+      tenantField.appendChild(D.el("label", { text: I.t("ol.tenant") }));
+      var tenantInput = D.el("input.input.mono", {
+        type: "text", value: s.tenant || "common", placeholder: "common", style: { fontSize: "12px" }
+      });
+      tenantInput.addEventListener("change", function () {
+        OL.saveSettings(App, { tenant: tenantInput.value.trim() || "common" });
+      });
+      tenantField.appendChild(tenantInput);
+      tenantField.appendChild(D.el("div.hint", { text: I.t("ol.tenantHint") }));
+      box.body.appendChild(tenantField);
+
+      var connect = D.el("button.btn.primary.block", {
+        type: "button",
+        html: D.icon("external") + "<span>" + D.esc(I.t("ol.connect")) + "</span>",
+        disabled: !(s.clientId || "").trim()
+      });
+      connect.addEventListener("click", function () { OL.signIn(App); });
+      box.body.appendChild(connect);
+    }
+
+    box.body.appendChild(D.el("p.muted", {
+      text: I.t("ol.privacy"),
+      style: { fontSize: "11px", marginTop: "14px", lineHeight: "1.5" }
+    }));
+
+    return box;
   }
 
   /* ==================================================================== */

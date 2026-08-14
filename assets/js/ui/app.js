@@ -15,7 +15,7 @@
   var E = ZK.Engine;
   var I = ZK.I18n;
 
-  var APP_VERSION = "1.0.0";
+  var APP_VERSION = "1.1.0";
 
   ZK.Views = ZK.Views || {};
 
@@ -433,6 +433,7 @@
       { icon: App.effectiveTheme === "dark" ? "sun" : "moon", label: I.t("set.theme"), kbd: "T", run: App.toggleTheme },
       { icon: "download", label: I.t("set.exportAll"), run: function () { App.exportJSON(); } },
       { icon: "printer", label: I.t("report.printNow"), run: function () { App.go("reports"); setTimeout(function () { window.print(); }, 350); } },
+      { icon: "calendar", label: I.t("ol.syncNow"), sub: I.t("ol.title"), run: function () { App.syncOutlook(); } },
       { icon: "keyboard", label: I.t("kbd.title"), kbd: "?", run: showShortcuts },
       { icon: "refresh", label: I.t("common.undo"), kbd: "Ctrl+Z", run: function () { App.undo(); } }
     ];
@@ -767,6 +768,32 @@
     }, deltaMin * 60 * 1000);
   };
 
+  /* ================================================================== */
+  /* Outlook                                                             */
+  /* ================================================================== */
+
+  /**
+   * Stiller Abgleich beim Start. Höchstens alle vier Stunden, damit ein
+   * Neuladen der Seite nicht jedes Mal eine Anfrage auslöst.
+   */
+  App.autoSyncOutlook = function () {
+    if (!ZK.OutlookSync || !ZK.MsAuth) return;
+    var s = ZK.OutlookSync.settingsOf(App);
+    if (s.autoSync === false) return;
+    if (!ZK.MsAuth.isConfigured() || !ZK.MsAuth.isSignedIn()) return;
+
+    if (s.lastSyncAt) {
+      var age = Date.now() - new Date(s.lastSyncAt).getTime();
+      if (isFinite(age) && age < 4 * 60 * 60 * 1000) return;
+    }
+    ZK.OutlookSync.run(App, { silent: true });
+  };
+
+  App.syncOutlook = function () {
+    if (!ZK.OutlookSync) return;
+    ZK.OutlookSync.run(App);
+  };
+
   App.requestNotifications = function () {
     if (typeof Notification === "undefined") return Promise.resolve("unsupported");
     return Notification.requestPermission().then(function (p) {
@@ -923,6 +950,15 @@
     App.applyTheme();
     App.applyDensity();
 
+    /* Rückkehr von der Microsoft-Anmeldung zuerst abfangen: handleRedirect()
+       räumt die Adresszeile sofort auf, deshalb liest readHash() danach
+       bereits das wiederhergestellte Ziel. */
+    var authFlow = null;
+    if (ZK.OutlookSync && ZK.MsAuth) {
+      ZK.OutlookSync.configure(App);
+      if (ZK.MsAuth.hasRedirect()) authFlow = ZK.MsAuth.handleRedirect();
+    }
+
     readHash();
 
     if (mediaDark && mediaDark.addEventListener) {
@@ -970,11 +1006,27 @@
       setTimeout(function () { if (boot.parentNode) boot.parentNode.removeChild(boot); }, 450);
     }
 
+    if (authFlow) {
+      authFlow.then(function (result) {
+        if (!result) return;
+        App.renderChrome();
+        App.renderView();
+        D.toast(I.t("ol.signedInAs", { name: (result.account && result.account.name) || "" }), {
+          tone: "plus", icon: "check"
+        });
+        // Direkt nach dem Verbinden lohnt sich der erste Abgleich
+        setTimeout(function () { ZK.OutlookSync.run(App); }, 500);
+      }).catch(function (err) {
+        D.toast(String(err && err.message ? err.message : err), { tone: "minus", duration: 9000 });
+      });
+    }
+
     setTimeout(function () {
       App.runOnboarding();
       App.checkAchievements();
       App.scheduleReminder();
       store.makeBackup();
+      App.autoSyncOutlook();
     }, 320);
   };
 

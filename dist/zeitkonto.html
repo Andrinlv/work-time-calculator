@@ -1,7 +1,7 @@
 <!--
   ZEITKONTO — Einzeldatei-Fassung
   Erzeugt aus dem Quellverzeichnis mit tools/build-single-file.js
-  Version: zeitkonto-v1.0.0
+  Version: zeitkonto-v1.1.0
   Diese Datei ist vollständig eigenständig: einfach im Browser öffnen.
   Alle Daten bleiben im lokalen Speicher dieses Browsers.
 -->
@@ -4699,6 +4699,941 @@ window.ZK_SINGLE_FILE = true;
 });
 
 ;
+/* ===== assets/js/data/msauth.js ===== */
+/* ==========================================================================
+   ZEITKONTO — Anmeldung bei Microsoft (OAuth 2.0 mit PKCE)
+   --------------------------------------------------------------------------
+   Bewusst von Hand nach Spezifikation statt mit MSAL.js: die App soll ohne
+   Fremdbibliotheken auskommen, offline lauffähig bleiben und sich weiterhin
+   in eine einzelne Datei packen lassen.
+
+   Verwendet wird der Authorization-Code-Flow mit PKCE (RFC 7636) gegen die
+   Microsoft Identity Platform v2.0. Das ist der für Single-Page-Apps
+   vorgesehene Weg:
+
+     · kein Client-Secret — im Browser gäbe es dafür ohnehin kein Versteck
+     · Code-Verifier bleibt im sessionStorage, nur der SHA-256-Hash geht raus
+     · state und nonce werden gegen Rückläufer geprüft
+     · Zugriffstoken lebt nur im Arbeitsspeicher
+     · Refresh-Token liegt im localStorage — Microsoft gibt SPAs deshalb
+       bewusst kurzlebige, einmalig verwendbare Refresh-Token aus
+
+   Das ID-Token wird ausschliesslich gelesen, um Name und Konto anzuzeigen.
+   Jede echte Berechtigungsprüfung macht Microsoft Graph serverseitig.
+   ========================================================================== */
+(function (root) {
+  "use strict";
+  var ZK = root.ZK = root.ZK || {};
+
+  var STORE_KEY = "zeitkonto:ms-auth";
+  var PENDING_KEY = "zeitkonto:ms-pending";
+  var AUTHORITY = "https://login.microsoftonline.com/";
+
+  /* Minimal nötige Berechtigungen — jede weitere erhöht die Hürde bei der
+     Zustimmung, ohne dass die App sie bräuchte. */
+  var DEFAULT_SCOPES = ["openid", "profile", "offline_access", "User.Read", "Calendars.Read"];
+
+  function createAuth(options) {
+    options = options || {};
+    var cfg = {
+      clientId: null,
+      tenant: "common",
+      scopes: DEFAULT_SCOPES.slice(),
+      redirectUri: null
+    };
+
+    var accessToken = null;      // nur im Arbeitsspeicher
+    var accessExpiresAt = 0;
+    var refreshing = null;
+
+    /* ------------------------------------------------------------------ */
+    /* Konfiguration                                                       */
+    /* ------------------------------------------------------------------ */
+
+    function configure(patch) {
+      Object.assign(cfg, patch || {});
+      if (!cfg.redirectUri) cfg.redirectUri = defaultRedirectUri();
+      return cfg;
+    }
+
+    function config() { return Object.assign({}, cfg); }
+
+    /** Die Seite selbst, ohne Query und ohne Hash — muss in Azure so eingetragen sein. */
+    function defaultRedirectUri() {
+      if (typeof location === "undefined") return null;
+      return location.origin + location.pathname;
+    }
+
+    /** OAuth braucht einen echten Origin; file:// scheidet damit aus. */
+    function isSupported() {
+      return typeof location !== "undefined" &&
+        (location.protocol === "https:" ||
+          location.hostname === "localhost" ||
+          location.hostname === "127.0.0.1");
+    }
+
+    function isConfigured() { return !!cfg.clientId && isSupported(); }
+
+    /* ------------------------------------------------------------------ */
+    /* Speicher                                                            */
+    /* ------------------------------------------------------------------ */
+
+    function readState() {
+      try {
+        var raw = localStorage.getItem(STORE_KEY);
+        return raw ? JSON.parse(raw) : null;
+      } catch (e) { return null; }
+    }
+
+    function writeState(next) {
+      try {
+        if (next) localStorage.setItem(STORE_KEY, JSON.stringify(next));
+        else localStorage.removeItem(STORE_KEY);
+      } catch (e) { /* privater Modus — dann eben nur für diese Sitzung */ }
+    }
+
+    function account() {
+      var st = readState();
+      return st && st.account ? st.account : null;
+    }
+
+    function isSignedIn() {
+      var st = readState();
+      return !!(st && st.refreshToken);
+    }
+
+    /* ------------------------------------------------------------------ */
+    /* PKCE                                                                */
+    /* ------------------------------------------------------------------ */
+
+    function randomString(bytes) {
+      var buf = new Uint8Array(bytes || 32);
+      crypto.getRandomValues(buf);
+      return base64UrlFromBytes(buf);
+    }
+
+    function base64UrlFromBytes(bytes) {
+      var bin = "";
+      for (var i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+      return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    }
+
+    function challengeFor(verifier) {
+      return crypto.subtle
+        .digest("SHA-256", new TextEncoder().encode(verifier))
+        .then(function (digest) { return base64UrlFromBytes(new Uint8Array(digest)); });
+    }
+
+    /* ------------------------------------------------------------------ */
+    /* Anmeldung starten                                                   */
+    /* ------------------------------------------------------------------ */
+
+    /**
+     * Leitet zur Microsoft-Anmeldung weiter. Bewusst Redirect statt Popup:
+     * Popups werden auf Mobilgeräten und in installierten PWAs oft blockiert.
+     * @param {Object} opts { prompt: "select_account" | "consent", returnTo }
+     */
+    function signIn(opts) {
+      opts = opts || {};
+      if (!cfg.clientId) return Promise.reject(new Error("Keine Client-ID hinterlegt"));
+      if (!isSupported()) return Promise.reject(new Error("Anmeldung braucht HTTPS"));
+
+      var verifier = randomString(64);
+      var state = randomString(16);
+      var nonce = randomString(16);
+
+      return challengeFor(verifier).then(function (challenge) {
+        sessionStorage.setItem(PENDING_KEY, JSON.stringify({
+          verifier: verifier,
+          state: state,
+          nonce: nonce,
+          returnTo: opts.returnTo || location.hash || "",
+          startedAt: Date.now()
+        }));
+
+        var params = new URLSearchParams({
+          client_id: cfg.clientId,
+          response_type: "code",
+          redirect_uri: cfg.redirectUri,
+          response_mode: "query",
+          scope: cfg.scopes.join(" "),
+          state: state,
+          nonce: nonce,
+          code_challenge: challenge,
+          code_challenge_method: "S256"
+        });
+        if (opts.prompt) params.set("prompt", opts.prompt);
+        if (opts.loginHint) params.set("login_hint", opts.loginHint);
+
+        location.assign(AUTHORITY + encodeURIComponent(cfg.tenant) + "/oauth2/v2.0/authorize?" + params.toString());
+      });
+    }
+
+    /* ------------------------------------------------------------------ */
+    /* Rückkehr von der Anmeldung                                          */
+    /* ------------------------------------------------------------------ */
+
+    /** Steht ein Anmelde-Rückläufer in der Adresszeile? */
+    function hasRedirect() {
+      if (typeof location === "undefined") return false;
+      var q = new URLSearchParams(location.search);
+      return q.has("code") || q.has("error");
+    }
+
+    /**
+     * Wertet den Rückläufer aus. Muss vor dem Router laufen und räumt die
+     * Adresszeile auf, damit der Code nicht im Verlauf stehen bleibt.
+     * @returns {Promise<{account, returnTo}|null>}
+     */
+    function handleRedirect() {
+      if (!hasRedirect()) return Promise.resolve(null);
+
+      var q = new URLSearchParams(location.search);
+      var pending = null;
+      try { pending = JSON.parse(sessionStorage.getItem(PENDING_KEY) || "null"); } catch (e) { pending = null; }
+      sessionStorage.removeItem(PENDING_KEY);
+      cleanUrl(pending && pending.returnTo);
+
+      if (q.has("error")) {
+        return Promise.reject(new Error(
+          (q.get("error_description") || q.get("error") || "Anmeldung abgebrochen").split("\n")[0]
+        ));
+      }
+      if (!pending) return Promise.reject(new Error("Anmeldung nicht zuordenbar — bitte erneut versuchen"));
+      if (q.get("state") !== pending.state) return Promise.reject(new Error("Sicherheitsprüfung fehlgeschlagen (state)"));
+
+      return exchange({
+        grant_type: "authorization_code",
+        code: q.get("code"),
+        redirect_uri: cfg.redirectUri,
+        code_verifier: pending.verifier
+      }, pending.nonce).then(function (result) {
+        return { account: result.account, returnTo: pending.returnTo || "" };
+      });
+    }
+
+    function cleanUrl(returnTo) {
+      try {
+        history.replaceState(null, "", location.pathname + (returnTo || ""));
+      } catch (e) { /* nicht kritisch */ }
+    }
+
+    /* ------------------------------------------------------------------ */
+    /* Token holen und erneuern                                            */
+    /* ------------------------------------------------------------------ */
+
+    function exchange(body, expectedNonce) {
+      var payload = new URLSearchParams(Object.assign({
+        client_id: cfg.clientId,
+        scope: cfg.scopes.join(" ")
+      }, body));
+
+      return fetch(AUTHORITY + encodeURIComponent(cfg.tenant) + "/oauth2/v2.0/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: payload.toString()
+      }).then(function (res) {
+        return res.json().then(function (data) {
+          if (!res.ok) {
+            var err = new Error(shortError(data));
+            err.code = data.error;
+            err.status = res.status;
+            throw err;
+          }
+          return data;
+        });
+      }).then(function (data) {
+        accessToken = data.access_token || null;
+        accessExpiresAt = Date.now() + ((data.expires_in || 3600) - 120) * 1000;
+
+        var claims = data.id_token ? readIdToken(data.id_token) : null;
+        if (claims && expectedNonce && claims.nonce && claims.nonce !== expectedNonce) {
+          throw new Error("Sicherheitsprüfung fehlgeschlagen (nonce)");
+        }
+
+        var previous = readState() || {};
+        var next = {
+          refreshToken: data.refresh_token || previous.refreshToken || null,
+          account: claims ? {
+            name: claims.name || claims.preferred_username || "",
+            username: claims.preferred_username || claims.email || "",
+            tenantId: claims.tid || null,
+            oid: claims.oid || null
+          } : previous.account || null,
+          updatedAt: new Date().toISOString()
+        };
+        writeState(next);
+        return { token: accessToken, account: next.account };
+      });
+    }
+
+    function shortError(data) {
+      if (!data) return "Unbekannter Fehler";
+      var desc = data.error_description || data.error || "Unbekannter Fehler";
+      return String(desc).split(/[\r\n]/)[0];
+    }
+
+    /**
+     * Nutzlast des ID-Tokens lesen. Ohne Signaturprüfung — bewusst: der Wert
+     * dient nur der Anzeige, und geholt wurde er über TLS direkt bei
+     * Microsoft. Zugriffsentscheidungen trifft ausschliesslich Graph.
+     */
+    function readIdToken(idToken) {
+      try {
+        var part = idToken.split(".")[1];
+        var padded = part.replace(/-/g, "+").replace(/_/g, "/");
+        while (padded.length % 4) padded += "=";
+        var json = decodeURIComponent(
+          atob(padded).split("").map(function (c) {
+            return "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2);
+          }).join("")
+        );
+        return JSON.parse(json);
+      } catch (e) { return null; }
+    }
+
+    /** Gültiges Zugriffstoken — erneuert im Hintergrund, wenn nötig. */
+    function getToken() {
+      if (accessToken && Date.now() < accessExpiresAt) return Promise.resolve(accessToken);
+      if (refreshing) return refreshing;
+
+      var st = readState();
+      if (!st || !st.refreshToken) return Promise.reject(new Error("Nicht angemeldet"));
+
+      refreshing = exchange({
+        grant_type: "refresh_token",
+        refresh_token: st.refreshToken
+      }).then(function (result) {
+        refreshing = null;
+        return result.token;
+      }).catch(function (err) {
+        refreshing = null;
+        // Abgelaufene oder zurückgezogene Zustimmung: Anmeldung sauber verwerfen
+        if (err.code === "invalid_grant" || err.status === 400) signOut();
+        throw err;
+      });
+      return refreshing;
+    }
+
+    function signOut() {
+      accessToken = null;
+      accessExpiresAt = 0;
+      writeState(null);
+      try { sessionStorage.removeItem(PENDING_KEY); } catch (e) { /* egal */ }
+    }
+
+    return {
+      DEFAULT_SCOPES: DEFAULT_SCOPES,
+      configure: configure,
+      config: config,
+      defaultRedirectUri: defaultRedirectUri,
+      isSupported: isSupported,
+      isConfigured: isConfigured,
+      isSignedIn: isSignedIn,
+      account: account,
+      signIn: signIn,
+      signOut: signOut,
+      hasRedirect: hasRedirect,
+      handleRedirect: handleRedirect,
+      getToken: getToken,
+      readIdToken: readIdToken
+    };
+  }
+
+  ZK.MsAuth = createAuth();
+  ZK.MsAuth.create = createAuth;
+})(typeof self !== "undefined" ? self : this);
+
+;
+/* ===== assets/js/data/graph.js ===== */
+/* ==========================================================================
+   ZEITKONTO — Microsoft Graph
+   --------------------------------------------------------------------------
+   Dünne Hülle um die wenigen Aufrufe, die die App braucht. Graph ist
+   CORS-fähig, deshalb genügt hier `fetch` — kein Zwischenserver nötig.
+
+   Wichtig ist `calendarView` statt `events`: nur diese Sicht löst
+   Serientermine in einzelne Vorkommen auf. Wer `events` abfragt, bekommt
+   den Serienkopf und muss die Wiederholungsregel selbst auswerten — eine
+   verlässliche Quelle für Fehler.
+   ========================================================================== */
+(function (root) {
+  "use strict";
+  var ZK = root.ZK = root.ZK || {};
+
+  var BASE = "https://graph.microsoft.com/v1.0";
+
+  /* Nur die Felder holen, die gebraucht werden — spart Bandbreite und
+     vermeidet, dass unnötige Inhalte überhaupt das Gerät erreichen. */
+  var EVENT_FIELDS = [
+    "id", "subject", "start", "end", "isAllDay", "showAs", "categories",
+    "sensitivity", "type", "seriesMasterId", "isCancelled", "responseStatus"
+  ].join(",");
+
+  function createGraph(auth) {
+    /**
+     * @param {String} path   z. B. "/me/calendars"
+     * @param {Object} opts   { query, timeZone, signal }
+     */
+    function request(path, opts) {
+      opts = opts || {};
+      return auth.getToken().then(function (token) {
+        var url = path.indexOf("http") === 0 ? path : BASE + path;
+        if (opts.query) {
+          var qs = new URLSearchParams(opts.query).toString();
+          url += (url.indexOf("?") >= 0 ? "&" : "?") + qs;
+        }
+        var headers = { Authorization: "Bearer " + token };
+        if (opts.timeZone) headers.Prefer = 'outlook.timezone="' + opts.timeZone + '"';
+
+        return fetch(url, { headers: headers, signal: opts.signal });
+      }).then(function (res) {
+        if (res.status === 401) throw graphError("Anmeldung abgelaufen", 401);
+        if (res.status === 403) throw graphError("Zugriff auf den Kalender nicht erlaubt", 403);
+        if (res.status === 429) {
+          var wait = parseInt(res.headers.get("Retry-After") || "5", 10);
+          throw graphError("Zu viele Anfragen — in " + wait + " s erneut versuchen", 429);
+        }
+        if (!res.ok) {
+          return res.text().then(function (body) {
+            throw graphError(extractMessage(body) || ("Graph antwortete mit " + res.status), res.status);
+          });
+        }
+        return res.json();
+      });
+    }
+
+    function graphError(message, status) {
+      var err = new Error(message);
+      err.status = status;
+      return err;
+    }
+
+    function extractMessage(body) {
+      try {
+        var data = JSON.parse(body);
+        return data && data.error && data.error.message ? String(data.error.message).split("\n")[0] : null;
+      } catch (e) { return null; }
+    }
+
+    /** Folgt @odata.nextLink, bis alles geladen ist. */
+    function requestAll(path, opts, maxPages) {
+      var out = [];
+      var pages = 0;
+      var limit = maxPages || 25;
+
+      function step(next) {
+        return request(next, opts).then(function (data) {
+          out = out.concat(data.value || []);
+          pages++;
+          var link = data["@odata.nextLink"];
+          if (link && pages < limit) return step(link);
+          return out;
+        });
+      }
+      return step(path);
+    }
+
+    /* ------------------------------------------------------------------ */
+    /* Aufrufe                                                             */
+    /* ------------------------------------------------------------------ */
+
+    function me() {
+      return request("/me", { query: { $select: "displayName,mail,userPrincipalName" } });
+    }
+
+    function listCalendars() {
+      return requestAll("/me/calendars", {
+        query: { $select: "id,name,isDefaultCalendar,canEdit,owner", $top: 50 }
+      }, 4);
+    }
+
+    /**
+     * Termine eines Zeitraums, Serien bereits aufgelöst.
+     * @param {Object} opts { from: "YYYY-MM-DD", to: "YYYY-MM-DD", calendarId, timeZone, signal }
+     */
+    function calendarView(opts) {
+      opts = opts || {};
+      var path = opts.calendarId && opts.calendarId !== "primary"
+        ? "/me/calendars/" + encodeURIComponent(opts.calendarId) + "/calendarView"
+        : "/me/calendarView";
+
+      return requestAll(path, {
+        timeZone: opts.timeZone,
+        signal: opts.signal,
+        query: {
+          startDateTime: opts.from + "T00:00:00",
+          endDateTime: opts.to + "T23:59:59",
+          $select: EVENT_FIELDS,
+          $orderby: "start/dateTime",
+          $top: 200
+        }
+      }, opts.maxPages || 25);
+    }
+
+    return {
+      request: request,
+      me: me,
+      listCalendars: listCalendars,
+      calendarView: calendarView,
+      EVENT_FIELDS: EVENT_FIELDS
+    };
+  }
+
+  ZK.Graph = ZK.MsAuth ? createGraph(ZK.MsAuth) : null;
+  ZK.createGraph = createGraph;
+})(typeof self !== "undefined" ? self : this);
+
+;
+/* ===== assets/js/data/calendarsync.js ===== */
+/* ==========================================================================
+   ZEITKONTO — Kalender-Abgleich
+   --------------------------------------------------------------------------
+   Übersetzt Outlook-Termine in Tageseinträge. Ausschliesslich reine
+   Funktionen, damit die Regeln testbar sind — der Netzwerkteil steckt in
+   graph.js, die Anmeldung in msauth.js.
+
+   Zwei Dinge, die hier bewusst so gelöst sind:
+
+   1. GANZTAGESTERMINE. Graph liefert sie als 00:00 bis 00:00 des Folgetags.
+      Wer das als Zeitstempel in UTC umrechnet, verschiebt in der Schweiz
+      jeden Ferientag um einen Tag nach vorne. Deshalb wird bei
+      `isAllDay` ausschliesslich der Datumsteil der Wanduhrzeit gelesen und
+      das Ende als exklusiv behandelt.
+
+   2. NICHTS WIRD ÜBERSCHRIEBEN. Der Abgleich erzeugt einen Vorschlag, den
+      der Nutzer bestätigt. Tage mit eigenen Stempelungen bleiben unangetastet;
+      geändert werden nur leere Tage und solche, die zuvor aus dem Kalender
+      stammten.
+   ========================================================================== */
+(function (root, factory) {
+  if (typeof module === "object" && module.exports) {
+    module.exports = factory(require("../core/time.js"), require("../core/rules.js"));
+  } else {
+    root.ZK = root.ZK || {};
+    root.ZK.CalendarSync = factory(root.ZK.Time, root.ZK.Rules);
+  }
+})(typeof self !== "undefined" ? self : globalThis, function (T, R) {
+  "use strict";
+
+  var SOURCE = "outlook";
+
+  /* ==================================================================== */
+  /* Regelwerk                                                             */
+  /* ==================================================================== */
+  /*
+     Die Reihenfolge entscheidet: die erste passende Regel gewinnt. Deshalb
+     stehen die eindeutigen Stichwörter vor der allgemeinen
+     „Abwesend"-Erkennung über showAs.
+
+     Stichwörter greifen auf Betreff UND Kategorien, in allen vier Sprachen
+     der App. Alles frei änderbar — Betriebe benennen das verschieden.
+  */
+  var DEFAULT_RULES = [
+    {
+      id: "vacation", type: "vacation", enabled: true,
+      keywords: ["ferien", "urlaub", "vacation", "vacances", "ferie", "congé", "holiday leave"]
+    },
+    {
+      id: "sick", type: "sick", enabled: true,
+      keywords: ["krank", "krankheit", "sick", "malade", "maladie", "malattia", "arzttermin", "arzt"]
+    },
+    {
+      id: "accident", type: "accident", enabled: true,
+      keywords: ["unfall", "accident", "infortunio"]
+    },
+    {
+      id: "military", type: "military", enabled: true,
+      keywords: ["militär", "militaer", "wk", "zivilschutz", "service militaire", "militare"]
+    },
+    {
+      id: "comp", type: "comp", enabled: true,
+      keywords: ["kompensation", "zeitausgleich", "gleittag", "compensation", "récupération", "recupero", "time off in lieu"]
+    },
+    {
+      id: "training", type: "training", enabled: true,
+      keywords: ["weiterbildung", "schulung", "kurs", "training", "formation", "corso", "seminar"]
+    },
+    {
+      id: "holiday", type: "holiday", enabled: true,
+      keywords: ["feiertag", "jour férié", "festivo", "public holiday"]
+    },
+    {
+      id: "unpaid", type: "unpaid", enabled: true,
+      keywords: ["unbezahlt", "unpaid", "non payé", "non pagato"]
+    },
+    {
+      /* Auffangregel: als „Abwesend" markierter Ganztagestermin ohne
+         erkennbares Stichwort wird als Ferien verbucht. */
+      id: "oof", type: "vacation", enabled: true,
+      showAs: ["oof"], allDayOnly: true
+    },
+    {
+      /* Kein Abwesenheitstag, sondern nur der Arbeitsort. */
+      id: "homeoffice", locationOnly: "home", enabled: true,
+      showAs: ["workingElsewhere"],
+      keywords: ["homeoffice", "home office", "télétravail", "teletravail", "telelavoro", "remote"]
+    }
+  ];
+
+  /* Stichwörter, die einen halben Tag bedeuten. */
+  var HALF_DAY_HINTS = [
+    "halbtag", "halber tag", "½", "1/2", "half day", "half-day",
+    "demi-journée", "demi journee", "mezza giornata", "vormittag", "nachmittag",
+    "morgen halbtag", "matin", "après-midi", "mattina", "pomeriggio"
+  ];
+
+  function defaultSettings() {
+    return {
+      enabled: false,
+      clientId: "",
+      tenant: "common",
+      calendarIds: ["primary"],
+      rules: DEFAULT_RULES.map(function (r) { return Object.assign({}, r); }),
+      pastDays: 60,
+      futureDays: 365,
+      autoSync: true,
+      importHomeOffice: true,
+      copySubjectToNote: true,
+      ignorePrivate: true,
+      lastSyncAt: null
+    };
+  }
+
+  /* ==================================================================== */
+  /* Zeit- und Datumsumrechnung                                            */
+  /* ==================================================================== */
+
+  /**
+   * Graph liefert `{ dateTime: "2026-08-06T09:30:00.0000000", timeZone: "Europe/Zurich" }`.
+   * Mit gesetztem Prefer-Header ist `dateTime` bereits Wanduhrzeit in der
+   * gewünschten Zone; ohne Header kommt UTC zurück.
+   *
+   * @returns {{date: String, minutes: Number}} Datum und Minuten seit Mitternacht
+   */
+  function toLocalParts(graphTime) {
+    if (!graphTime || !graphTime.dateTime) return null;
+    var raw = String(graphTime.dateTime);
+    var zone = String(graphTime.timeZone || "").toUpperCase();
+
+    if (zone === "UTC" || /Z$/.test(raw)) {
+      // Als UTC lesen und in die Gerätezeit umrechnen
+      var d = new Date(raw.replace(/(\.\d+)?Z?$/, "") + "Z");
+      if (isNaN(d.getTime())) return null;
+      return { date: T.toISO(d), minutes: d.getHours() * 60 + d.getMinutes() };
+    }
+
+    // Wanduhrzeit: Zeichenkette direkt lesen, keine Zeitzonenrechnung
+    var m = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/.exec(raw);
+    if (!m) return null;
+    return { date: m[1] + "-" + m[2] + "-" + m[3], minutes: (+m[4]) * 60 + (+m[5]) };
+  }
+
+  /**
+   * Alle Kalendertage, die ein Termin berührt.
+   * Ganztagestermine enden laut Graph am Folgetag um 00:00 — dieses Ende
+   * ist exklusiv und darf nicht als eigener Tag zählen.
+   */
+  function eventDays(event) {
+    var start = toLocalParts(event.start);
+    var end = toLocalParts(event.end);
+    if (!start) return [];
+    if (!end) return [start.date];
+
+    var lastDate = end.date;
+    if (event.isAllDay) {
+      lastDate = T.addDays(end.date, -1);
+    } else if (end.minutes === 0 && end.date > start.date) {
+      // Termin endet exakt um Mitternacht: der Folgetag gehört nicht dazu
+      lastDate = T.addDays(end.date, -1);
+    }
+    if (lastDate < start.date) lastDate = start.date;
+
+    var days = T.rangeDays(start.date, lastDate);
+    return days.length ? days : [start.date];
+  }
+
+  /* ==================================================================== */
+  /* Regelauswertung                                                       */
+  /* ==================================================================== */
+
+  function normalize(text) {
+    return String(text || "")
+      .toLowerCase()
+      .replace(/ /g, " ")
+      .trim();
+  }
+
+  /** Betreff und Kategorien als ein durchsuchbarer Text. */
+  function searchableText(event) {
+    var parts = [event.subject || ""];
+    if (Array.isArray(event.categories)) parts = parts.concat(event.categories);
+    return normalize(parts.join(" · "));
+  }
+
+  function matchRule(rule, event, text) {
+    if (rule.enabled === false) return false;
+    if (rule.allDayOnly && !event.isAllDay) return false;
+
+    var hasShowAs = Array.isArray(rule.showAs) && rule.showAs.length;
+    var hasKeywords = Array.isArray(rule.keywords) && rule.keywords.length;
+
+    var showAsHit = hasShowAs && rule.showAs.indexOf(event.showAs) >= 0;
+    var keywordHit = hasKeywords && rule.keywords.some(function (k) {
+      return k && text.indexOf(normalize(k)) >= 0;
+    });
+
+    if (hasShowAs && hasKeywords) return showAsHit || keywordHit;
+    if (hasShowAs) return showAsHit;
+    if (hasKeywords) return keywordHit;
+    return false;
+  }
+
+  function isHalfDay(text) {
+    return HALF_DAY_HINTS.some(function (h) { return text.indexOf(normalize(h)) >= 0; });
+  }
+
+  /** Soll dieser Termin überhaupt betrachtet werden? */
+  function isRelevant(event, settings) {
+    if (!event) return false;
+    if (event.isCancelled) return false;
+    if (event.type === "seriesMaster") return false;   // calendarView liefert die Vorkommen
+    if (event.responseStatus && event.responseStatus.response === "declined") return false;
+    if (settings.ignorePrivate !== false && event.sensitivity === "private" && event.showAs !== "oof") {
+      // Private Termine ohne Abwesenheitsmarkierung gehen die App nichts an
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * Termine eines Zeitraums in Tagesvorschläge übersetzen.
+   * @returns {Object} Map "YYYY-MM-DD" -> { type, factor, location, note, eventId, subject }
+   */
+  function mapEvents(events, settings) {
+    var s = Object.assign(defaultSettings(), settings || {});
+    var rules = s.rules && s.rules.length ? s.rules : DEFAULT_RULES;
+    var byDate = Object.create(null);
+
+    (events || []).forEach(function (event) {
+      if (!isRelevant(event, s)) return;
+
+      var text = searchableText(event);
+      var rule = null;
+      for (var i = 0; i < rules.length; i++) {
+        if (matchRule(rules[i], event, text)) { rule = rules[i]; break; }
+      }
+      if (!rule) return;
+      if (rule.locationOnly && s.importHomeOffice === false) return;
+
+      var isPrivate = event.sensitivity === "private" || event.sensitivity === "confidential";
+      var label = (s.copySubjectToNote !== false && !isPrivate) ? (event.subject || "") : "";
+      var factor = isHalfDay(text) ? 0.5 : 1;
+
+      eventDays(event).forEach(function (date) {
+        var existing = byDate[date];
+
+        if (rule.locationOnly) {
+          byDate[date] = Object.assign({ date: date }, existing, {
+            location: rule.locationOnly,
+            locationEventId: event.id,
+            locationSubject: label
+          });
+          return;
+        }
+
+        /* Mehrere Abwesenheiten am selben Tag: die erste gewinnt, weil die
+           Regeln nach Eindeutigkeit sortiert sind. Halbtage addieren sich. */
+        if (existing && existing.type) {
+          if (existing.type === rule.type && existing.factor < 1) {
+            existing.factor = Math.min(1, existing.factor + factor);
+          }
+          return;
+        }
+
+        byDate[date] = Object.assign({ date: date }, existing, {
+          type: rule.type,
+          factor: factor,
+          note: label,
+          eventId: event.id,
+          ruleId: rule.id
+        });
+      });
+    });
+
+    return byDate;
+  }
+
+  /* ==================================================================== */
+  /* Abgleichplan                                                          */
+  /* ==================================================================== */
+
+  /**
+   * Vergleicht die Kalendervorschläge mit dem bestehenden Datenbestand und
+   * liefert eine Liste von Änderungen zur Bestätigung.
+   *
+   * @param {Object} mapped     Ergebnis von mapEvents()
+   * @param {Function} getDay   (iso) => record | null
+   * @param {Object} opts       { from, to, settings }
+   * @returns {{changes: Array, protectedDays: Array, unchanged: Number}}
+   */
+  function planSync(mapped, getDay, opts) {
+    opts = opts || {};
+    var from = opts.from;
+    var to = opts.to;
+    var changes = [];
+    var protectedDays = [];
+    var unchanged = 0;
+
+    var dates = T.rangeDays(from, to);
+
+    dates.forEach(function (date) {
+      var proposal = mapped[date] || null;
+      var record = getDay(date) || null;
+      var hasStamps = !!(record && (String(record.start || "").trim() || String(record.end || "").trim()));
+      var fromCalendar = !!(record && record.source === SOURCE);
+
+      /* --- Nichts im Kalender: bestehende Kalender-Einträge zurücknehmen --- */
+      if (!proposal) {
+        if (record && fromCalendar && !hasStamps) {
+          changes.push({
+            date: date,
+            action: "clear",
+            before: summarize(record),
+            after: null,
+            reason: "gone"
+          });
+        } else {
+          unchanged++;
+        }
+        return;
+      }
+
+      /* --- Nur der Arbeitsort ---------------------------------------- */
+      if (!proposal.type && proposal.location) {
+        if (!record || record.location !== proposal.location) {
+          changes.push({
+            date: date,
+            action: "location",
+            location: proposal.location,
+            before: record ? summarize(record) : null,
+            after: { location: proposal.location },
+            subject: proposal.locationSubject || "",
+            reason: "homeoffice"
+          });
+        } else {
+          unchanged++;
+        }
+        return;
+      }
+
+      /* --- Eigene Erfassung hat Vorrang ------------------------------- */
+      if (hasStamps && !fromCalendar) {
+        protectedDays.push({ date: date, proposal: proposal, record: summarize(record) });
+        return;
+      }
+      if (record && record.type && !fromCalendar && record.type !== proposal.type) {
+        protectedDays.push({ date: date, proposal: proposal, record: summarize(record) });
+        return;
+      }
+
+      /* --- Ist der Vorschlag schon umgesetzt? ------------------------- */
+      var same = record &&
+        record.type === proposal.type &&
+        Number(record.absenceFactor === undefined ? 1 : record.absenceFactor) === Number(proposal.factor) &&
+        (!proposal.location || record.location === proposal.location);
+      if (same) { unchanged++; return; }
+
+      changes.push({
+        date: date,
+        action: "set",
+        type: proposal.type,
+        factor: proposal.factor,
+        location: proposal.location || null,
+        subject: proposal.note || "",
+        before: record ? summarize(record) : null,
+        after: { type: proposal.type, factor: proposal.factor },
+        reason: record ? "update" : "new"
+      });
+    });
+
+    return { changes: changes, protectedDays: protectedDays, unchanged: unchanged };
+  }
+
+  function summarize(record) {
+    if (!record) return null;
+    return {
+      type: record.type || null,
+      factor: record.absenceFactor === undefined ? 1 : record.absenceFactor,
+      start: record.start || "",
+      end: record.end || "",
+      location: record.location || "office",
+      source: record.source || null
+    };
+  }
+
+  /**
+   * Übersetzt bestätigte Änderungen in Speicher-Aufträge.
+   * @returns {Object} Map "YYYY-MM-DD" -> patch | null (null = löschen)
+   */
+  function buildPatch(changes, syncedAt) {
+    var patch = Object.create(null);
+    var stamp = syncedAt || new Date().toISOString();
+
+    (changes || []).forEach(function (change) {
+      if (change.action === "clear") {
+        patch[change.date] = null;
+        return;
+      }
+      if (change.action === "location") {
+        patch[change.date] = { location: change.location, outlookSyncedAt: stamp };
+        return;
+      }
+      patch[change.date] = {
+        type: change.type,
+        absenceFactor: change.factor,
+        start: "",
+        end: "",
+        breaks: [],
+        source: SOURCE,
+        outlookSyncedAt: stamp,
+        note: change.subject || ""
+      };
+      if (change.location) patch[change.date].location = change.location;
+    });
+
+    return patch;
+  }
+
+  /** Zeitraum für den Abgleich aus den Einstellungen. */
+  function syncRange(settings, today) {
+    var s = Object.assign(defaultSettings(), settings || {});
+    var base = today || T.todayISO();
+    return {
+      from: T.addDays(base, -Math.abs(s.pastDays || 60)),
+      to: T.addDays(base, Math.abs(s.futureDays || 365))
+    };
+  }
+
+  return {
+    SOURCE: SOURCE,
+    DEFAULT_RULES: DEFAULT_RULES,
+    HALF_DAY_HINTS: HALF_DAY_HINTS,
+    defaultSettings: defaultSettings,
+    toLocalParts: toLocalParts,
+    eventDays: eventDays,
+    searchableText: searchableText,
+    matchRule: matchRule,
+    isHalfDay: isHalfDay,
+    isRelevant: isRelevant,
+    mapEvents: mapEvents,
+    planSync: planSync,
+    buildPatch: buildPatch,
+    syncRange: syncRange
+  };
+});
+
+;
 /* ===== assets/js/ui/i18n.js ===== */
 /* ==========================================================================
    ZEITKONTO — Sprachen
@@ -5083,7 +6018,69 @@ window.ZK_SINGLE_FILE = true;
     "kbd.today": "Zu heute",
     "kbd.theme": "Hell / Dunkel",
     "kbd.save": "Speichern erzwingen",
-    "kbd.help": "Diese Hilfe"
+    "kbd.help": "Diese Hilfe",
+
+    /* ---- Outlook ---- */
+    "ol.title": "Outlook-Kalender",
+    "ol.lede": "Ferien und Abwesenheiten aus dem Kalender übernehmen — du trägst nur noch die Arbeitszeit ein.",
+    "ol.connect": "Mit Outlook verbinden",
+    "ol.reconnect": "Neu verbinden",
+    "ol.signedInAs": "Angemeldet als {name}",
+    "ol.signOut": "Abmelden",
+    "ol.signedOut": "Von Outlook abgemeldet",
+    "ol.notSignedIn": "Nicht bei Outlook angemeldet",
+    "ol.needsClientId": "Zuerst die Client-ID aus der Azure-Registrierung eintragen",
+    "ol.needsHttps": "Die Anmeldung braucht eine über HTTPS aufgerufene Seite — in der Einzeldatei nicht möglich",
+    "ol.clientId": "Client-ID",
+    "ol.clientIdHint": "Anwendungs-ID aus der Azure-App-Registrierung. Ohne sie funktioniert nichts.",
+    "ol.tenant": "Verzeichnis",
+    "ol.tenantHint": "„common“ für alle Konten, oder die Mandanten-ID des Betriebs.",
+    "ol.redirectUri": "Umleitungs-URI",
+    "ol.redirectUriHint": "Genau diesen Wert in Azure unter „Einzelseitige Anwendung (SPA)“ eintragen.",
+    "ol.calendars": "Kalender",
+    "ol.calendarsHint": "Welche Kalender sollen gelesen werden?",
+    "ol.defaultCalendar": "Standardkalender",
+    "ol.chooseCalendars": "Kalender wählen",
+    "ol.rules": "Zuordnungsregeln",
+    "ol.rulesHint": "Welcher Termin wird zu welcher Tagesart? Die erste passende Regel gewinnt.",
+    "ol.keywords": "Stichwörter",
+    "ol.keywordsPlaceholder": "Komma-getrennt, z. B. Ferien, Urlaub",
+    "ol.showAsMatch": "Erkennt zusätzlich Termine mit Status: {v}",
+    "ol.editRules": "Regeln bearbeiten",
+    "ol.syncNow": "Jetzt abgleichen",
+    "ol.fetching": "Kalender wird gelesen …",
+    "ol.pastDays": "Tage rückwärts",
+    "ol.futureDays": "Tage vorwärts",
+    "ol.autoSync": "Beim Start automatisch prüfen",
+    "ol.autoSyncHint": "Meldet sich nur, wenn es etwas zu übernehmen gibt.",
+    "ol.importHomeOffice": "Homeoffice übernehmen",
+    "ol.importHomeOfficeHint": "Termine mit Status „Woanders tätig“ setzen den Arbeitsort, nicht die Tagesart.",
+    "ol.copySubject": "Betreff als Notiz übernehmen",
+    "ol.ignorePrivate": "Private Termine auslassen",
+    "ol.lastSync": "Letzter Abgleich",
+    "ol.never": "noch nie",
+    "ol.previewTitle": "Abgleich mit Outlook",
+    "ol.previewSub": "Nichts wird ohne deine Bestätigung geändert.",
+    "ol.changes": "Änderungen",
+    "ol.unchanged": "Unverändert",
+    "ol.protected": "Geschützt",
+    "ol.protectedTitle": "{n} Tage bleiben unangetastet",
+    "ol.protectedOne": "1 Tag bleibt unangetastet",
+    "ol.protectedHint": "Diese Tage tragen eigene Erfassungen. Der Kalender überschreibt sie nicht.",
+    "ol.rangeInfo": "{from} bis {to} · {events} Termine gelesen",
+    "ol.upToDate": "Alles bereits aktuell",
+    "ol.applyN": "{n} übernehmen",
+    "ol.applied": "{n} Tage übernommen",
+    "ol.changesFound": "{n} Änderungen im Kalender",
+    "ol.willClear": "Eintrag entfernen",
+    "ol.tagNew": "neu",
+    "ol.tagUpdate": "geändert",
+    "ol.tagRemoved": "entfernt",
+    "ol.sessionExpired": "Anmeldung abgelaufen — bitte neu verbinden",
+    "ol.fromCalendar": "aus Outlook",
+    "ol.setup": "Einrichtung",
+    "ol.setupHint": "Einmalig in Azure: App-Registrierung anlegen, Plattform „Einzelseitige Anwendung“ mit der Umleitungs-URI unten, Berechtigung Calendars.Read. Dann die Client-ID hier eintragen.",
+    "ol.privacy": "Gelesen wird nur der Kalender, und nur auf diesem Gerät. Nichts wird an Dritte übertragen."
   };
 
   /* ==================================================================== */
@@ -5290,7 +6287,69 @@ window.ZK_SINGLE_FILE = true;
     "kbd.title": "Keyboard shortcuts", "kbd.palette": "Quick search",
     "kbd.stamp": "Clock in / out", "kbd.prevDay": "Previous day", "kbd.nextDay": "Next day",
     "kbd.today": "Go to today", "kbd.theme": "Light / dark", "kbd.save": "Force save",
-    "kbd.help": "This help"
+    "kbd.help": "This help",
+
+    /* ---- Outlook ---- */
+    "ol.title": "Outlook calendar",
+    "ol.lede": "Take vacation and absences from your calendar — you only enter working time.",
+    "ol.connect": "Connect to Outlook",
+    "ol.reconnect": "Reconnect",
+    "ol.signedInAs": "Signed in as {name}",
+    "ol.signOut": "Sign out",
+    "ol.signedOut": "Signed out of Outlook",
+    "ol.notSignedIn": "Not signed in to Outlook",
+    "ol.needsClientId": "Enter the client ID from the Azure registration first",
+    "ol.needsHttps": "Sign-in requires a page served over HTTPS — not possible in the single-file version",
+    "ol.clientId": "Client ID",
+    "ol.clientIdHint": "Application ID from the Azure app registration. Nothing works without it.",
+    "ol.tenant": "Directory",
+    "ol.tenantHint": "“common” for any account, or your organisation's tenant ID.",
+    "ol.redirectUri": "Redirect URI",
+    "ol.redirectUriHint": "Register exactly this value in Azure under “Single-page application (SPA)”.",
+    "ol.calendars": "Calendars",
+    "ol.calendarsHint": "Which calendars should be read?",
+    "ol.defaultCalendar": "Default calendar",
+    "ol.chooseCalendars": "Choose calendars",
+    "ol.rules": "Mapping rules",
+    "ol.rulesHint": "Which appointment becomes which day type? First matching rule wins.",
+    "ol.keywords": "Keywords",
+    "ol.keywordsPlaceholder": "Comma separated, e.g. vacation, leave",
+    "ol.showAsMatch": "Also matches appointments shown as: {v}",
+    "ol.editRules": "Edit rules",
+    "ol.syncNow": "Sync now",
+    "ol.fetching": "Reading calendar …",
+    "ol.pastDays": "Days back",
+    "ol.futureDays": "Days ahead",
+    "ol.autoSync": "Check automatically on start",
+    "ol.autoSyncHint": "Speaks up only when there is something to take over.",
+    "ol.importHomeOffice": "Import home office",
+    "ol.importHomeOfficeHint": "Appointments shown as “working elsewhere” set the location, not the day type.",
+    "ol.copySubject": "Copy subject into the note",
+    "ol.ignorePrivate": "Skip private appointments",
+    "ol.lastSync": "Last sync",
+    "ol.never": "never",
+    "ol.previewTitle": "Sync with Outlook",
+    "ol.previewSub": "Nothing changes without your confirmation.",
+    "ol.changes": "Changes",
+    "ol.unchanged": "Unchanged",
+    "ol.protected": "Protected",
+    "ol.protectedTitle": "{n} days stay untouched",
+    "ol.protectedOne": "1 day stays untouched",
+    "ol.protectedHint": "These days carry your own entries. The calendar does not overwrite them.",
+    "ol.rangeInfo": "{from} to {to} · {events} appointments read",
+    "ol.upToDate": "Already up to date",
+    "ol.applyN": "Apply {n}",
+    "ol.applied": "{n} days applied",
+    "ol.changesFound": "{n} calendar changes",
+    "ol.willClear": "Remove entry",
+    "ol.tagNew": "new",
+    "ol.tagUpdate": "changed",
+    "ol.tagRemoved": "removed",
+    "ol.sessionExpired": "Session expired — please reconnect",
+    "ol.fromCalendar": "from Outlook",
+    "ol.setup": "Setup",
+    "ol.setupHint": "One-off in Azure: create an app registration, add the “Single-page application” platform with the redirect URI below, grant Calendars.Read. Then paste the client ID here.",
+    "ol.privacy": "Only the calendar is read, and only on this device. Nothing is sent to third parties."
   };
 
   /* ==================================================================== */
@@ -5497,7 +6556,69 @@ window.ZK_SINGLE_FILE = true;
     "kbd.title": "Raccourcis clavier", "kbd.palette": "Recherche rapide",
     "kbd.stamp": "Pointer arrivée / départ", "kbd.prevDay": "Jour précédent",
     "kbd.nextDay": "Jour suivant", "kbd.today": "Aujourd'hui", "kbd.theme": "Clair / sombre",
-    "kbd.save": "Forcer l'enregistrement", "kbd.help": "Cette aide"
+    "kbd.save": "Forcer l'enregistrement", "kbd.help": "Cette aide",
+
+    /* ---- Outlook ---- */
+    "ol.title": "Calendrier Outlook",
+    "ol.lede": "Reprendre vacances et absences du calendrier — vous ne saisissez plus que le temps de travail.",
+    "ol.connect": "Connecter Outlook",
+    "ol.reconnect": "Reconnecter",
+    "ol.signedInAs": "Connecté en tant que {name}",
+    "ol.signOut": "Se déconnecter",
+    "ol.signedOut": "Déconnecté d'Outlook",
+    "ol.notSignedIn": "Pas connecté à Outlook",
+    "ol.needsClientId": "Saisissez d'abord l'ID client de l'enregistrement Azure",
+    "ol.needsHttps": "La connexion exige une page servie en HTTPS — impossible dans le fichier unique",
+    "ol.clientId": "ID client",
+    "ol.clientIdHint": "ID d'application de l'enregistrement Azure. Rien ne fonctionne sans lui.",
+    "ol.tenant": "Annuaire",
+    "ol.tenantHint": "« common » pour tous les comptes, ou l'ID de locataire de l'entreprise.",
+    "ol.redirectUri": "URI de redirection",
+    "ol.redirectUriHint": "Enregistrez exactement cette valeur dans Azure sous « Application monopage (SPA) ».",
+    "ol.calendars": "Calendriers",
+    "ol.calendarsHint": "Quels calendriers faut-il lire ?",
+    "ol.defaultCalendar": "Calendrier par défaut",
+    "ol.chooseCalendars": "Choisir les calendriers",
+    "ol.rules": "Règles d'attribution",
+    "ol.rulesHint": "Quel rendez-vous devient quel type de jour ? La première règle qui correspond l'emporte.",
+    "ol.keywords": "Mots-clés",
+    "ol.keywordsPlaceholder": "Séparés par des virgules, p. ex. vacances, congé",
+    "ol.showAsMatch": "Reconnaît aussi les rendez-vous avec le statut : {v}",
+    "ol.editRules": "Modifier les règles",
+    "ol.syncNow": "Synchroniser",
+    "ol.fetching": "Lecture du calendrier …",
+    "ol.pastDays": "Jours en arrière",
+    "ol.futureDays": "Jours en avant",
+    "ol.autoSync": "Vérifier automatiquement au démarrage",
+    "ol.autoSyncHint": "Ne se manifeste que s'il y a quelque chose à reprendre.",
+    "ol.importHomeOffice": "Reprendre le télétravail",
+    "ol.importHomeOfficeHint": "Les rendez-vous « travail ailleurs » définissent le lieu, pas le type de jour.",
+    "ol.copySubject": "Reprendre l'objet en note",
+    "ol.ignorePrivate": "Ignorer les rendez-vous privés",
+    "ol.lastSync": "Dernière synchro",
+    "ol.never": "jamais",
+    "ol.previewTitle": "Synchronisation avec Outlook",
+    "ol.previewSub": "Rien ne change sans votre confirmation.",
+    "ol.changes": "Modifications",
+    "ol.unchanged": "Inchangé",
+    "ol.protected": "Protégé",
+    "ol.protectedTitle": "{n} jours restent intacts",
+    "ol.protectedOne": "1 jour reste intact",
+    "ol.protectedHint": "Ces jours portent vos propres saisies. Le calendrier ne les écrase pas.",
+    "ol.rangeInfo": "{from} au {to} · {events} rendez-vous lus",
+    "ol.upToDate": "Déjà à jour",
+    "ol.applyN": "Appliquer {n}",
+    "ol.applied": "{n} jours appliqués",
+    "ol.changesFound": "{n} modifications dans le calendrier",
+    "ol.willClear": "Supprimer l'entrée",
+    "ol.tagNew": "nouveau",
+    "ol.tagUpdate": "modifié",
+    "ol.tagRemoved": "supprimé",
+    "ol.sessionExpired": "Session expirée — reconnectez-vous",
+    "ol.fromCalendar": "depuis Outlook",
+    "ol.setup": "Configuration",
+    "ol.setupHint": "Une seule fois dans Azure : créer un enregistrement d'application, ajouter la plateforme « Application monopage » avec l'URI ci-dessous, accorder Calendars.Read. Puis coller l'ID client ici.",
+    "ol.privacy": "Seul le calendrier est lu, et uniquement sur cet appareil. Rien n'est transmis à des tiers."
   };
 
   /* ==================================================================== */
@@ -5704,7 +6825,69 @@ window.ZK_SINGLE_FILE = true;
     "kbd.title": "Scorciatoie da tastiera", "kbd.palette": "Ricerca rapida",
     "kbd.stamp": "Timbra entrata / uscita", "kbd.prevDay": "Giorno precedente",
     "kbd.nextDay": "Giorno successivo", "kbd.today": "Vai a oggi", "kbd.theme": "Chiaro / scuro",
-    "kbd.save": "Forza salvataggio", "kbd.help": "Questa guida"
+    "kbd.save": "Forza salvataggio", "kbd.help": "Questa guida",
+
+    /* ---- Outlook ---- */
+    "ol.title": "Calendario Outlook",
+    "ol.lede": "Riprendi vacanze e assenze dal calendario — inserisci solo l'orario di lavoro.",
+    "ol.connect": "Collega Outlook",
+    "ol.reconnect": "Ricollega",
+    "ol.signedInAs": "Connesso come {name}",
+    "ol.signOut": "Disconnetti",
+    "ol.signedOut": "Disconnesso da Outlook",
+    "ol.notSignedIn": "Non connesso a Outlook",
+    "ol.needsClientId": "Inserisci prima l'ID client della registrazione Azure",
+    "ol.needsHttps": "L'accesso richiede una pagina servita in HTTPS — impossibile nel file singolo",
+    "ol.clientId": "ID client",
+    "ol.clientIdHint": "ID applicazione dalla registrazione Azure. Senza non funziona nulla.",
+    "ol.tenant": "Directory",
+    "ol.tenantHint": "«common» per tutti gli account, oppure l'ID tenant dell'azienda.",
+    "ol.redirectUri": "URI di reindirizzamento",
+    "ol.redirectUriHint": "Registra esattamente questo valore in Azure sotto «Applicazione a pagina singola (SPA)».",
+    "ol.calendars": "Calendari",
+    "ol.calendarsHint": "Quali calendari vanno letti?",
+    "ol.defaultCalendar": "Calendario predefinito",
+    "ol.chooseCalendars": "Scegli i calendari",
+    "ol.rules": "Regole di attribuzione",
+    "ol.rulesHint": "Quale appuntamento diventa quale tipo di giorno? Vince la prima regola che corrisponde.",
+    "ol.keywords": "Parole chiave",
+    "ol.keywordsPlaceholder": "Separate da virgola, es. vacanze, ferie",
+    "ol.showAsMatch": "Riconosce anche appuntamenti con stato: {v}",
+    "ol.editRules": "Modifica regole",
+    "ol.syncNow": "Sincronizza ora",
+    "ol.fetching": "Lettura del calendario …",
+    "ol.pastDays": "Giorni indietro",
+    "ol.futureDays": "Giorni avanti",
+    "ol.autoSync": "Controlla automaticamente all'avvio",
+    "ol.autoSyncHint": "Si fa vivo solo se c'è qualcosa da riprendere.",
+    "ol.importHomeOffice": "Importa telelavoro",
+    "ol.importHomeOfficeHint": "Gli appuntamenti «altrove» impostano il luogo, non il tipo di giorno.",
+    "ol.copySubject": "Copia l'oggetto nella nota",
+    "ol.ignorePrivate": "Salta gli appuntamenti privati",
+    "ol.lastSync": "Ultima sincronizzazione",
+    "ol.never": "mai",
+    "ol.previewTitle": "Sincronizzazione con Outlook",
+    "ol.previewSub": "Nulla cambia senza la tua conferma.",
+    "ol.changes": "Modifiche",
+    "ol.unchanged": "Invariati",
+    "ol.protected": "Protetti",
+    "ol.protectedTitle": "{n} giorni restano intatti",
+    "ol.protectedOne": "1 giorno resta intatto",
+    "ol.protectedHint": "Questi giorni contengono registrazioni tue. Il calendario non le sovrascrive.",
+    "ol.rangeInfo": "Dal {from} al {to} · {events} appuntamenti letti",
+    "ol.upToDate": "Già aggiornato",
+    "ol.applyN": "Applica {n}",
+    "ol.applied": "{n} giorni applicati",
+    "ol.changesFound": "{n} modifiche nel calendario",
+    "ol.willClear": "Rimuovi voce",
+    "ol.tagNew": "nuovo",
+    "ol.tagUpdate": "modificato",
+    "ol.tagRemoved": "rimosso",
+    "ol.sessionExpired": "Sessione scaduta — ricollegati",
+    "ol.fromCalendar": "da Outlook",
+    "ol.setup": "Configurazione",
+    "ol.setupHint": "Una volta sola in Azure: crea una registrazione app, aggiungi la piattaforma «Applicazione a pagina singola» con l'URI qui sotto, concedi Calendars.Read. Poi incolla qui l'ID client.",
+    "ol.privacy": "Viene letto solo il calendario, e solo su questo dispositivo. Nulla viene trasmesso a terzi."
   };
 
   /* ==================================================================== */
@@ -7294,6 +8477,469 @@ window.ZK_SINGLE_FILE = true;
 })(typeof self !== "undefined" ? self : this);
 
 ;
+/* ===== assets/js/ui/outlooksync.js ===== */
+/* ==========================================================================
+   ZEITKONTO — Outlook-Abgleich (Ablauf und Vorschau)
+   --------------------------------------------------------------------------
+   Verbindet Anmeldung, Graph-Abruf und Regelwerk zu einem Vorgang, den der
+   Nutzer versteht und bestätigt. Grundsatz: der Abgleich schlägt vor, er
+   entscheidet nicht.
+   ========================================================================== */
+(function (root) {
+  "use strict";
+  var ZK = root.ZK = root.ZK || {};
+  var D = ZK.Dom, T = ZK.Time, R = ZK.Rules, I = ZK.I18n;
+  var CS = ZK.CalendarSync;
+
+  var running = false;
+
+  /* ------------------------------------------------------------------ */
+  /* Einstellungen                                                       */
+  /* ------------------------------------------------------------------ */
+
+  function settingsOf(App) {
+    return Object.assign(CS.defaultSettings(), App.settings().outlook || {});
+  }
+
+  function saveSettings(App, patch) {
+    var next = Object.assign(settingsOf(App), patch);
+    App.store.updateSettings({ outlook: next });
+    configure(App);
+    return next;
+  }
+
+  /** Überträgt die gespeicherten Werte in den Anmeldeclient. */
+  function configure(App) {
+    var s = settingsOf(App);
+    ZK.MsAuth.configure({
+      clientId: (s.clientId || "").trim() || null,
+      tenant: (s.tenant || "common").trim() || "common"
+    });
+    return s;
+  }
+
+  function status(App) {
+    var s = settingsOf(App);
+    return {
+      settings: s,
+      supported: ZK.MsAuth.isSupported(),
+      configured: ZK.MsAuth.isConfigured(),
+      signedIn: ZK.MsAuth.isSignedIn(),
+      account: ZK.MsAuth.account(),
+      redirectUri: ZK.MsAuth.defaultRedirectUri()
+    };
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Anmeldung                                                           */
+  /* ------------------------------------------------------------------ */
+
+  function signIn(App) {
+    configure(App);
+    if (!ZK.MsAuth.isSupported()) {
+      D.toast(I.t("ol.needsHttps"), { tone: "warn", duration: 7000 });
+      return Promise.resolve(false);
+    }
+    if (!ZK.MsAuth.isConfigured()) {
+      D.toast(I.t("ol.needsClientId"), { tone: "warn", duration: 7000 });
+      return Promise.resolve(false);
+    }
+    return ZK.MsAuth.signIn({ prompt: "select_account", returnTo: "#/settings/" + App.date })
+      .catch(function (err) {
+        D.toast(String(err.message || err), { tone: "minus", duration: 8000 });
+        return false;
+      });
+  }
+
+  function signOut(App) {
+    ZK.MsAuth.signOut();
+    saveSettings(App, { lastSyncAt: null });
+    App.afterChange();
+    D.toast(I.t("ol.signedOut"));
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Abgleich                                                            */
+  /* ------------------------------------------------------------------ */
+
+  /**
+   * @param {Object} opts { silent: true = ohne Vorschau nur prüfen und melden }
+   */
+  function run(App, opts) {
+    opts = opts || {};
+    if (running) return Promise.resolve(null);
+    var s = configure(App);
+
+    if (!ZK.MsAuth.isSignedIn()) {
+      if (!opts.silent) D.toast(I.t("ol.notSignedIn"), { tone: "warn" });
+      return Promise.resolve(null);
+    }
+
+    running = true;
+    var range = CS.syncRange(s);
+    var timeZone = deviceTimeZone();
+    var dismiss = opts.silent ? null : D.toast(I.t("ol.fetching"), { duration: 60000, icon: "refresh" });
+
+    var calendarIds = (s.calendarIds && s.calendarIds.length) ? s.calendarIds : ["primary"];
+
+    return Promise.all(calendarIds.map(function (id) {
+      return ZK.Graph.calendarView({
+        calendarId: id,
+        from: range.from,
+        to: range.to,
+        timeZone: timeZone
+      }).catch(function (err) {
+        // Ein einzelner unlesbarer Kalender darf den Rest nicht verhindern
+        if (root.console) console.warn("Kalender übersprungen:", id, err.message);
+        return [];
+      });
+    })).then(function (lists) {
+      var events = [];
+      var seen = Object.create(null);
+      lists.forEach(function (list) {
+        list.forEach(function (ev) {
+          if (ev && ev.id && !seen[ev.id]) { seen[ev.id] = true; events.push(ev); }
+        });
+      });
+
+      var mapped = CS.mapEvents(events, s);
+      var plan = CS.planSync(mapped, function (iso) { return App.store.getDay(iso); }, range);
+      plan.eventCount = events.length;
+      plan.range = range;
+
+      if (dismiss) dismiss();
+      running = false;
+
+      if (opts.silent) {
+        if (plan.changes.length) {
+          D.toast(I.t("ol.changesFound", { n: plan.changes.length }), {
+            icon: "calendar",
+            duration: 9000,
+            action: { label: I.t("common.apply"), onClick: function () { showPreview(App, plan); } }
+          });
+        }
+        return plan;
+      }
+
+      showPreview(App, plan);
+      return plan;
+    }).catch(function (err) {
+      running = false;
+      if (dismiss) dismiss();
+      var msg = String(err && err.message ? err.message : err);
+      if (err && err.status === 401) msg = I.t("ol.sessionExpired");
+      if (!opts.silent) D.toast(msg, { tone: "minus", duration: 9000 });
+      return null;
+    });
+  }
+
+  function deviceTimeZone() {
+    try { return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"; }
+    catch (e) { return "UTC"; }
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Vorschau                                                            */
+  /* ------------------------------------------------------------------ */
+
+  function showPreview(App, plan) {
+    var body = D.el("div.col");
+
+    /* Kopfzeile mit Zahlen */
+    var summary = D.el("div.grid-3.mb-4");
+    kpi(summary, I.t("ol.changes"), String(plan.changes.length), "", plan.changes.length ? "info" : "");
+    kpi(summary, I.t("ol.unchanged"), String(plan.unchanged), "");
+    kpi(summary, I.t("ol.protected"), String(plan.protectedDays.length), "", plan.protectedDays.length ? "warn" : "");
+    body.appendChild(summary);
+
+    body.appendChild(D.el("p.muted", {
+      style: { fontSize: "12px", marginBottom: "10px" },
+      text: I.t("ol.rangeInfo", {
+        from: I.formatDate(plan.range.from, { day: "2-digit", month: "2-digit", year: "numeric" }),
+        to: I.formatDate(plan.range.to, { day: "2-digit", month: "2-digit", year: "numeric" }),
+        events: plan.eventCount
+      })
+    }));
+
+    if (!plan.changes.length) {
+      var ok = D.el("div.notice.plus");
+      ok.innerHTML = D.icon("check") + "<div><strong>" + D.esc(I.t("ol.upToDate")) + "</strong></div>";
+      body.appendChild(ok);
+    } else {
+      var list = D.el("div", {
+        style: { maxHeight: "42vh", overflowY: "auto", border: "1px solid var(--line)", borderRadius: "var(--r-md)" }
+      });
+      var selected = Object.create(null);
+      plan.changes.forEach(function (change, i) { selected[i] = true; });
+
+      plan.changes.forEach(function (change, i) {
+        list.appendChild(changeRow(App, change, i, selected));
+      });
+      body.appendChild(list);
+      plan._selected = selected;
+    }
+
+    /* Geschützte Tage benennen — Vertrauen entsteht durch Sichtbarkeit */
+    if (plan.protectedDays.length) {
+      var warn = D.el("div.notice.warn.mt-4");
+      warn.innerHTML = D.icon("lock") +
+        "<div><strong>" + D.esc(plan.protectedDays.length === 1 ? I.t("ol.protectedOne") : I.t("ol.protectedTitle", { n: plan.protectedDays.length })) + "</strong>" +
+        "<div class='sub'>" + D.esc(I.t("ol.protectedHint")) + "</div></div>";
+      body.appendChild(warn);
+
+      var chips = D.el("div.chipset.mt-3");
+      plan.protectedDays.slice(0, 24).forEach(function (p) {
+        var chip = D.el("button.chip", {
+          type: "button",
+          text: I.formatDate(p.date, { day: "2-digit", month: "2-digit" }) + " · " + I.t("type." + p.proposal.type)
+        });
+        chip.addEventListener("click", function () {
+          ZK.DayModal.open(App, p.date, function () { App.renderChrome(); App.renderView(); });
+        });
+        chips.appendChild(chip);
+      });
+      body.appendChild(chips);
+    }
+
+    var cancel = D.el("button.btn", { type: "button", text: I.t("common.cancel") });
+    var apply = D.el("button.btn.primary", {
+      type: "button",
+      text: I.t("ol.applyN", { n: plan.changes.length }),
+      disabled: plan.changes.length === 0
+    });
+
+    var m = D.modal({
+      title: I.t("ol.previewTitle"),
+      sub: I.t("ol.previewSub"),
+      body: body,
+      size: "wide",
+      footer: [cancel, apply]
+    });
+
+    cancel.addEventListener("click", function () { m.close(); });
+    apply.addEventListener("click", function () {
+      var chosen = plan.changes.filter(function (c, i) { return plan._selected[i]; });
+      m.close();
+      applyChanges(App, chosen);
+    });
+  }
+
+  function changeRow(App, change, index, selected) {
+    var row = D.el("label", {
+      style: {
+        display: "grid",
+        gridTemplateColumns: "26px 92px minmax(0,1fr) auto",
+        gap: "10px",
+        alignItems: "center",
+        padding: "9px 12px",
+        borderBottom: "1px solid var(--line-faint)",
+        cursor: "pointer"
+      }
+    });
+
+    var box = D.el("input", { type: "checkbox", checked: true, style: { width: "16px", height: "16px" } });
+    box.addEventListener("change", function () { selected[index] = box.checked; });
+    row.appendChild(box);
+
+    var wd = T.weekdayOf(change.date);
+    row.appendChild(D.el("div", {
+      html: "<b style='font-size:12.5px'>" + D.esc(I.weekdayName(wd, "short")) + " " +
+        D.esc(I.formatDate(change.date, { day: "2-digit", month: "2-digit" })) + "</b>"
+    }));
+
+    var desc = D.el("div", { style: { minWidth: "0", fontSize: "12.5px" } });
+    if (change.action === "clear") {
+      desc.innerHTML = "<span class='tone-minus'>" + D.esc(I.t("ol.willClear")) + "</span>" +
+        (change.before && change.before.type
+          ? " <span class='muted'>(" + D.esc(I.t("type." + change.before.type)) + ")</span>" : "");
+    } else if (change.action === "location") {
+      desc.innerHTML = D.icon("home") + " <b>" + D.esc(I.t("loc." + change.location)) + "</b>" +
+        (change.subject ? " <span class='muted'>· " + D.esc(change.subject) + "</span>" : "");
+    } else {
+      desc.innerHTML =
+        "<b style='color:" + R.dayType(change.type).color + "'>" + D.esc(I.t("type." + change.type)) + "</b>" +
+        (change.factor < 1 ? " <span class='tag'>" + Math.round(change.factor * 100) + " %</span>" : "") +
+        (change.subject ? " <span class='muted'>· " + D.esc(change.subject) + "</span>" : "");
+    }
+    row.appendChild(desc);
+
+    var tag = change.reason === "new" ? I.t("ol.tagNew")
+      : change.reason === "update" ? I.t("ol.tagUpdate")
+        : change.reason === "homeoffice" ? I.t("loc.home")
+          : I.t("ol.tagRemoved");
+    row.appendChild(D.el("span.tag", { text: tag }));
+
+    return row;
+  }
+
+  function applyChanges(App, changes) {
+    if (!changes.length) return;
+    var stamp = new Date().toISOString();
+    var patch = CS.buildPatch(changes, stamp);
+
+    App.store.setDays(patch, { label: "outlook" });
+    saveSettings(App, { lastSyncAt: stamp });
+    App.afterChange();
+
+    D.toast(I.t("ol.applied", { n: changes.length }), {
+      tone: "plus",
+      icon: "calendar",
+      action: { label: I.t("common.undo"), onClick: function () { App.undo(); } }
+    });
+  }
+
+  function kpi(host, title, value, sub, tone) {
+    var node = D.el("div.kpi" + (tone ? ".accent-" + tone : ""));
+    node.innerHTML = '<div class="k-title">' + D.esc(title) + "</div>" +
+      '<div class="k-val mono">' + D.esc(value) + "</div>" +
+      (sub ? '<div class="k-sub">' + D.esc(sub) + "</div>" : "");
+    host.appendChild(node);
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Kalenderauswahl                                                     */
+  /* ------------------------------------------------------------------ */
+
+  function chooseCalendars(App) {
+    var s = settingsOf(App);
+    var body = D.el("div.col");
+    body.appendChild(D.el("p.muted", { text: I.t("ol.calendarsHint"), style: { fontSize: "13px" } }));
+    var list = D.el("div.col", { style: { gap: "6px" } });
+    body.appendChild(list);
+    list.appendChild(D.el("div.skeleton", { style: { height: "44px" } }));
+
+    var cancel = D.el("button.btn", { type: "button", text: I.t("common.cancel") });
+    var save = D.el("button.btn.primary", { type: "button", text: I.t("common.save"), disabled: true });
+    var m = D.modal({ title: I.t("ol.calendars"), body: body, footer: [cancel, save] });
+    cancel.addEventListener("click", function () { m.close(); });
+
+    var chosen = (s.calendarIds || ["primary"]).slice();
+
+    ZK.Graph.listCalendars().then(function (calendars) {
+      D.clear(list);
+      save.disabled = false;
+      calendars.forEach(function (cal) {
+        var id = cal.isDefaultCalendar ? "primary" : cal.id;
+        var wrap = D.el("label.switch", { style: { justifyContent: "space-between", width: "100%" } });
+        var input = D.el("input", { type: "checkbox", checked: chosen.indexOf(id) >= 0 });
+        input.addEventListener("change", function () {
+          var at = chosen.indexOf(id);
+          if (input.checked && at < 0) chosen.push(id);
+          if (!input.checked && at >= 0) chosen.splice(at, 1);
+        });
+        wrap.appendChild(input);
+        wrap.appendChild(D.el("span.track"));
+        wrap.appendChild(D.el("span.lbl", {
+          html: D.esc(cal.name || "—") + (cal.isDefaultCalendar ? "<small>" + D.esc(I.t("ol.defaultCalendar")) + "</small>" : "")
+        }));
+        list.appendChild(wrap);
+      });
+      if (!calendars.length) {
+        list.appendChild(D.el("p.muted", { text: I.t("common.empty"), style: { fontSize: "13px" } }));
+      }
+    }).catch(function (err) {
+      D.clear(list);
+      var box = D.el("div.notice.minus");
+      box.innerHTML = D.icon("alert") + "<div>" + D.esc(String(err.message || err)) + "</div>";
+      list.appendChild(box);
+    });
+
+    save.addEventListener("click", function () {
+      saveSettings(App, { calendarIds: chosen.length ? chosen : ["primary"] });
+      m.close();
+      App.renderView();
+    });
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Regeln bearbeiten                                                   */
+  /* ------------------------------------------------------------------ */
+
+  function editRules(App) {
+    var s = settingsOf(App);
+    var rules = s.rules.map(function (r) { return Object.assign({}, r); });
+
+    var body = D.el("div.col");
+    body.appendChild(D.el("p.muted", { text: I.t("ol.rulesHint"), style: { fontSize: "13px" } }));
+
+    rules.forEach(function (rule) {
+      var card = D.el("div", {
+        style: { border: "1px solid var(--line)", borderRadius: "var(--r-sm)", padding: "12px" }
+      });
+
+      var head = D.el("div.row", { style: { justifyContent: "space-between", marginBottom: "8px" } });
+      var label = rule.locationOnly
+        ? I.t("loc." + rule.locationOnly)
+        : I.t("type." + rule.type);
+      head.appendChild(D.el("b", {
+        text: label,
+        style: { fontSize: "13px", color: rule.locationOnly ? "var(--ink)" : R.dayType(rule.type).color }
+      }));
+
+      var toggle = D.el("label.switch");
+      var input = D.el("input", { type: "checkbox", checked: rule.enabled !== false });
+      input.addEventListener("change", function () { rule.enabled = input.checked; });
+      toggle.appendChild(input);
+      toggle.appendChild(D.el("span.track"));
+      head.appendChild(toggle);
+      card.appendChild(head);
+
+      if (rule.showAs && rule.showAs.length) {
+        card.appendChild(D.el("div", {
+          style: { fontSize: "11px", color: "var(--ink-3)", marginBottom: "6px" },
+          text: I.t("ol.showAsMatch", { v: rule.showAs.join(", ") })
+        }));
+      }
+
+      var field = D.el("div.field");
+      field.appendChild(D.el("label", { text: I.t("ol.keywords") }));
+      var kw = D.el("input.input", {
+        type: "text",
+        value: (rule.keywords || []).join(", "),
+        placeholder: I.t("ol.keywordsPlaceholder")
+      });
+      kw.addEventListener("change", function () {
+        rule.keywords = kw.value.split(",").map(function (k) { return k.trim(); }).filter(Boolean);
+      });
+      field.appendChild(kw);
+      card.appendChild(field);
+      body.appendChild(card);
+    });
+
+    var reset = D.el("button.btn.ghost.left", { type: "button", text: I.t("common.reset") });
+    var cancel = D.el("button.btn", { type: "button", text: I.t("common.cancel") });
+    var save = D.el("button.btn.primary", { type: "button", text: I.t("common.save") });
+
+    var m = D.modal({ title: I.t("ol.rules"), body: body, size: "wide", footer: [reset, cancel, save] });
+    cancel.addEventListener("click", function () { m.close(); });
+    reset.addEventListener("click", function () {
+      saveSettings(App, { rules: CS.DEFAULT_RULES.map(function (r) { return Object.assign({}, r); }) });
+      m.close();
+      App.renderView();
+    });
+    save.addEventListener("click", function () {
+      saveSettings(App, { rules: rules });
+      m.close();
+      App.renderView();
+      D.toast(I.t("common.saved"));
+    });
+  }
+
+  ZK.OutlookSync = {
+    settingsOf: settingsOf,
+    saveSettings: saveSettings,
+    configure: configure,
+    status: status,
+    signIn: signIn,
+    signOut: signOut,
+    run: run,
+    chooseCalendars: chooseCalendars,
+    editRules: editRules,
+    deviceTimeZone: deviceTimeZone
+  };
+})(typeof self !== "undefined" ? self : this);
+
+;
 /* ===== assets/js/ui/views/today.js ===== */
 /* ==========================================================================
    ZEITKONTO — Ansicht „Heute“
@@ -8202,11 +9848,15 @@ window.ZK_SINGLE_FILE = true;
       // Nur bewusst gesetzte Tagesarten und Feiertage bekommen ein Kürzel.
       // Ein Wochenende ist schon durch Spalte und Hintergrund erkennbar —
       // ein zusätzliches „Arbeitsfrei“ wäre nur Lärm.
-      var explicitType = !!App.record(iso).type;
+      var record = App.record(iso);
+      var explicitType = !!record.type;
+      var fromOutlook = record.source === "outlook";
       if (explicitType && res.type !== "work") {
         cell.appendChild(D.el("span.flag", {
-          text: I.t("type." + res.type) + (res.absenceFactor < 1 ? " " + Math.round(res.absenceFactor * 100) + "%" : ""),
-          style: { "--c": res.typeMeta.color }
+          text: (fromOutlook ? "◇ " : "") +
+            I.t("type." + res.type) + (res.absenceFactor < 1 ? " " + Math.round(res.absenceFactor * 100) + "%" : ""),
+          style: { "--c": res.typeMeta.color },
+          "data-tip": fromOutlook ? I.t("ol.fromCalendar") : null
         }));
       } else if (res.holiday) {
         cell.appendChild(D.el("span.flag", {
@@ -9622,6 +11272,11 @@ window.ZK_SINGLE_FILE = true;
     grid.appendChild(hol.node);
 
     /* ================================================================ */
+    /* Outlook-Kalender                                                  */
+    /* ================================================================ */
+    grid.appendChild(outlookSection(App).node);
+
+    /* ================================================================ */
     /* Arbeitsschutz & Komfort                                           */
     /* ================================================================ */
     var comp = section(I.t("set.compliance"), "shield");
@@ -9799,6 +11454,162 @@ window.ZK_SINGLE_FILE = true;
   }
 
   /* ==================================================================== */
+  /* Outlook-Kalender                                                      */
+  /* ==================================================================== */
+
+  function outlookSection(App) {
+    var OL = ZK.OutlookSync;
+    var box = section(I.t("ol.title"), "calendar");
+    var st = OL.status(App);
+    var s = st.settings;
+
+    box.body.appendChild(D.el("p.muted", {
+      text: I.t("ol.lede"),
+      style: { fontSize: "13px", marginBottom: "14px" }
+    }));
+
+    /* ---- Einzeldatei kann kein OAuth --------------------------------- */
+    if (!st.supported) {
+      var blocked = D.el("div.notice.warn");
+      blocked.innerHTML = D.icon("info") +
+        "<div><strong>" + D.esc(I.t("ol.needsHttps")) + "</strong></div>";
+      box.body.appendChild(blocked);
+      return box;
+    }
+
+    /* ---- Verbindung --------------------------------------------------- */
+    if (st.signedIn && st.account) {
+      var who = D.el("div.notice.plus.mb-4");
+      who.innerHTML = D.icon("check") +
+        "<div><strong>" + D.esc(I.t("ol.signedInAs", { name: st.account.name || st.account.username })) + "</strong>" +
+        (st.account.username ? "<div class='sub'>" + D.esc(st.account.username) + "</div>" : "") + "</div>";
+      box.body.appendChild(who);
+
+      var actions = D.el("div.row.mb-4");
+      var syncBtn = D.el("button.btn.primary", {
+        type: "button", html: D.icon("refresh") + "<span>" + D.esc(I.t("ol.syncNow")) + "</span>"
+      });
+      syncBtn.addEventListener("click", function () { OL.run(App); });
+      actions.appendChild(syncBtn);
+
+      var calBtn = D.el("button.btn.sm", {
+        type: "button", html: D.icon("calendar") + "<span>" + D.esc(I.t("ol.chooseCalendars")) + "</span>"
+      });
+      calBtn.addEventListener("click", function () { OL.chooseCalendars(App); });
+      actions.appendChild(calBtn);
+
+      var ruleBtn = D.el("button.btn.sm", {
+        type: "button", html: D.icon("filter") + "<span>" + D.esc(I.t("ol.editRules")) + "</span>"
+      });
+      ruleBtn.addEventListener("click", function () { OL.editRules(App); });
+      actions.appendChild(ruleBtn);
+
+      var outBtn = D.el("button.btn.sm.ghost", { type: "button", text: I.t("ol.signOut") });
+      outBtn.addEventListener("click", function () { OL.signOut(App); });
+      actions.appendChild(outBtn);
+      box.body.appendChild(actions);
+
+      box.body.appendChild(D.el("div", {
+        style: { fontSize: "11px", color: "var(--ink-3)", marginBottom: "8px" },
+        text: I.t("ol.lastSync") + ": " + (s.lastSyncAt
+          ? I.formatDate(s.lastSyncAt.slice(0, 10), { day: "2-digit", month: "2-digit", year: "numeric" }) +
+            " " + s.lastSyncAt.slice(11, 16)
+          : I.t("ol.never"))
+      }));
+
+      /* ---- Verhalten --------------------------------------------------- */
+      box.body.appendChild(rowSwitch(I.t("ol.autoSync"), I.t("ol.autoSyncHint"), s.autoSync !== false, function (on) {
+        OL.saveSettings(App, { autoSync: on });
+      }));
+      box.body.appendChild(rowSwitch(I.t("ol.importHomeOffice"), I.t("ol.importHomeOfficeHint"), s.importHomeOffice !== false, function (on) {
+        OL.saveSettings(App, { importHomeOffice: on });
+      }));
+      box.body.appendChild(rowSwitch(I.t("ol.copySubject"), "", s.copySubjectToNote !== false, function (on) {
+        OL.saveSettings(App, { copySubjectToNote: on });
+      }));
+      box.body.appendChild(rowSwitch(I.t("ol.ignorePrivate"), "", s.ignorePrivate !== false, function (on) {
+        OL.saveSettings(App, { ignorePrivate: on });
+      }));
+      box.body.appendChild(rowNumber(I.t("ol.pastDays"), "", s.pastDays, I.t("common.days"), function (v) {
+        OL.saveSettings(App, { pastDays: Math.max(0, Math.min(3650, Math.round(v))) });
+      }));
+      box.body.appendChild(rowNumber(I.t("ol.futureDays"), "", s.futureDays, I.t("common.days"), function (v) {
+        OL.saveSettings(App, { futureDays: Math.max(0, Math.min(3650, Math.round(v))) });
+      }));
+    } else {
+      /* ---- Einrichtung ------------------------------------------------- */
+      var setup = D.el("div.notice.info.mb-4");
+      setup.innerHTML = D.icon("info") +
+        "<div><strong>" + D.esc(I.t("ol.setup")) + "</strong>" +
+        "<div class='sub'>" + D.esc(I.t("ol.setupHint")) + "</div></div>";
+      box.body.appendChild(setup);
+
+      /* Umleitungs-URI zum Kopieren — der häufigste Stolperstein */
+      var uriField = D.el("div.field.mb-3");
+      uriField.appendChild(D.el("label", { text: I.t("ol.redirectUri") }));
+      var uriRow = D.el("div.row.tight.nowrap");
+      var uriInput = D.el("input.input.mono", {
+        type: "text", value: st.redirectUri || "", readonly: true,
+        style: { fontSize: "12px" }
+      });
+      uriInput.addEventListener("focus", function () { uriInput.select(); });
+      var copyBtn = D.el("button.btn.icon", {
+        type: "button", "aria-label": I.t("common.copy"), html: D.icon("copy")
+      });
+      copyBtn.addEventListener("click", function () {
+        D.copyText(st.redirectUri || "").then(function () { D.toast(I.t("common.copied")); });
+      });
+      uriRow.appendChild(uriInput);
+      uriRow.appendChild(copyBtn);
+      uriField.appendChild(uriRow);
+      uriField.appendChild(D.el("div.hint", { text: I.t("ol.redirectUriHint") }));
+      box.body.appendChild(uriField);
+
+      var idField = D.el("div.field.mb-3");
+      idField.appendChild(D.el("label", { text: I.t("ol.clientId") }));
+      var idInput = D.el("input.input.mono", {
+        type: "text", value: s.clientId || "",
+        placeholder: "00000000-0000-0000-0000-000000000000",
+        style: { fontSize: "12px" }
+      });
+      idInput.addEventListener("change", function () {
+        OL.saveSettings(App, { clientId: idInput.value.trim() });
+        App.renderView();
+      });
+      idField.appendChild(idInput);
+      idField.appendChild(D.el("div.hint", { text: I.t("ol.clientIdHint") }));
+      box.body.appendChild(idField);
+
+      var tenantField = D.el("div.field.mb-4");
+      tenantField.appendChild(D.el("label", { text: I.t("ol.tenant") }));
+      var tenantInput = D.el("input.input.mono", {
+        type: "text", value: s.tenant || "common", placeholder: "common", style: { fontSize: "12px" }
+      });
+      tenantInput.addEventListener("change", function () {
+        OL.saveSettings(App, { tenant: tenantInput.value.trim() || "common" });
+      });
+      tenantField.appendChild(tenantInput);
+      tenantField.appendChild(D.el("div.hint", { text: I.t("ol.tenantHint") }));
+      box.body.appendChild(tenantField);
+
+      var connect = D.el("button.btn.primary.block", {
+        type: "button",
+        html: D.icon("external") + "<span>" + D.esc(I.t("ol.connect")) + "</span>",
+        disabled: !(s.clientId || "").trim()
+      });
+      connect.addEventListener("click", function () { OL.signIn(App); });
+      box.body.appendChild(connect);
+    }
+
+    box.body.appendChild(D.el("p.muted", {
+      text: I.t("ol.privacy"),
+      style: { fontSize: "11px", marginTop: "14px", lineHeight: "1.5" }
+    }));
+
+    return box;
+  }
+
+  /* ==================================================================== */
   /* Bausteine                                                             */
   /* ==================================================================== */
 
@@ -9914,7 +11725,7 @@ window.ZK_SINGLE_FILE = true;
   var E = ZK.Engine;
   var I = ZK.I18n;
 
-  var APP_VERSION = "1.0.0";
+  var APP_VERSION = "1.1.0";
 
   ZK.Views = ZK.Views || {};
 
@@ -10332,6 +12143,7 @@ window.ZK_SINGLE_FILE = true;
       { icon: App.effectiveTheme === "dark" ? "sun" : "moon", label: I.t("set.theme"), kbd: "T", run: App.toggleTheme },
       { icon: "download", label: I.t("set.exportAll"), run: function () { App.exportJSON(); } },
       { icon: "printer", label: I.t("report.printNow"), run: function () { App.go("reports"); setTimeout(function () { window.print(); }, 350); } },
+      { icon: "calendar", label: I.t("ol.syncNow"), sub: I.t("ol.title"), run: function () { App.syncOutlook(); } },
       { icon: "keyboard", label: I.t("kbd.title"), kbd: "?", run: showShortcuts },
       { icon: "refresh", label: I.t("common.undo"), kbd: "Ctrl+Z", run: function () { App.undo(); } }
     ];
@@ -10666,6 +12478,32 @@ window.ZK_SINGLE_FILE = true;
     }, deltaMin * 60 * 1000);
   };
 
+  /* ================================================================== */
+  /* Outlook                                                             */
+  /* ================================================================== */
+
+  /**
+   * Stiller Abgleich beim Start. Höchstens alle vier Stunden, damit ein
+   * Neuladen der Seite nicht jedes Mal eine Anfrage auslöst.
+   */
+  App.autoSyncOutlook = function () {
+    if (!ZK.OutlookSync || !ZK.MsAuth) return;
+    var s = ZK.OutlookSync.settingsOf(App);
+    if (s.autoSync === false) return;
+    if (!ZK.MsAuth.isConfigured() || !ZK.MsAuth.isSignedIn()) return;
+
+    if (s.lastSyncAt) {
+      var age = Date.now() - new Date(s.lastSyncAt).getTime();
+      if (isFinite(age) && age < 4 * 60 * 60 * 1000) return;
+    }
+    ZK.OutlookSync.run(App, { silent: true });
+  };
+
+  App.syncOutlook = function () {
+    if (!ZK.OutlookSync) return;
+    ZK.OutlookSync.run(App);
+  };
+
   App.requestNotifications = function () {
     if (typeof Notification === "undefined") return Promise.resolve("unsupported");
     return Notification.requestPermission().then(function (p) {
@@ -10822,6 +12660,15 @@ window.ZK_SINGLE_FILE = true;
     App.applyTheme();
     App.applyDensity();
 
+    /* Rückkehr von der Microsoft-Anmeldung zuerst abfangen: handleRedirect()
+       räumt die Adresszeile sofort auf, deshalb liest readHash() danach
+       bereits das wiederhergestellte Ziel. */
+    var authFlow = null;
+    if (ZK.OutlookSync && ZK.MsAuth) {
+      ZK.OutlookSync.configure(App);
+      if (ZK.MsAuth.hasRedirect()) authFlow = ZK.MsAuth.handleRedirect();
+    }
+
     readHash();
 
     if (mediaDark && mediaDark.addEventListener) {
@@ -10869,11 +12716,27 @@ window.ZK_SINGLE_FILE = true;
       setTimeout(function () { if (boot.parentNode) boot.parentNode.removeChild(boot); }, 450);
     }
 
+    if (authFlow) {
+      authFlow.then(function (result) {
+        if (!result) return;
+        App.renderChrome();
+        App.renderView();
+        D.toast(I.t("ol.signedInAs", { name: (result.account && result.account.name) || "" }), {
+          tone: "plus", icon: "check"
+        });
+        // Direkt nach dem Verbinden lohnt sich der erste Abgleich
+        setTimeout(function () { ZK.OutlookSync.run(App); }, 500);
+      }).catch(function (err) {
+        D.toast(String(err && err.message ? err.message : err), { tone: "minus", duration: 9000 });
+      });
+    }
+
     setTimeout(function () {
       App.runOnboarding();
       App.checkAchievements();
       App.scheduleReminder();
       store.makeBackup();
+      App.autoSyncOutlook();
     }, 320);
   };
 
