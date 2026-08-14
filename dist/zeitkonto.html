@@ -1,7 +1,7 @@
 <!--
   ZEITKONTO — Einzeldatei-Fassung
   Erzeugt aus dem Quellverzeichnis mit tools/build-single-file.js
-  Version: zeitkonto-v1.1.0
+  Version: zeitkonto-v1.2.0
   Diese Datei ist vollständig eigenständig: einfach im Browser öffnen.
   Alle Daten bleiben im lokalen Speicher dieses Browsers.
 -->
@@ -2920,7 +2920,21 @@ window.ZK_SINGLE_FILE = true;
       minRestHours: 11,           // Ruhezeit zwischen zwei Tagen
       maxWeeklyMinutes: 50 * 60,
 
+      /* Schichtvorlagen — ein Klick statt vier Felder.
+         Frei erweiterbar; die mitgelieferten decken einen Zweischichtbetrieb
+         mit Bürozeiten ab. */
+      shiftTemplates: [
+        { id: "office", name: "Büro",        start: "08:00", end: "17:00", breakStart: "12:00", breakEnd: "12:30" },
+        { id: "early",  name: "Frühschicht", start: "06:00", end: "14:30", breakStart: "09:00", breakEnd: "09:30" },
+        { id: "late",   name: "Spätschicht", start: "14:00", end: "22:30", breakStart: "18:00", breakEnd: "18:30" },
+        { id: "night",  name: "Nachtschicht", start: "22:00", end: "06:00", breakStart: "02:00", breakEnd: "02:30" }
+      ],
+
       /* Komfort */
+      breakReminder: true,        // erinnert, bevor die Pflichtpause fällig wird
+      titleCountdown: true,       // Feierabend im Browser-Tab
+      backupReminderDays: 45,     // Hinweis, wenn so lange nicht gesichert wurde
+      lastExportAt: null,
       reminderEnabled: false,
       reminderLeadMinutes: 10,
       autoStampOnOpen: false,
@@ -3937,6 +3951,457 @@ window.ZK_SINGLE_FILE = true;
     buildStats: buildStats,
     evaluate: evaluate,
     levelOf: levelOf
+  };
+});
+
+;
+/* ===== assets/js/core/planner.js ===== */
+/* ==========================================================================
+   ZEITKONTO — Planung, Schnellerfassung und Prüfung
+   --------------------------------------------------------------------------
+   Alles, was vorausdenkt statt nur zurückzurechnen:
+
+     · Schnellerfassung   „gestern 7:45-16:30 p30“ → fertiger Tageseintrag
+     · Gleitzeit-Planer   Zielsaldo bis Datum → was pro Tag nötig ist
+     · Kompensation       wie viele freie Tage im Konto stecken
+     · Brückentage        wo wenige Ferientage viele freie Tage ergeben
+     · Monatscheck        was vor dem Abschluss noch zu klären ist
+
+   Wieder ausschliesslich reine Funktionen — die Oberfläche liegt in
+   ui/views/tools.js.
+   ========================================================================== */
+(function (root, factory) {
+  if (typeof module === "object" && module.exports) {
+    module.exports = factory(require("./time.js"), require("./rules.js"));
+  } else {
+    root.ZK = root.ZK || {};
+    root.ZK.Planner = factory(root.ZK.Time, root.ZK.Rules);
+  }
+})(typeof self !== "undefined" ? self : globalThis, function (T, R) {
+  "use strict";
+
+  /* ==================================================================== */
+  /* 1 · SCHNELLERFASSUNG                                                  */
+  /* ==================================================================== */
+
+  var RELATIVE_DAYS = {
+    heute: 0, today: 0, "aujourd'hui": 0, oggi: 0,
+    gestern: -1, yesterday: -1, hier: -1, ieri: -1,
+    vorgestern: -2,
+    morgen: 1, tomorrow: 1, demain: 1, domani: 1,
+    übermorgen: 2, uebermorgen: 2
+  };
+
+  var TYPE_WORDS = {
+    ferien: "vacation", urlaub: "vacation", vacation: "vacation", vacances: "vacation", ferie: "vacation",
+    krank: "sick", sick: "sick", malade: "sick", malattia: "sick",
+    unfall: "accident", accident: "accident",
+    militär: "military", militaer: "military", wk: "military",
+    komp: "comp", kompensation: "comp", zeitausgleich: "comp", compensation: "comp",
+    kurs: "training", weiterbildung: "training", training: "training", formation: "training",
+    feiertag: "holiday", holiday: "holiday",
+    frei: "free", unbezahlt: "unpaid"
+  };
+
+  /**
+   * Liest eine Zeile wie „gestern 7:45-16:30 p30“ oder „12.8.-16.8. ferien“.
+   *
+   * Erkannt werden, in beliebiger Reihenfolge:
+   *   · ein Datum oder Datumsbereich (relativ, TT.MM[.JJJJ] oder ISO)
+   *   · eine Zeitspanne  8-17 · 08:00-17:00 · 0800-1700
+   *   · eine Pausendauer  p30 · 30min · pause 30
+   *   · ein Stichwort für die Tagesart
+   *
+   * @returns {Object|null} { dates, start, end, breakMinutes, type, factor }
+   */
+  function parseQuickEntry(input, today) {
+    if (!input) return null;
+    var base = today || T.todayISO();
+    var text = String(input).trim().toLowerCase().replace(/\s+/g, " ");
+    if (!text) return null;
+
+    var result = { dates: [], start: null, end: null, breakMinutes: null, type: null, factor: 1 };
+    var rest = text;
+
+    /* ---- Tagesart --------------------------------------------------- */
+    Object.keys(TYPE_WORDS).forEach(function (word) {
+      if (result.type) return;
+      var re = new RegExp("(^|\\s)" + escapeRe(word) + "(\\s|$)");
+      if (re.test(rest)) {
+        result.type = TYPE_WORDS[word];
+        rest = rest.replace(re, " ");
+      }
+    });
+    if (/(^|\s)(halbtag|halber tag|½|1\/2|half)(\s|$)/.test(rest)) {
+      result.factor = 0.5;
+      rest = rest.replace(/(^|\s)(halbtag|halber tag|½|1\/2|half)(\s|$)/, " ");
+    }
+
+    /* ---- Datumsbereich ---------------------------------------------- */
+    var rangeMatch = /(\d{1,2}\.\d{1,2}\.?(?:\d{2,4})?|\d{4}-\d{2}-\d{2})\s*(?:-|–|bis|to|au|a)\s*(\d{1,2}\.\d{1,2}\.?(?:\d{2,4})?|\d{4}-\d{2}-\d{2})/
+      .exec(rest);
+    if (rangeMatch) {
+      var a = parseDateToken(rangeMatch[1], base);
+      var b = parseDateToken(rangeMatch[2], base);
+      if (a && b && a <= b) {
+        result.dates = T.rangeDays(a, b);
+        rest = rest.replace(rangeMatch[0], " ");
+      }
+    }
+
+    /* ---- Einzeldatum ------------------------------------------------- */
+    if (!result.dates.length) {
+      var relWord = Object.keys(RELATIVE_DAYS).filter(function (w) {
+        return new RegExp("(^|\\s)" + escapeRe(w) + "(\\s|$)").test(rest);
+      })[0];
+      if (relWord) {
+        result.dates = [T.addDays(base, RELATIVE_DAYS[relWord])];
+        rest = rest.replace(new RegExp("(^|\\s)" + escapeRe(relWord) + "(\\s|$)"), " ");
+      } else {
+        var single = /(^|\s)(\d{4}-\d{2}-\d{2}|\d{1,2}\.\d{1,2}\.?(?:\d{2,4})?)(\s|$)/.exec(rest);
+        if (single) {
+          var iso = parseDateToken(single[2], base);
+          if (iso) {
+            result.dates = [iso];
+            rest = rest.replace(single[0], " ");
+          }
+        }
+      }
+    }
+    if (!result.dates.length) result.dates = [base];
+
+    /* ---- Zeitspanne -------------------------------------------------- */
+    var span = /(\d{1,2}(?::\d{2})?|\d{3,4})\s*(?:-|–|bis|to|à)\s*(\d{1,2}(?::\d{2})?|\d{3,4})/.exec(rest);
+    if (span) {
+      var s = T.parseHHMM(span[1]);
+      var e = T.parseHHMM(span[2]);
+      if (s !== null && e !== null) {
+        result.start = T.formatHHMM(s);
+        result.end = T.formatHHMM(e);
+        rest = rest.replace(span[0], " ");
+      }
+    }
+
+    /* ---- Pause ------------------------------------------------------- */
+    var brk = /(?:^|\s)(?:p|pause|break|pausa)\s*(\d{1,3})(?:\s*min)?(?:\s|$)/.exec(rest);
+    if (!brk) brk = /(?:^|\s)(\d{1,3})\s*(?:min|minuten|minutes)(?:\s|$)/.exec(rest);
+    if (!brk && result.start) brk = /(?:^|\s)(\d{1,3})(?:\s|$)/.exec(rest);
+    if (brk) {
+      var minutes = parseInt(brk[1], 10);
+      if (minutes >= 0 && minutes <= 600) result.breakMinutes = minutes;
+    }
+
+    var usable = result.start || result.type || result.breakMinutes !== null;
+    return usable ? result : null;
+  }
+
+  function escapeRe(s) { return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\</body>"); }
+
+  /** „12.8.“, „12.08.2026“, „2026-08-12“ → ISO, sonst null. */
+  function parseDateToken(token, base) {
+    var s = String(token).trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return T.isValidISO(s) ? s : null;
+
+    var m = /^(\d{1,2})\.(\d{1,2})\.?(\d{2,4})?$/.exec(s);
+    if (!m) return null;
+    var year = m[3] ? (+m[3] < 100 ? 2000 + +m[3] : +m[3]) : T.yearOf(base || T.todayISO());
+    var iso = year + "-" + T.pad2(+m[2]) + "-" + T.pad2(+m[1]);
+    return T.isValidISO(iso) ? iso : null;
+  }
+
+  /** Wandelt ein Parse-Ergebnis in Speicher-Aufträge um. */
+  function quickEntryToPatch(parsed, opts) {
+    if (!parsed) return {};
+    opts = opts || {};
+    var patch = Object.create(null);
+
+    parsed.dates.forEach(function (date) {
+      var day = { date: date };
+      if (parsed.type) {
+        day.type = parsed.type;
+        day.absenceFactor = parsed.factor;
+        if (!parsed.start) { day.start = ""; day.end = ""; day.breaks = []; }
+      }
+      if (parsed.start) {
+        day.start = parsed.start;
+        day.end = parsed.end || "";
+        if (parsed.breakMinutes) {
+          var startMin = T.parseHHMM(parsed.start) || 0;
+          var mid = startMin + 240;
+          day.breaks = [{
+            id: "q" + date.replace(/-/g, ""),
+            label: opts.breakLabel || "Pause",
+            start: T.formatHHMM(mid),
+            end: T.formatHHMM(mid + parsed.breakMinutes),
+            paid: false
+          }];
+        } else if (parsed.breakMinutes === 0) {
+          day.breaks = [];
+        }
+      }
+      patch[date] = day;
+    });
+    return patch;
+  }
+
+  /* ==================================================================== */
+  /* 2 · GLEITZEIT-PLANER                                                  */
+  /* ==================================================================== */
+
+  /**
+   * Verteilt die Differenz zwischen jetzigem und gewünschtem Saldo auf die
+   * verbleibenden Arbeitstage.
+   *
+   * @param {Number} balanceNow    aktueller Saldo in Minuten
+   * @param {Number} targetBalance gewünschter Saldo am Stichtag
+   * @param {Array}  workdays      [{ date, target }] nur Tage mit Soll > 0
+   */
+  function distributeBalance(balanceNow, targetBalance, workdays) {
+    var days = (workdays || []).filter(function (d) { return d.target > 0; });
+    var delta = Math.round((targetBalance || 0) - (balanceNow || 0));
+
+    if (!days.length) {
+      return { feasible: false, perDay: 0, delta: delta, days: [], reason: "no-days" };
+    }
+
+    var perDay = Math.round(delta / days.length);
+    var planned = days.map(function (d) {
+      return {
+        date: d.date,
+        target: d.target,
+        plannedNet: Math.max(0, d.target + perDay),
+        deltaPerDay: perDay
+      };
+    });
+
+    /* Rundungsrest auf den letzten Tag legen, damit die Summe exakt stimmt */
+    var sum = planned.reduce(function (a, p) { return a + (p.plannedNet - p.target); }, 0);
+    var restMinutes = delta - sum;
+    if (restMinutes !== 0) {
+      var last = planned[planned.length - 1];
+      last.plannedNet = Math.max(0, last.plannedNet + restMinutes);
+      last.deltaPerDay += restMinutes;
+    }
+
+    return {
+      feasible: true,
+      delta: delta,
+      perDay: perDay,
+      dayCount: days.length,
+      days: planned,
+      /* Wenn ein geplanter Tag über zehn Stunden ginge, ist der Plan sportlich */
+      strained: planned.some(function (p) { return p.plannedNet > 600; })
+    };
+  }
+
+  /**
+   * Wie viele ganze freie Tage stecken im Konto?
+   * @returns {{ days: Number, rest: Number, dayTarget: Number }}
+   */
+  function compensationDays(balanceMinutes, dayTargetMinutes) {
+    var target = dayTargetMinutes > 0 ? dayTargetMinutes : 504;
+    if (balanceMinutes <= 0) return { days: 0, rest: Math.max(0, balanceMinutes), dayTarget: target };
+    return {
+      days: Math.floor(balanceMinutes / target),
+      rest: balanceMinutes % target,
+      dayTarget: target
+    };
+  }
+
+  /**
+   * Gehen-Zeit, um an einem einzelnen Tag einen gewünschten Tagessaldo zu
+   * erreichen. Berücksichtigt die Pausenstaffel über denselben Fixpunkt wie
+   * die Engine.
+   */
+  function leaveTimeForBalance(opts) {
+    var startTod = T.parseHHMM(opts.start);
+    if (startTod === null) return null;
+
+    var target = opts.target || 0;
+    var credited = opts.credited || 0;
+    var wanted = Math.max(0, target - credited + (opts.wantBalance || 0));
+    var breakTotal = opts.breakMinutes || 0;
+    var ruleset = opts.breakRuleset || "ch";
+    var tiers = opts.customBreakTiers;
+    var autoDeduct = opts.autoDeductBreak !== false;
+
+    var gross = wanted + breakTotal;
+    for (var i = 0; i < 6; i++) {
+      var required = R.requiredBreak(gross, ruleset, tiers);
+      var effective = autoDeduct ? Math.max(breakTotal, required) : breakTotal;
+      var next = wanted + effective;
+      if (next === gross) break;
+      gross = next;
+    }
+    return { minutes: startTod + gross, text: T.formatHHMM(startTod + gross), dayOffset: T.dayOffsetOf(startTod + gross) };
+  }
+
+  /* ==================================================================== */
+  /* 3 · BRÜCKENTAGE                                                       */
+  /* ==================================================================== */
+
+  /**
+   * Sucht Zeiträume, in denen wenige Ferientage viele freie Tage ergeben.
+   *
+   * @param {Object} opts {
+   *   from, to,                  Zeitraum
+   *   isHoliday(iso) -> Boolean,
+   *   isWorkday(iso) -> Boolean, (Wochenarbeitstage laut Modell)
+   *   maxVacation,               höchstens so viele Ferientage je Vorschlag
+   *   minRatio                   Mindestverhältnis freie Tage / Ferientage
+   * }
+   * @returns {Array} [{ from, to, totalDays, vacationDays, dates, ratio, holidays }]
+   */
+  function bridgeDays(opts) {
+    opts = opts || {};
+    var maxVacation = opts.maxVacation || 4;
+    var minRatio = opts.minRatio || 2;
+    var maxLength = opts.maxLength || 16;
+    var isHoliday = opts.isHoliday || function () { return false; };
+    var isWorkday = opts.isWorkday || function () { return true; };
+
+    var all = T.rangeDays(opts.from, opts.to);
+    if (!all.length) return [];
+
+    /* Vorberechnen: ist der Tag ohnehin frei? */
+    var free = all.map(function (iso) { return !isWorkday(iso) || isHoliday(iso); });
+
+    var candidates = [];
+
+    for (var i = 0; i < all.length; i++) {
+      if (!free[i]) continue;                       // sinnvoll ist nur ein freier Beginn
+      for (var len = 3; len <= maxLength && i + len <= all.length; len++) {
+        var j = i + len - 1;
+        if (!free[j]) continue;                     // und ein freies Ende
+
+        var needed = [];
+        for (var k = i; k <= j; k++) if (!free[k]) needed.push(all[k]);
+        if (!needed.length) break;                  // schon komplett frei
+        if (needed.length > maxVacation) break;
+
+        var ratio = len / needed.length;
+        if (ratio < minRatio) continue;
+
+        var holidaysInside = [];
+        for (var h = i; h <= j; h++) {
+          if (isWorkday(all[h]) && isHoliday(all[h])) holidaysInside.push(all[h]);
+        }
+        if (!holidaysInside.length) continue;       // ohne Feiertag ist es keine Brücke
+
+        candidates.push({
+          from: all[i], to: all[j],
+          totalDays: len,
+          vacationDays: needed.length,
+          dates: needed,
+          holidays: holidaysInside,
+          ratio: Math.round(ratio * 100) / 100
+        });
+      }
+    }
+
+    /* Beste zuerst, dann überschneidungsfrei auswählen */
+    candidates.sort(function (a, b) {
+      if (b.ratio !== a.ratio) return b.ratio - a.ratio;
+      if (b.totalDays !== a.totalDays) return b.totalDays - a.totalDays;
+      return a.from < b.from ? -1 : 1;
+    });
+
+    var chosen = [];
+    candidates.forEach(function (c) {
+      var overlaps = chosen.some(function (x) { return !(c.to < x.from || c.from > x.to); });
+      if (!overlaps) chosen.push(c);
+    });
+
+    chosen.sort(function (a, b) { return a.from < b.from ? -1 : 1; });
+    return chosen;
+  }
+
+  /* ==================================================================== */
+  /* 4 · MONATSCHECK                                                       */
+  /* ==================================================================== */
+
+  var AUDIT_CODES = [
+    "gap", "incomplete", "break-auto", "break-short", "over-daily-max",
+    "rest-short", "invalid", "no-break", "long-day"
+  ];
+
+  /**
+   * Fasst zusammen, was vor einem Monatsabschluss noch zu klären ist.
+   * @param {Array} dayResults  Ergebnisse aus Engine.computeRange().days
+   * @param {String} today
+   */
+  function auditRange(dayResults, today) {
+    var now = today || T.todayISO();
+    var groups = Object.create(null);
+
+    function add(code, date, extra) {
+      if (!groups[code]) groups[code] = { code: code, dates: [], count: 0, level: levelOf(code) };
+      groups[code].count++;
+      if (groups[code].dates.length < 60) groups[code].dates.push(Object.assign({ date: date }, extra || {}));
+    }
+
+    (dayResults || []).forEach(function (r) {
+      if (r.target > 0 && !r.recorded && r.date < now) add("gap", r.date);
+      if (r.incomplete) add("incomplete", r.date);
+
+      r.warnings.forEach(function (w) {
+        if (w.code === "break-auto") add("break-auto", r.date, { minutes: w.minutes });
+        else if (w.code === "break-short") add("break-short", r.date, { minutes: w.minutes });
+        else if (w.code === "over-daily-max") add("over-daily-max", r.date, { minutes: w.minutes });
+        else if (w.code === "rest-short") add("rest-short", r.date, { minutes: w.minutes });
+        else if (w.code === "no-break") add("no-break", r.date);
+        else if (w.level === "error") add("invalid", r.date);
+      });
+    });
+
+    var list = AUDIT_CODES.map(function (code) { return groups[code]; }).filter(Boolean);
+    var errors = list.filter(function (g) { return g.level === "error"; })
+      .reduce(function (a, g) { return a + g.count; }, 0);
+
+    return {
+      issues: list,
+      total: list.reduce(function (a, g) { return a + g.count; }, 0),
+      errors: errors,
+      clean: list.length === 0
+    };
+  }
+
+  function levelOf(code) {
+    if (code === "gap" || code === "incomplete" || code === "invalid") return "error";
+    if (code === "no-break") return "info";
+    return "warn";
+  }
+
+  /* ==================================================================== */
+  /* 5 · PROGNOSE                                                          */
+  /* ==================================================================== */
+
+  /**
+   * Fortschreibung des Saldos bis zum Stichtag, wenn ab jetzt exakt nach
+   * Soll gearbeitet wird — also: was bleibt am Monatsende stehen?
+   */
+  function forecast(balanceNow, remainingWorkdays, averageDelta) {
+    var delta = averageDelta || 0;
+    return {
+      balance: Math.round(balanceNow + delta * remainingWorkdays),
+      remainingWorkdays: remainingWorkdays,
+      perDay: Math.round(delta)
+    };
+  }
+
+  return {
+    RELATIVE_DAYS: RELATIVE_DAYS,
+    TYPE_WORDS: TYPE_WORDS,
+    AUDIT_CODES: AUDIT_CODES,
+    parseQuickEntry: parseQuickEntry,
+    parseDateToken: parseDateToken,
+    quickEntryToPatch: quickEntryToPatch,
+    distributeBalance: distributeBalance,
+    compensationDays: compensationDays,
+    leaveTimeForBalance: leaveTimeForBalance,
+    bridgeDays: bridgeDays,
+    auditRange: auditRange,
+    forecast: forecast
   };
 });
 
@@ -6065,7 +6530,7 @@ window.ZK_SINGLE_FILE = true;
     "ol.unchanged": "Unverändert",
     "ol.protected": "Geschützt",
     "ol.protectedTitle": "{n} Tage bleiben unangetastet",
-    "ol.protectedOne": "1 Tag bleibt unangetastet",
+    "ol.protectedOneLegacy": "1 Tag bleibt unangetastet",
     "ol.protectedHint": "Diese Tage tragen eigene Erfassungen. Der Kalender überschreibt sie nicht.",
     "ol.rangeInfo": "{from} bis {to} · {events} Termine gelesen",
     "ol.upToDate": "Alles bereits aktuell",
@@ -6080,7 +6545,86 @@ window.ZK_SINGLE_FILE = true;
     "ol.fromCalendar": "aus Outlook",
     "ol.setup": "Einrichtung",
     "ol.setupHint": "Einmalig in Azure: App-Registrierung anlegen, Plattform „Einzelseitige Anwendung“ mit der Umleitungs-URI unten, Berechtigung Calendars.Read. Dann die Client-ID hier eintragen.",
-    "ol.privacy": "Gelesen wird nur der Kalender, und nur auf diesem Gerät. Nichts wird an Dritte übertragen."
+    "ol.privacy": "Gelesen wird nur der Kalender, und nur auf diesem Gerät. Nichts wird an Dritte übertragen.",
+
+    /* ---- Werkzeuge ---- */
+    "nav.tools": "Werkzeuge",
+
+    /* ---- Einzahlformen ---- */
+    "cal.bulkDone.one": "1 Tag gesetzt",
+    "ol.applied.one": "1 Tag übernommen",
+    "ol.changesFound.one": "1 Änderung im Kalender",
+    "ol.protectedTitle.one": "1 Tag bleibt unangetastet",
+    "tools.quickApply.one": "1 Tag eintragen",
+    "tools.quickDone.one": "1 Tag erfasst",
+    "tools.bridgeDone.one": "1 Ferientag eingetragen",
+    "tools.bridgeHeadline.one": "1 Ferientag → {t} Tage frei",
+    "tools.compHint.one": "In deinem Saldo steckt 1 ganzer freier Tag à {h}.",
+    "tools.bridgeOccupied.one": "1 dieser Tage trägt bereits einen Eintrag — er wird ersetzt.",
+    "ach.dayStreak.one": "1 Tag",
+    "report.gapNote.one": "1 von {days} Arbeitstagen im Zeitraum ist nicht erfasst. Er steckt im Soll, verändert den Saldo aber nicht.",
+    "tools.title": "Werkzeuge",
+    "tools.lede": "Vorausdenken statt nachrechnen.",
+    "tools.quick": "Schnellerfassung",
+    "tools.quickHint": "Eine Zeile statt vier Felder. Datum, Zeitspanne, Pause und Tagesart in beliebiger Reihenfolge.",
+    "tools.quickPlaceholder": "z. B. gestern 7:45-16:30 p30",
+    "tools.quickUnreadable": "Daraus werde ich nicht schlau — probier eines der Beispiele.",
+    "tools.quickApply": "{n} Tag(e) eintragen",
+    "tools.quickDone": "{n} Tage erfasst",
+    "tools.planner": "Gleitzeit-Planer",
+    "tools.compDays": "Freie Tage im Konto",
+    "tools.compHint": "In deinem Saldo stecken {n} ganze freie Tage à {h}.",
+    "tools.until": "Stichtag",
+    "tools.targetBalance": "Zielsaldo",
+    "tools.pickFuture": "Bitte einen Stichtag in der Zukunft wählen.",
+    "tools.noWorkdays": "Bis dahin sind keine offenen Arbeitstage übrig.",
+    "tools.perDay": "{v} pro Tag auf {n} Arbeitstage",
+    "tools.perDayHint": "Das sind rund {net} netto je Tag.",
+    "tools.strained": "sportlich",
+    "tools.exampleDay": "Beispiel: Start {start} → Feierabend {leave}",
+    "tools.bridges": "Brückentage",
+    "tools.bridgesHint": "Wo wenige Ferientage viele freie Tage ergeben. Berechnet aus deiner Feiertagsregion und deinem Arbeitsmodell.",
+    "tools.noBridges": "In diesem Jahr ergibt sich keine lohnende Brücke.",
+    "tools.bridgeHeadline": "{v} Ferientage → {t} Tage frei",
+    "tools.takeBridge": "Eintragen",
+    "tools.bridgeConfirm": "{v} Ferientage eintragen und daraus {t} zusammenhängende freie Tage machen?",
+    "tools.bridgeOccupied": "{n} dieser Tage tragen bereits einen Eintrag — er wird ersetzt.",
+    "tools.bridgeDone": "{n} Ferientage eingetragen",
+    "tools.audit": "Monatscheck",
+    "tools.openPoints": "Offene Punkte",
+    "tools.auditClean": "Nichts zu beanstanden",
+    "tools.auditCleanHint": "Der Monat ist vollständig und regelkonform erfasst.",
+    "audit.gap": "Nicht erfasste Arbeitstage",
+    "auditHint.gap": "Diese Tage haben ein Soll, aber keinen Eintrag. Sie zählen nicht ins Konto.",
+    "audit.incomplete": "Angefangen, nie beendet",
+    "auditHint.incomplete": "Kommen erfasst, Gehen fehlt. Diese Tage bleiben aus dem Saldo heraus.",
+    "audit.break-auto": "Pflichtpause automatisch abgezogen",
+    "auditHint.break-auto": "Es war weniger Pause erfasst, als gesetzlich nötig.",
+    "audit.break-short": "Pflichtpause nicht erreicht",
+    "auditHint.break-short": "Der automatische Abzug ist ausgeschaltet — hier fehlt Pause.",
+    "audit.over-daily-max": "Tageshöchstarbeitszeit überschritten",
+    "auditHint.over-daily-max": "Bitte prüfen, ob das so beabsichtigt und zulässig war.",
+    "audit.rest-short": "Ruhezeit zu kurz",
+    "auditHint.rest-short": "Zwischen zwei Tagen lagen weniger Stunden als vorgesehen.",
+    "audit.invalid": "Unlesbare Eingaben",
+    "auditHint.invalid": "Diese Tage enthalten Zeiten, die sich nicht auswerten lassen.",
+    "audit.no-break": "Lange Tage ohne Pause",
+    "auditHint.no-break": "Über sechs Stunden ohne erfasste Pause.",
+    "audit.long-day": "Sehr lange Tage",
+    "auditHint.long-day": "Auffällig lange Anwesenheit.",
+    "day.shift": "Schichtvorlage",
+    "set.shifts": "Schichtvorlagen",
+    "set.shiftsHint": "Ein Klick füllt Kommen, Gehen und Pause. In der Tagesansicht als Knöpfe verfügbar.",
+    "set.breakReminder": "Pausen-Erinnerung",
+    "set.breakReminderHint": "Meldet sich, kurz bevor die gesetzliche Pause fällig wird.",
+    "set.titleCountdown": "Feierabend im Browser-Tab",
+    "set.titleCountdownHint": "Zeigt die Restzeit im Tab-Titel, auch wenn die App im Hintergrund läuft.",
+    "set.backupReminder": "Sicherungs-Erinnerung nach",
+    "toast.breakDue": "In {v} brauchst du {req} Pause",
+    "toast.backupDue": "Seit {n} Tagen keine Sicherung",
+    "toast.backupAction": "Jetzt sichern",
+    "cmd.quickEntry": "Erfassen: {v}",
+    "cmd.noteSearch": "Notiz durchsuchen"
   };
 
   /* ==================================================================== */
@@ -6334,7 +6878,7 @@ window.ZK_SINGLE_FILE = true;
     "ol.unchanged": "Unchanged",
     "ol.protected": "Protected",
     "ol.protectedTitle": "{n} days stay untouched",
-    "ol.protectedOne": "1 day stays untouched",
+    "ol.protectedOneLegacy": "1 day stays untouched",
     "ol.protectedHint": "These days carry your own entries. The calendar does not overwrite them.",
     "ol.rangeInfo": "{from} to {to} · {events} appointments read",
     "ol.upToDate": "Already up to date",
@@ -6349,7 +6893,86 @@ window.ZK_SINGLE_FILE = true;
     "ol.fromCalendar": "from Outlook",
     "ol.setup": "Setup",
     "ol.setupHint": "One-off in Azure: create an app registration, add the “Single-page application” platform with the redirect URI below, grant Calendars.Read. Then paste the client ID here.",
-    "ol.privacy": "Only the calendar is read, and only on this device. Nothing is sent to third parties."
+    "ol.privacy": "Only the calendar is read, and only on this device. Nothing is sent to third parties.",
+
+    /* ---- Werkzeuge ---- */
+    "nav.tools": "Tools",
+
+    /* ---- Einzahlformen ---- */
+    "cal.bulkDone.one": "1 day set",
+    "ol.applied.one": "1 day applied",
+    "ol.changesFound.one": "1 calendar change",
+    "ol.protectedTitle.one": "1 day stays untouched",
+    "tools.quickApply.one": "Record 1 day",
+    "tools.quickDone.one": "1 day recorded",
+    "tools.bridgeDone.one": "1 vacation day booked",
+    "tools.bridgeHeadline.one": "1 vacation day → {t} days off",
+    "tools.compHint.one": "Your balance holds 1 whole free day of {h}.",
+    "tools.bridgeOccupied.one": "1 of these days already carries an entry — it will be replaced.",
+    "ach.dayStreak.one": "1 day",
+    "report.gapNote.one": "1 of {days} working days in this period has no entry. It counts towards the target but does not move the balance.",
+    "tools.title": "Tools",
+    "tools.lede": "Think ahead instead of recalculating.",
+    "tools.quick": "Quick entry",
+    "tools.quickHint": "One line instead of four fields. Date, time span, break and day type in any order.",
+    "tools.quickPlaceholder": "e.g. yesterday 7:45-16:30 p30",
+    "tools.quickUnreadable": "I can't make sense of that — try one of the examples.",
+    "tools.quickApply": "Record {n} day(s)",
+    "tools.quickDone": "{n} days recorded",
+    "tools.planner": "Flexitime planner",
+    "tools.compDays": "Free days in the account",
+    "tools.compHint": "Your balance holds {n} whole free days of {h} each.",
+    "tools.until": "Target date",
+    "tools.targetBalance": "Target balance",
+    "tools.pickFuture": "Please pick a date in the future.",
+    "tools.noWorkdays": "No open working days left until then.",
+    "tools.perDay": "{v} per day across {n} working days",
+    "tools.perDayHint": "That is roughly {net} net per day.",
+    "tools.strained": "ambitious",
+    "tools.exampleDay": "Example: start {start} → leave {leave}",
+    "tools.bridges": "Bridge days",
+    "tools.bridgesHint": "Where few vacation days buy many free ones. Computed from your holiday region and work model.",
+    "tools.noBridges": "No worthwhile bridge this year.",
+    "tools.bridgeHeadline": "{v} vacation days → {t} days off",
+    "tools.takeBridge": "Book it",
+    "tools.bridgeConfirm": "Book {v} vacation days and turn them into {t} consecutive days off?",
+    "tools.bridgeOccupied": "{n} of these days already carry an entry — it will be replaced.",
+    "tools.bridgeDone": "{n} vacation days booked",
+    "tools.audit": "Month check",
+    "tools.openPoints": "Open points",
+    "tools.auditClean": "Nothing to flag",
+    "tools.auditCleanHint": "The month is complete and compliant.",
+    "audit.gap": "Unrecorded working days",
+    "auditHint.gap": "These days have a target but no entry. They do not count towards the account.",
+    "audit.incomplete": "Started, never finished",
+    "auditHint.incomplete": "Clock-in recorded, clock-out missing. These days stay out of the balance.",
+    "audit.break-auto": "Mandatory break deducted",
+    "auditHint.break-auto": "Less break was recorded than the law requires.",
+    "audit.break-short": "Mandatory break not met",
+    "auditHint.break-short": "Automatic deduction is off — break time is missing here.",
+    "audit.over-daily-max": "Daily maximum exceeded",
+    "auditHint.over-daily-max": "Please check whether this was intended and permitted.",
+    "audit.rest-short": "Rest period too short",
+    "auditHint.rest-short": "Fewer hours between two days than required.",
+    "audit.invalid": "Unreadable entries",
+    "auditHint.invalid": "These days contain times that cannot be evaluated.",
+    "audit.no-break": "Long days without a break",
+    "auditHint.no-break": "Over six hours with no recorded break.",
+    "audit.long-day": "Very long days",
+    "auditHint.long-day": "Unusually long presence.",
+    "day.shift": "Shift template",
+    "set.shifts": "Shift templates",
+    "set.shiftsHint": "One click fills clock-in, clock-out and break. Available as buttons in the day view.",
+    "set.breakReminder": "Break reminder",
+    "set.breakReminderHint": "Speaks up shortly before the statutory break becomes due.",
+    "set.titleCountdown": "Clock-out time in the browser tab",
+    "set.titleCountdownHint": "Shows the remaining time in the tab title, even when the app is in the background.",
+    "set.backupReminder": "Backup reminder after",
+    "toast.breakDue": "In {v} you will need a {req} break",
+    "toast.backupDue": "No backup for {n} days",
+    "toast.backupAction": "Back up now",
+    "cmd.quickEntry": "Record: {v}",
+    "cmd.noteSearch": "Search notes"
   };
 
   /* ==================================================================== */
@@ -6603,7 +7226,7 @@ window.ZK_SINGLE_FILE = true;
     "ol.unchanged": "Inchangé",
     "ol.protected": "Protégé",
     "ol.protectedTitle": "{n} jours restent intacts",
-    "ol.protectedOne": "1 jour reste intact",
+    "ol.protectedOneLegacy": "1 jour reste intact",
     "ol.protectedHint": "Ces jours portent vos propres saisies. Le calendrier ne les écrase pas.",
     "ol.rangeInfo": "{from} au {to} · {events} rendez-vous lus",
     "ol.upToDate": "Déjà à jour",
@@ -6618,7 +7241,86 @@ window.ZK_SINGLE_FILE = true;
     "ol.fromCalendar": "depuis Outlook",
     "ol.setup": "Configuration",
     "ol.setupHint": "Une seule fois dans Azure : créer un enregistrement d'application, ajouter la plateforme « Application monopage » avec l'URI ci-dessous, accorder Calendars.Read. Puis coller l'ID client ici.",
-    "ol.privacy": "Seul le calendrier est lu, et uniquement sur cet appareil. Rien n'est transmis à des tiers."
+    "ol.privacy": "Seul le calendrier est lu, et uniquement sur cet appareil. Rien n'est transmis à des tiers.",
+
+    /* ---- Werkzeuge ---- */
+    "nav.tools": "Outils",
+
+    /* ---- Einzahlformen ---- */
+    "cal.bulkDone.one": "1 jour défini",
+    "ol.applied.one": "1 jour appliqué",
+    "ol.changesFound.one": "1 modification dans le calendrier",
+    "ol.protectedTitle.one": "1 jour reste intact",
+    "tools.quickApply.one": "Saisir 1 jour",
+    "tools.quickDone.one": "1 jour saisi",
+    "tools.bridgeDone.one": "1 jour de vacances saisi",
+    "tools.bridgeHeadline.one": "1 jour de vacances → {t} jours libres",
+    "tools.compHint.one": "Votre solde contient 1 jour entier de congé de {h}.",
+    "tools.bridgeOccupied.one": "1 de ces jours contient déjà une saisie — elle sera remplacée.",
+    "ach.dayStreak.one": "1 jour",
+    "report.gapNote.one": "1 des {days} jours ouvrés de la période n'est pas saisi. Il compte dans le dû mais pas dans le solde.",
+    "tools.title": "Outils",
+    "tools.lede": "Anticiper plutôt que recalculer.",
+    "tools.quick": "Saisie rapide",
+    "tools.quickHint": "Une ligne au lieu de quatre champs. Date, plage horaire, pause et type de jour dans n'importe quel ordre.",
+    "tools.quickPlaceholder": "p. ex. hier 7:45-16:30 p30",
+    "tools.quickUnreadable": "Je n'y comprends rien — essayez un des exemples.",
+    "tools.quickApply": "Saisir {n} jour(s)",
+    "tools.quickDone": "{n} jours saisis",
+    "tools.planner": "Planificateur d'horaire",
+    "tools.compDays": "Jours libres dans le compte",
+    "tools.compHint": "Votre solde contient {n} jours entiers de congé de {h} chacun.",
+    "tools.until": "Échéance",
+    "tools.targetBalance": "Solde visé",
+    "tools.pickFuture": "Choisissez une date future.",
+    "tools.noWorkdays": "Plus aucun jour ouvré disponible d'ici là.",
+    "tools.perDay": "{v} par jour sur {n} jours ouvrés",
+    "tools.perDayHint": "Cela fait environ {net} net par jour.",
+    "tools.strained": "ambitieux",
+    "tools.exampleDay": "Exemple : début {start} → départ {leave}",
+    "tools.bridges": "Ponts",
+    "tools.bridgesHint": "Là où peu de jours de vacances en libèrent beaucoup. Calculé selon votre région et votre modèle.",
+    "tools.noBridges": "Aucun pont intéressant cette année.",
+    "tools.bridgeHeadline": "{v} jours de vacances → {t} jours libres",
+    "tools.takeBridge": "Réserver",
+    "tools.bridgeConfirm": "Saisir {v} jours de vacances et obtenir {t} jours libres consécutifs ?",
+    "tools.bridgeOccupied": "{n} de ces jours contiennent déjà une saisie — elle sera remplacée.",
+    "tools.bridgeDone": "{n} jours de vacances saisis",
+    "tools.audit": "Contrôle du mois",
+    "tools.openPoints": "Points ouverts",
+    "tools.auditClean": "Rien à signaler",
+    "tools.auditCleanHint": "Le mois est complet et conforme.",
+    "audit.gap": "Jours ouvrés non saisis",
+    "auditHint.gap": "Ces jours ont un temps dû mais aucune saisie. Ils ne comptent pas dans le compte.",
+    "audit.incomplete": "Commencé, jamais terminé",
+    "auditHint.incomplete": "Arrivée saisie, départ manquant. Ces jours restent hors du solde.",
+    "audit.break-auto": "Pause obligatoire déduite",
+    "auditHint.break-auto": "Moins de pause saisie que la loi ne l'exige.",
+    "audit.break-short": "Pause obligatoire non atteinte",
+    "auditHint.break-short": "La déduction automatique est désactivée — il manque de la pause.",
+    "audit.over-daily-max": "Maximum journalier dépassé",
+    "auditHint.over-daily-max": "Vérifiez si c'était voulu et admissible.",
+    "audit.rest-short": "Repos trop court",
+    "auditHint.rest-short": "Moins d'heures entre deux jours que prévu.",
+    "audit.invalid": "Saisies illisibles",
+    "auditHint.invalid": "Ces jours contiennent des heures inexploitables.",
+    "audit.no-break": "Longues journées sans pause",
+    "auditHint.no-break": "Plus de six heures sans pause saisie.",
+    "audit.long-day": "Journées très longues",
+    "auditHint.long-day": "Présence anormalement longue.",
+    "day.shift": "Modèle d'équipe",
+    "set.shifts": "Modèles d'équipe",
+    "set.shiftsHint": "Un clic remplit arrivée, départ et pause. Disponible comme boutons dans la vue du jour.",
+    "set.breakReminder": "Rappel de pause",
+    "set.breakReminderHint": "Se manifeste peu avant que la pause légale ne devienne obligatoire.",
+    "set.titleCountdown": "Départ dans l'onglet du navigateur",
+    "set.titleCountdownHint": "Affiche le temps restant dans le titre de l'onglet, même en arrière-plan.",
+    "set.backupReminder": "Rappel de sauvegarde après",
+    "toast.breakDue": "Dans {v}, il vous faudra {req} de pause",
+    "toast.backupDue": "Aucune sauvegarde depuis {n} jours",
+    "toast.backupAction": "Sauvegarder",
+    "cmd.quickEntry": "Saisir : {v}",
+    "cmd.noteSearch": "Rechercher dans les notes"
   };
 
   /* ==================================================================== */
@@ -6872,7 +7574,7 @@ window.ZK_SINGLE_FILE = true;
     "ol.unchanged": "Invariati",
     "ol.protected": "Protetti",
     "ol.protectedTitle": "{n} giorni restano intatti",
-    "ol.protectedOne": "1 giorno resta intatto",
+    "ol.protectedOneLegacy": "1 giorno resta intatto",
     "ol.protectedHint": "Questi giorni contengono registrazioni tue. Il calendario non le sovrascrive.",
     "ol.rangeInfo": "Dal {from} al {to} · {events} appuntamenti letti",
     "ol.upToDate": "Già aggiornato",
@@ -6887,7 +7589,86 @@ window.ZK_SINGLE_FILE = true;
     "ol.fromCalendar": "da Outlook",
     "ol.setup": "Configurazione",
     "ol.setupHint": "Una volta sola in Azure: crea una registrazione app, aggiungi la piattaforma «Applicazione a pagina singola» con l'URI qui sotto, concedi Calendars.Read. Poi incolla qui l'ID client.",
-    "ol.privacy": "Viene letto solo il calendario, e solo su questo dispositivo. Nulla viene trasmesso a terzi."
+    "ol.privacy": "Viene letto solo il calendario, e solo su questo dispositivo. Nulla viene trasmesso a terzi.",
+
+    /* ---- Werkzeuge ---- */
+    "nav.tools": "Strumenti",
+
+    /* ---- Einzahlformen ---- */
+    "cal.bulkDone.one": "1 giorno impostato",
+    "ol.applied.one": "1 giorno applicato",
+    "ol.changesFound.one": "1 modifica nel calendario",
+    "ol.protectedTitle.one": "1 giorno resta intatto",
+    "tools.quickApply.one": "Registra 1 giorno",
+    "tools.quickDone.one": "1 giorno registrato",
+    "tools.bridgeDone.one": "1 giorno di vacanza registrato",
+    "tools.bridgeHeadline.one": "1 giorno di vacanza → {t} giorni liberi",
+    "tools.compHint.one": "Il tuo saldo contiene 1 giorno libero intero da {h}.",
+    "tools.bridgeOccupied.one": "1 di questi giorni contiene già una voce — verrà sostituita.",
+    "ach.dayStreak.one": "1 giorno",
+    "report.gapNote.one": "1 dei {days} giorni lavorativi del periodo non è registrato. Rientra nelle ore dovute ma non nel saldo.",
+    "tools.title": "Strumenti",
+    "tools.lede": "Pensare avanti invece di ricalcolare.",
+    "tools.quick": "Inserimento rapido",
+    "tools.quickHint": "Una riga invece di quattro campi. Data, intervallo, pausa e tipo di giorno in qualsiasi ordine.",
+    "tools.quickPlaceholder": "es. ieri 7:45-16:30 p30",
+    "tools.quickUnreadable": "Non ci capisco nulla — prova uno degli esempi.",
+    "tools.quickApply": "Registra {n} giorno/i",
+    "tools.quickDone": "{n} giorni registrati",
+    "tools.planner": "Pianificatore orario",
+    "tools.compDays": "Giorni liberi nel conto",
+    "tools.compHint": "Il tuo saldo contiene {n} giorni liberi interi da {h} ciascuno.",
+    "tools.until": "Scadenza",
+    "tools.targetBalance": "Saldo obiettivo",
+    "tools.pickFuture": "Scegli una data futura.",
+    "tools.noWorkdays": "Nessun giorno lavorativo disponibile fino ad allora.",
+    "tools.perDay": "{v} al giorno su {n} giorni lavorativi",
+    "tools.perDayHint": "Sono circa {net} netti al giorno.",
+    "tools.strained": "impegnativo",
+    "tools.exampleDay": "Esempio: inizio {start} → uscita {leave}",
+    "tools.bridges": "Ponti",
+    "tools.bridgesHint": "Dove pochi giorni di vacanza ne liberano molti. Calcolato dalla tua regione e dal modello di lavoro.",
+    "tools.noBridges": "Quest'anno non risulta alcun ponte conveniente.",
+    "tools.bridgeHeadline": "{v} giorni di vacanza → {t} giorni liberi",
+    "tools.takeBridge": "Registra",
+    "tools.bridgeConfirm": "Registrare {v} giorni di vacanza e ottenere {t} giorni liberi consecutivi?",
+    "tools.bridgeOccupied": "{n} di questi giorni contengono già una voce — verrà sostituita.",
+    "tools.bridgeDone": "{n} giorni di vacanza registrati",
+    "tools.audit": "Controllo del mese",
+    "tools.openPoints": "Punti aperti",
+    "tools.auditClean": "Nulla da segnalare",
+    "tools.auditCleanHint": "Il mese è completo e conforme.",
+    "audit.gap": "Giorni lavorativi non registrati",
+    "auditHint.gap": "Questi giorni hanno un obbligo ma nessuna voce. Non incidono sul conto.",
+    "audit.incomplete": "Iniziato, mai concluso",
+    "auditHint.incomplete": "Entrata registrata, uscita mancante. Questi giorni restano fuori dal saldo.",
+    "audit.break-auto": "Pausa obbligatoria dedotta",
+    "auditHint.break-auto": "È stata registrata meno pausa di quanto richieda la legge.",
+    "audit.break-short": "Pausa obbligatoria non raggiunta",
+    "auditHint.break-short": "La deduzione automatica è disattivata — qui manca pausa.",
+    "audit.over-daily-max": "Massimo giornaliero superato",
+    "auditHint.over-daily-max": "Verifica se era voluto e ammesso.",
+    "audit.rest-short": "Riposo troppo breve",
+    "auditHint.rest-short": "Tra due giorni sono passate meno ore del previsto.",
+    "audit.invalid": "Voci illeggibili",
+    "auditHint.invalid": "Questi giorni contengono orari non valutabili.",
+    "audit.no-break": "Giornate lunghe senza pausa",
+    "auditHint.no-break": "Oltre sei ore senza pausa registrata.",
+    "audit.long-day": "Giornate molto lunghe",
+    "auditHint.long-day": "Presenza insolitamente lunga.",
+    "day.shift": "Modello di turno",
+    "set.shifts": "Modelli di turno",
+    "set.shiftsHint": "Un clic compila entrata, uscita e pausa. Disponibile come pulsanti nella vista giornaliera.",
+    "set.breakReminder": "Promemoria pausa",
+    "set.breakReminderHint": "Si fa vivo poco prima che la pausa di legge diventi obbligatoria.",
+    "set.titleCountdown": "Uscita nella scheda del browser",
+    "set.titleCountdownHint": "Mostra il tempo restante nel titolo della scheda, anche in secondo piano.",
+    "set.backupReminder": "Promemoria backup dopo",
+    "toast.breakDue": "Tra {v} ti servirà una pausa di {req}",
+    "toast.backupDue": "Nessun backup da {n} giorni",
+    "toast.backupAction": "Salva ora",
+    "cmd.quickEntry": "Registra: {v}",
+    "cmd.noteSearch": "Cerca nelle note"
   };
 
   /* ==================================================================== */
@@ -7034,6 +7815,18 @@ window.ZK_SINGLE_FILE = true;
     });
   }
 
+  /**
+   * Zählform-bewusste Übersetzung. Existiert zu einem Schlüssel die Variante
+   * "<key>.one", wird sie bei genau eins verwendet — sonst der Grundschlüssel.
+   * Ohne das steht überall „1 Tage".
+   */
+  function tn(key, count, vars) {
+    var singular = key + ".one";
+    var dict = DICT[current] || DICT.de;
+    var hasOne = dict[singular] !== undefined || DICT.de[singular] !== undefined;
+    return t(count === 1 && hasOne ? singular : key, Object.assign({ n: count }, vars || {}));
+  }
+
   function badge(id) {
     var set = BADGE_TEXT[current] || BADGE_TEXT.de;
     var entry = set[id] || BADGE_TEXT.de[id] || [id, ""];
@@ -7086,6 +7879,7 @@ window.ZK_SINGLE_FILE = true;
     LANGS: LANGS,
     DICT: DICT,
     setLang: setLang,
+    tn: tn,
     getLang: getLang,
     detect: detect,
     t: t,
@@ -8612,7 +9406,7 @@ window.ZK_SINGLE_FILE = true;
 
       if (opts.silent) {
         if (plan.changes.length) {
-          D.toast(I.t("ol.changesFound", { n: plan.changes.length }), {
+          D.toast(I.tn("ol.changesFound", plan.changes.length), {
             icon: "calendar",
             duration: 9000,
             action: { label: I.t("common.apply"), onClick: function () { showPreview(App, plan); } }
@@ -8683,7 +9477,7 @@ window.ZK_SINGLE_FILE = true;
     if (plan.protectedDays.length) {
       var warn = D.el("div.notice.warn.mt-4");
       warn.innerHTML = D.icon("lock") +
-        "<div><strong>" + D.esc(plan.protectedDays.length === 1 ? I.t("ol.protectedOne") : I.t("ol.protectedTitle", { n: plan.protectedDays.length })) + "</strong>" +
+        "<div><strong>" + D.esc(I.tn("ol.protectedTitle", plan.protectedDays.length)) + "</strong>" +
         "<div class='sub'>" + D.esc(I.t("ol.protectedHint")) + "</div></div>";
       body.appendChild(warn);
 
@@ -8781,7 +9575,7 @@ window.ZK_SINGLE_FILE = true;
     saveSettings(App, { lastSyncAt: stamp });
     App.afterChange();
 
-    D.toast(I.t("ol.applied", { n: changes.length }), {
+    D.toast(I.tn("ol.applied", changes.length), {
       tone: "plus",
       icon: "calendar",
       action: { label: I.t("common.undo"), onClick: function () { App.undo(); } }
@@ -9057,6 +9851,22 @@ window.ZK_SINGLE_FILE = true;
     var inputCard = D.el("section.card");
     inputCard.appendChild(D.el("div.card-head", { html: "<h2>" + D.esc(I.t("day.title")) + "</h2>" }));
 
+    /* Schichtvorlagen — ein Klick füllt Kommen, Gehen und Pause */
+    var shifts = (App.settings().shiftTemplates || []);
+    if (shifts.length) {
+      var shiftRow = D.el("div.chipset.mb-4");
+      shifts.forEach(function (tpl) {
+        var chip = D.el("button.chip", {
+          type: "button",
+          "data-tip": tpl.start + "–" + tpl.end,
+          html: D.icon("zap") + "<span>" + D.esc(tpl.name) + "</span>"
+        });
+        chip.addEventListener("click", function () { applyShift(tpl); });
+        shiftRow.appendChild(chip);
+      });
+      inputCard.appendChild(shiftRow);
+    }
+
     var timeRow = D.el("div.grid-2.mb-4");
     refs.startInput = timeField(I.t("day.clockIn"), "08:00", true);
     refs.endInput = timeField(I.t("day.clockOut"), "17:00", false);
@@ -9318,6 +10128,26 @@ window.ZK_SINGLE_FILE = true;
           update();
         });
         refs.typeChips.appendChild(chip);
+      });
+    }
+
+    /** Schichtvorlage auf den angezeigten Tag übertragen. */
+    function applyShift(tpl) {
+      var breaks = [];
+      if (tpl.breakStart && tpl.breakEnd) {
+        breaks.push({
+          id: "sh" + Date.now().toString(36),
+          label: I.t("day.break"),
+          start: tpl.breakStart,
+          end: tpl.breakEnd,
+          paid: false
+        });
+      }
+      App.saveDay(iso, { start: tpl.start, end: tpl.end, breaks: breaks, type: null });
+      D.toast(tpl.name, {
+        sub: tpl.start + " – " + tpl.end,
+        icon: "zap",
+        action: { label: I.t("common.undo"), onClick: function () { App.undo(); } }
       });
     }
 
@@ -9970,7 +10800,7 @@ window.ZK_SINGLE_FILE = true;
       App.store.setDays(patch, { label: "bulk" });
       App.afterChange();
       m.close();
-      D.toast(I.t("cal.bulkDone", { n: list.length }), {
+      D.toast(I.tn("cal.bulkDone", list.length), {
         tone: "plus",
         action: { label: I.t("common.undo"), onClick: function () { App.undo(); } }
       });
@@ -10003,7 +10833,7 @@ window.ZK_SINGLE_FILE = true;
         return sum + Math.round(res.baseTarget * parseFloat(factor.value));
       }, 0);
       summary.innerHTML = D.icon("info") +
-        "<div><strong>" + D.esc(I.t("cal.bulkDone", { n: list.length })) + "</strong>" +
+        "<div><strong>" + D.esc(I.tn("cal.bulkDone", list.length)) + "</strong>" +
         '<div class="sub">' + D.esc(I.t("day.credited") + " " + App.fmt(credit)) + "</div></div>";
       apply.disabled = list.length === 0;
     }
@@ -10747,7 +11577,7 @@ window.ZK_SINGLE_FILE = true;
       var dutyDays = range.days.filter(function (r) { return r.target > 0; }).length;
       var gapNote = D.el("div.notice.warn.mb-5");
       gapNote.innerHTML = D.icon("info") + "<div>" +
-        D.esc(I.t("report.gapNote", { gaps: t.gapDays, days: dutyDays })) + "</div>";
+        D.esc(I.tn("report.gapNote", t.gapDays, { gaps: t.gapDays, days: dutyDays })) + "</div>";
       sheet.appendChild(gapNote);
     }
 
@@ -10910,11 +11740,11 @@ window.ZK_SINGLE_FILE = true;
     streakCard.appendChild(D.el("div.card-head", { html: "<h2>" + D.esc(I.t("ach.currentStreak")) + "</h2>" }));
     var flame = D.el("div.streak-flame");
     flame.innerHTML = '<span style="font-size:30px">' + (stats.currentStreak > 0 ? "🔥" : "🌱") + "</span>" +
-      "<span>" + D.esc(I.t("ach.dayStreak", { n: stats.currentStreak })) + "</span>";
+      "<span>" + D.esc(I.tn("ach.dayStreak", stats.currentStreak)) + "</span>";
     streakCard.appendChild(flame);
     streakCard.appendChild(D.el("p.muted", {
       style: { fontSize: "12px", marginTop: "8px" },
-      text: I.t("ach.bestStreak") + ": " + I.t("ach.dayStreak", { n: stats.bestStreak })
+      text: I.t("ach.bestStreak") + ": " + I.tn("ach.dayStreak", stats.bestStreak)
     }));
     top.appendChild(streakCard);
 
@@ -10924,7 +11754,7 @@ window.ZK_SINGLE_FILE = true;
     [
       [I.t("stats.recordedDays"), String(stats.recordedDays)],
       [I.t("common.hours"), Math.round(stats.totalNet / 60) + " h"],
-      [I.t("ach.streak"), I.t("ach.dayStreak", { n: stats.bestStreak })],
+      [I.t("ach.streak"), I.tn("ach.dayStreak", stats.bestStreak)],
       ["🐓 / 🦉", stats.earlyBirds + " / " + stats.nightOwls]
     ].forEach(function (f) {
       facts.appendChild(D.el("div", {
@@ -10967,6 +11797,507 @@ window.ZK_SINGLE_FILE = true;
 
     card.appendChild(grid);
     host.appendChild(card);
+  }
+})(typeof self !== "undefined" ? self : this);
+
+;
+/* ===== assets/js/ui/views/tools.js ===== */
+/* ==========================================================================
+   ZEITKONTO — Ansicht „Werkzeuge“
+   --------------------------------------------------------------------------
+   Vier Dinge, die vorausdenken statt nur zurückzurechnen:
+
+     · Schnellerfassung   eine Zeile tippen statt vier Felder ausfüllen
+     · Gleitzeit-Planer   was pro Tag nötig ist, um ein Ziel zu erreichen
+     · Brückentage        wo wenige Ferientage viele freie Tage ergeben
+     · Monatscheck        was vor dem Abschluss noch offen ist
+   ========================================================================== */
+(function (root) {
+  "use strict";
+  var ZK = root.ZK = root.ZK || {};
+  var D = ZK.Dom, T = ZK.Time, R = ZK.Rules, H = ZK.Holidays, I = ZK.I18n;
+  var P = ZK.Planner;
+
+  (ZK.Views = ZK.Views || {}).tools = { render: render };
+
+  var checkMonth = null;   // bleibt über Neuzeichnungen erhalten
+
+  function render(host, App) {
+    var head = D.el("div.view-head");
+    var left = D.el("div");
+    left.appendChild(D.el("h1", { text: I.t("tools.title") }));
+    left.appendChild(D.el("p.lede", { text: I.t("tools.lede") }));
+    head.appendChild(left);
+    host.appendChild(head);
+
+    var grid = D.el("div.grid-2");
+    host.appendChild(grid);
+
+    grid.appendChild(quickEntryCard(App));
+    grid.appendChild(plannerCard(App));
+    host.appendChild(bridgeCard(App));
+    host.appendChild(auditCard(App));
+  }
+
+  /* ==================================================================== */
+  /* 1 · Schnellerfassung                                                  */
+  /* ==================================================================== */
+
+  function quickEntryCard(App) {
+    var card = D.el("section.card");
+    card.appendChild(D.el("div.card-head", { html: "<h2>" + D.esc(I.t("tools.quick")) + "</h2>" }));
+    card.appendChild(D.el("p.muted", {
+      text: I.t("tools.quickHint"), style: { fontSize: "12.5px", marginBottom: "12px" }
+    }));
+
+    var input = D.el("input.input.mono", {
+      type: "text", placeholder: I.t("tools.quickPlaceholder"),
+      autocomplete: "off", spellcheck: "false"
+    });
+    card.appendChild(input);
+
+    var preview = D.el("div.mt-3");
+    card.appendChild(preview);
+
+    var apply = D.el("button.btn.primary.block.mt-3", {
+      type: "button", text: I.t("common.apply"), disabled: true
+    });
+    card.appendChild(apply);
+
+    var examples = D.el("div.chipset.mt-4");
+    [
+      "8-17 30",
+      "gestern 7:45-16:30 p45",
+      "12.8.-16.8. ferien",
+      "krank",
+      "morgen 6-14:30"
+    ].forEach(function (ex) {
+      var chip = D.el("button.chip", { type: "button", text: ex });
+      chip.addEventListener("click", function () {
+        input.value = ex;
+        update();
+        input.focus();
+      });
+      examples.appendChild(chip);
+    });
+    card.appendChild(examples);
+
+    var parsed = null;
+
+    input.addEventListener("input", update);
+    input.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" && parsed) { e.preventDefault(); commit(); }
+    });
+    apply.addEventListener("click", commit);
+
+    function update() {
+      parsed = P.parseQuickEntry(input.value, T.todayISO());
+      D.clear(preview);
+      apply.disabled = !parsed;
+      input.classList.toggle("invalid", !!input.value.trim() && !parsed);
+
+      if (!parsed) {
+        if (input.value.trim()) {
+          preview.appendChild(D.el("div.hint.err", { text: I.t("tools.quickUnreadable") }));
+        }
+        return;
+      }
+
+      var list = D.el("div.col", { style: { gap: "6px" } });
+      parsed.dates.slice(0, 8).forEach(function (date) {
+        var patch = P.quickEntryToPatch(parsed)[date];
+        var res = ZK.Engine.computeDay(
+          Object.assign({}, App.record(date), patch),
+          { settings: App.settings(), holiday: App.holiday(date), isToday: date === T.todayISO() }
+        );
+        var row = D.el("div", {
+          style: {
+            display: "flex", justifyContent: "space-between", alignItems: "center",
+            gap: "10px", padding: "7px 10px", borderRadius: "var(--r-sm)",
+            background: "var(--surface-2)", fontSize: "12.5px"
+          }
+        });
+        row.innerHTML =
+          "<span><b>" + D.esc(I.weekdayName(T.weekdayOf(date), "short")) + " " +
+          D.esc(I.formatDate(date, { day: "2-digit", month: "2-digit" })) + "</b>" +
+          (parsed.type ? " · <span style='color:" + R.dayType(parsed.type).color + "'>" +
+            D.esc(I.t("type." + parsed.type)) + "</span>" : "") +
+          (parsed.start ? " · <span class='mono'>" + D.esc(parsed.start) + "–" + D.esc(parsed.end || "?") + "</span>" : "") +
+          "</span>" +
+          "<span class='mono fw-8 " + (res.balance > 0 ? "tone-plus" : res.balance < 0 ? "tone-minus" : "") + "'>" +
+          D.esc(App.fmtSigned(res.balance)) + "</span>";
+        list.appendChild(row);
+      });
+      if (parsed.dates.length > 8) {
+        list.appendChild(D.el("p.muted", { text: "+ " + (parsed.dates.length - 8), style: { fontSize: "12px" } }));
+      }
+      preview.appendChild(list);
+      apply.textContent = I.tn("tools.quickApply", parsed.dates.length);
+    }
+
+    function commit() {
+      if (!parsed) return;
+      var patch = P.quickEntryToPatch(parsed, { breakLabel: I.t("day.lunch") });
+      App.store.setDays(patch, { label: "quick" });
+      App.afterChange();
+      D.toast(I.tn("tools.quickDone", parsed.dates.length), {
+        tone: "plus",
+        action: { label: I.t("common.undo"), onClick: function () { App.undo(); } }
+      });
+      input.value = "";
+      parsed = null;
+      update();
+    }
+
+    return card;
+  }
+
+  /* ==================================================================== */
+  /* 2 · Gleitzeit-Planer                                                  */
+  /* ==================================================================== */
+
+  function plannerCard(App) {
+    var card = D.el("section.card");
+    card.appendChild(D.el("div.card-head", { html: "<h2>" + D.esc(I.t("tools.planner")) + "</h2>" }));
+
+    var balance = App.accountBalance().minutes;
+    var dayTarget = R.baseTargetFor(T.todayISO(), App.settings(), 2) || 504;
+    var comp = P.compensationDays(balance, dayTarget);
+
+    /* Kopfzahlen */
+    var kpis = D.el("div.grid-2.mb-4");
+    kpiInto(kpis, I.t("set.account"), App.fmtSigned(balance), "",
+      balance > 0 ? "plus" : balance < 0 ? "minus" : "");
+    kpiInto(kpis, I.t("tools.compDays"), String(comp.days),
+      comp.rest ? "+ " + App.fmt(comp.rest) : "", comp.days > 0 ? "plus" : "");
+    card.appendChild(kpis);
+
+    if (comp.days > 0) {
+      var hint = D.el("div.notice.plus.mb-4");
+      hint.innerHTML = D.icon("zap") + "<div>" +
+        D.esc(I.tn("tools.compHint", comp.days, { h: App.fmt(comp.dayTarget) })) + "</div>";
+      card.appendChild(hint);
+    }
+
+    /* Zieleingabe */
+    var row = D.el("div.grid-2");
+    var untilField = D.el("div.field");
+    untilField.appendChild(D.el("label", { text: I.t("tools.until") }));
+    var until = D.el("input.input", { type: "date", value: T.endOfMonth(T.todayISO()) });
+    untilField.appendChild(until);
+    row.appendChild(untilField);
+
+    var targetField = D.el("div.field");
+    targetField.appendChild(D.el("label", { text: I.t("tools.targetBalance") }));
+    var target = D.el("input.input.mono", { type: "text", value: "±0:00", style: { textAlign: "right" } });
+    targetField.appendChild(target);
+    row.appendChild(targetField);
+    card.appendChild(row);
+
+    var out = D.el("div.mt-4");
+    card.appendChild(out);
+
+    [until, target].forEach(function (n) { n.addEventListener("change", recompute); });
+    recompute();
+
+    function recompute() {
+      D.clear(out);
+      var to = until.value;
+      if (!T.isValidISO(to) || to < T.todayISO()) {
+        out.appendChild(D.el("p.muted", { text: I.t("tools.pickFuture"), style: { fontSize: "12.5px" } }));
+        return;
+      }
+
+      var raw = target.value.trim().replace("−", "-").replace("±", "");
+      var neg = raw.indexOf("-") === 0;
+      var mins = T.parseDuration(raw.replace(/^[+\-]/, "")) || 0;
+      var wanted = neg ? -Math.abs(mins) : Math.abs(mins);
+
+      /* Nur künftige Arbeitstage ohne bereits erfasste Abwesenheit */
+      var days = [];
+      T.rangeDays(T.addDays(T.todayISO(), 1), to).forEach(function (iso) {
+        var res = App.day(iso);
+        if (res.target > 0 && res.credited === 0 && !res.recorded) {
+          days.push({ date: iso, target: res.target });
+        }
+      });
+
+      var plan = P.distributeBalance(balance, wanted, days);
+      if (!plan.feasible) {
+        var none = D.el("div.notice.warn");
+        none.innerHTML = D.icon("alert") + "<div>" + D.esc(I.t("tools.noWorkdays")) + "</div>";
+        out.appendChild(none);
+        return;
+      }
+
+      var summary = D.el("div.notice." + (plan.strained ? "warn" : "info"));
+      summary.innerHTML = D.icon(plan.strained ? "alert" : "info") +
+        "<div><strong>" + D.esc(I.t("tools.perDay", {
+          v: T.formatSigned(plan.perDay, "clock"), n: plan.dayCount
+        })) + "</strong>" +
+        "<div class='sub'>" + D.esc(I.t("tools.perDayHint", {
+          net: App.fmt(plan.days[0].plannedNet)
+        })) + (plan.strained ? " · " + D.esc(I.t("tools.strained")) : "") + "</div></div>";
+      out.appendChild(summary);
+
+      /* Beispiel-Gehenzeit für den ersten geplanten Tag */
+      var first = plan.days[0];
+      var s = App.settings();
+      var leave = P.leaveTimeForBalance({
+        start: (s.defaultLunch && "08:00") || "08:00",
+        target: first.target,
+        wantBalance: first.deltaPerDay,
+        breakMinutes: 30,
+        breakRuleset: s.breakRuleset,
+        customBreakTiers: s.customBreakTiers,
+        autoDeductBreak: s.autoDeductBreak
+      });
+      if (leave) {
+        out.appendChild(D.el("p.muted.mt-3", {
+          style: { fontSize: "12.5px" },
+          html: D.esc(I.t("tools.exampleDay", { start: "08:00", leave: leave.text }))
+        }));
+      }
+    }
+
+    return card;
+  }
+
+  /* ==================================================================== */
+  /* 3 · Brückentage                                                       */
+  /* ==================================================================== */
+
+  function bridgeCard(App) {
+    var card = D.el("section.card.mt-4");
+    var s = App.settings();
+    var year = T.yearOf(App.date || T.todayISO());
+
+    var head = D.el("div.card-head");
+    head.innerHTML = "<h2>" + D.esc(I.t("tools.bridges")) + "</h2>";
+    var actions = D.el("div.actions");
+    var yearSel = D.el("select.select", { style: { minWidth: "110px" } });
+    [year, year + 1].forEach(function (y) {
+      yearSel.appendChild(D.el("option", { value: y, text: String(y) }));
+    });
+    actions.appendChild(yearSel);
+    head.appendChild(actions);
+    card.appendChild(head);
+
+    card.appendChild(D.el("p.muted", {
+      text: I.t("tools.bridgesHint"), style: { fontSize: "12.5px", marginBottom: "14px" }
+    }));
+
+    var list = D.el("div.col", { style: { gap: "10px" } });
+    card.appendChild(list);
+
+    yearSel.addEventListener("change", function () { draw(+yearSel.value); });
+    draw(year);
+
+    function draw(y) {
+      D.clear(list);
+      var holidays = s.autoHolidays === false ? {} : H.forYear(y, s.holidayRegion);
+      var targets = s.weeklyTargets || [];
+
+      var bridges = P.bridgeDays({
+        from: y + "-01-01",
+        to: y + "-12-31",
+        isHoliday: function (iso) { return !!holidays[iso]; },
+        isWorkday: function (iso) { return (targets[T.weekdayOf(iso)] || 0) > 0; }
+      });
+
+      if (!bridges.length) {
+        var empty = D.el("div.empty");
+        empty.innerHTML = '<div class="rings"><i></i><i></i></div><p>' + D.esc(I.t("tools.noBridges")) + "</p>";
+        list.appendChild(empty);
+        return;
+      }
+
+      bridges.forEach(function (b) {
+        var row = D.el("div", {
+          style: {
+            display: "grid", gridTemplateColumns: "minmax(0,1fr) auto",
+            gap: "12px", alignItems: "center", padding: "13px 15px",
+            border: "1px solid var(--line)", borderRadius: "var(--r-md)",
+            background: "var(--surface-2)"
+          }
+        });
+
+        var names = b.holidays.map(function (iso) {
+          var h = holidays[iso];
+          return h ? (h.names[I.getLang()] || h.name) : "";
+        }).filter(Boolean).join(", ");
+
+        var info = D.el("div", { style: { minWidth: "0" } });
+        info.innerHTML =
+          "<div style='font-size:14px;font-weight:800;letter-spacing:-.02em'>" +
+          D.esc(I.tn("tools.bridgeHeadline", b.vacationDays, { v: b.vacationDays, t: b.totalDays })) + "</div>" +
+          "<div style='font-size:12px;color:var(--ink-3);margin-top:3px'>" +
+          D.esc(I.formatDate(b.from, { day: "2-digit", month: "short" })) + " – " +
+          D.esc(I.formatDate(b.to, { day: "2-digit", month: "short", year: "numeric" })) +
+          (names ? " · " + D.esc(names) : "") + "</div>" +
+          "<div style='font-size:11px;color:var(--ink-3);margin-top:4px' class='mono'>" +
+          D.esc(b.dates.map(function (d) {
+            return I.formatDate(d, { day: "2-digit", month: "2-digit" });
+          }).join(" · ")) + "</div>";
+        row.appendChild(info);
+
+        var right = D.el("div", { style: { display: "flex", alignItems: "center", gap: "10px" } });
+        right.appendChild(D.el("span.tag.plus", { text: "×" + b.ratio }));
+        var take = D.el("button.btn.sm", { type: "button", text: I.t("tools.takeBridge") });
+        take.addEventListener("click", function () { confirmBridge(App, b, names); });
+        right.appendChild(take);
+        row.appendChild(right);
+
+        list.appendChild(row);
+      });
+    }
+
+    return card;
+  }
+
+  function confirmBridge(App, bridge, names) {
+    var body = D.el("div.col");
+    body.appendChild(D.el("p", {
+      style: { fontSize: "13.5px", lineHeight: "1.6" },
+      html: D.esc(I.t("tools.bridgeConfirm", { v: bridge.vacationDays, t: bridge.totalDays })) +
+        (names ? "<br><span class='muted'>" + D.esc(names) + "</span>" : "")
+    }));
+
+    var chips = D.el("div.chipset");
+    bridge.dates.forEach(function (iso) {
+      chips.appendChild(D.el("span.tag", {
+        text: I.weekdayName(T.weekdayOf(iso), "short") + " " +
+          I.formatDate(iso, { day: "2-digit", month: "2-digit" })
+      }));
+    });
+    body.appendChild(chips);
+
+    /* Tage, die schon etwas enthalten, ausdrücklich benennen */
+    var occupied = bridge.dates.filter(function (iso) { return App.hasRecord(iso); });
+    if (occupied.length) {
+      var warn = D.el("div.notice.warn");
+      warn.innerHTML = D.icon("alert") + "<div>" +
+        D.esc(I.tn("tools.bridgeOccupied", occupied.length)) + "</div>";
+      body.appendChild(warn);
+    }
+
+    var cancel = D.el("button.btn", { type: "button", text: I.t("common.cancel") });
+    var ok = D.el("button.btn.primary", { type: "button", text: I.t("tools.takeBridge") });
+    var m = D.modal({ title: I.t("tools.bridges"), body: body, size: "slim", footer: [cancel, ok] });
+
+    cancel.addEventListener("click", function () { m.close(); });
+    ok.addEventListener("click", function () {
+      var patch = {};
+      bridge.dates.forEach(function (iso) {
+        patch[iso] = { type: "vacation", absenceFactor: 1, start: "", end: "", breaks: [] };
+      });
+      App.store.setDays(patch, { label: "bridge" });
+      App.afterChange();
+      m.close();
+      D.toast(I.tn("tools.bridgeDone", bridge.dates.length), {
+        tone: "plus", icon: "umbrella",
+        action: { label: I.t("common.undo"), onClick: function () { App.undo(); } }
+      });
+      if (App.settings().confetti !== false) D.confetti({ count: 60 });
+    });
+  }
+
+  /* ==================================================================== */
+  /* 4 · Monatscheck                                                       */
+  /* ==================================================================== */
+
+  function auditCard(App) {
+    var card = D.el("section.card.mt-4");
+    if (!checkMonth) checkMonth = T.monthKey(T.todayISO());
+
+    var head = D.el("div.card-head");
+    head.innerHTML = "<h2>" + D.esc(I.t("tools.audit")) + "</h2>";
+    var actions = D.el("div.actions");
+    var monthSel = D.el("select.select", { style: { minWidth: "150px" } });
+    for (var i = 0; i < 12; i++) {
+      var mk = T.monthKey(T.addMonths(T.startOfMonth(T.todayISO()), -i));
+      var d = T.fromISO(mk + "-01");
+      monthSel.appendChild(D.el("option", {
+        value: mk, text: I.monthName(d.getMonth()) + " " + d.getFullYear(),
+        selected: mk === checkMonth
+      }));
+    }
+    actions.appendChild(monthSel);
+    head.appendChild(actions);
+    card.appendChild(head);
+
+    var body = D.el("div");
+    card.appendChild(body);
+
+    monthSel.addEventListener("change", function () {
+      checkMonth = monthSel.value;
+      draw();
+    });
+    draw();
+
+    function draw() {
+      D.clear(body);
+      var first = checkMonth + "-01";
+      var range = App.range(first, T.endOfMonth(first));
+      var audit = P.auditRange(range.days, T.todayISO());
+
+      var kpis = D.el("div.grid-3.mb-4");
+      kpiInto(kpis, I.t("cal.monthBalance"), App.fmtSigned(range.totals.balance), "",
+        range.totals.balance > 0 ? "plus" : range.totals.balance < 0 ? "minus" : "");
+      kpiInto(kpis, I.t("stats.recordedDays"), String(range.totals.recordedDays), "");
+      kpiInto(kpis, I.t("tools.openPoints"), String(audit.total), "",
+        audit.errors ? "minus" : audit.total ? "warn" : "plus");
+      body.appendChild(kpis);
+
+      if (audit.clean) {
+        var ok = D.el("div.notice.plus");
+        ok.innerHTML = D.icon("check") + "<div><strong>" + D.esc(I.t("tools.auditClean")) + "</strong>" +
+          "<div class='sub'>" + D.esc(I.t("tools.auditCleanHint")) + "</div></div>";
+        body.appendChild(ok);
+        return;
+      }
+
+      audit.issues.forEach(function (issue) {
+        var tone = issue.level === "error" ? "minus" : issue.level === "info" ? "info" : "warn";
+        var block = D.el("div.notice." + tone, { style: { marginBottom: "10px", flexDirection: "column", alignItems: "stretch" } });
+
+        var title = D.el("div", { style: { display: "flex", gap: "10px", alignItems: "flex-start" } });
+        title.innerHTML = D.icon(issue.level === "error" ? "alert" : issue.level === "info" ? "info" : "alert") +
+          "<div><strong>" + D.esc(I.t("audit." + issue.code)) + " · " + issue.count + "</strong>" +
+          "<div class='sub'>" + D.esc(I.t("auditHint." + issue.code)) + "</div></div>";
+        block.appendChild(title);
+
+        var chips = D.el("div.chipset", { style: { marginTop: "10px" } });
+        issue.dates.slice(0, 20).forEach(function (entry) {
+          var chip = D.el("button.chip", {
+            type: "button",
+            text: I.formatDate(entry.date, { day: "2-digit", month: "2-digit" }) +
+              (entry.minutes ? " · " + App.fmt(entry.minutes) : "")
+          });
+          chip.addEventListener("click", function () {
+            ZK.DayModal.open(App, entry.date, function () { App.renderChrome(); App.renderView(); });
+          });
+          chips.appendChild(chip);
+        });
+        if (issue.count > 20) {
+          chips.appendChild(D.el("span.tag", { text: "+ " + (issue.count - 20) }));
+        }
+        block.appendChild(chips);
+        body.appendChild(block);
+      });
+    }
+
+    return card;
+  }
+
+  /* -------------------------------------------------------------------- */
+  function kpiInto(host, title, value, sub, tone) {
+    var node = D.el("div.kpi" + (tone ? ".accent-" + tone : ""));
+    node.innerHTML = '<div class="k-title">' + D.esc(title) + "</div>" +
+      '<div class="k-val mono' + (tone === "plus" ? " tone-plus" : tone === "minus" ? " tone-minus" : "") + '">' +
+      D.esc(value) + "</div>" +
+      (sub ? '<div class="k-sub">' + D.esc(sub) + "</div>" : "");
+    host.appendChild(node);
   }
 })(typeof self !== "undefined" ? self : this);
 
@@ -11315,6 +12646,15 @@ window.ZK_SINGLE_FILE = true;
     comp.body.appendChild(rowSwitch(I.t("set.confetti"), "", s.confetti !== false, function (on) {
       App.store.updateSettings({ confetti: on });
       if (on) D.confetti({ count: 40 });
+    }));
+    comp.body.appendChild(rowSwitch(I.t("set.breakReminder"), I.t("set.breakReminderHint"), s.breakReminder !== false, function (on) {
+      App.store.updateSettings({ breakReminder: on });
+    }));
+    comp.body.appendChild(rowSwitch(I.t("set.titleCountdown"), I.t("set.titleCountdownHint"), s.titleCountdown !== false, function (on) {
+      App.store.updateSettings({ titleCountdown: on });
+    }));
+    comp.body.appendChild(rowNumber(I.t("set.backupReminder"), "", s.backupReminderDays || 45, I.t("common.days"), function (v) {
+      App.store.updateSettings({ backupReminderDays: Math.max(0, Math.round(v)) });
     }));
     grid.appendChild(comp.node);
 
@@ -11725,7 +13065,7 @@ window.ZK_SINGLE_FILE = true;
   var E = ZK.Engine;
   var I = ZK.I18n;
 
-  var APP_VERSION = "1.1.0";
+  var APP_VERSION = "1.2.0";
 
   ZK.Views = ZK.Views || {};
 
@@ -11736,6 +13076,7 @@ window.ZK_SINGLE_FILE = true;
     { key: "stats",        icon: "chart",        group: "insight", kbd: "4" },
     { key: "reports",      icon: "report",       group: "insight", kbd: "5" },
     { key: "achievements", icon: "trophy",       group: "insight", kbd: "6" },
+    { key: "tools",        icon: "zap",          group: "insight", kbd: "7" },
     { key: "settings",     icon: "settings",     group: "system",  kbd: "," }
   ];
 
@@ -12040,8 +13381,16 @@ window.ZK_SINGLE_FILE = true;
     if (App.view === "week") {
       return I.t("week.kw", { n: T.isoWeek(App.weekAnchor) }) + " · " + T.isoWeekYear(App.weekAnchor);
     }
-    return I.t(App.view === "settings" ? "set.title" : App.view === "stats" ? "stats.title" :
-      App.view === "reports" ? "report.title" : "ach.title");
+    /* Tabelle statt Bedingungskette: eine neue Ansicht ohne Eintrag fiele
+       sonst still auf einen fremden Titel zurück. */
+    var TITLES = {
+      stats: "stats.title",
+      reports: "report.title",
+      achievements: "ach.title",
+      tools: "tools.title",
+      settings: "set.title"
+    };
+    return I.t(TITLES[App.view] || ("nav." + App.view));
   }
 
   function openNav() {
@@ -12080,6 +13429,59 @@ window.ZK_SINGLE_FILE = true;
         : D.esc(text) + '<span class="sec">:' + T.pad2(now.getSeconds()) + "</span>";
     }
     App.tickers.forEach(function (fn) { try { fn(); } catch (e) { /* Ticker isolieren */ } });
+    updateTitle();
+    checkBreakDue();
+  }
+
+  /* ---- Feierabend im Browser-Tab ----------------------------------- */
+  /* Der Grundtitel wird jedes Mal neu gebildet statt gespeichert — sonst
+     bliebe er nach einem Sprachwechsel in der alten Sprache stehen. */
+  function updateTitle() {
+    var baseTitle = I.t("app.name") + " · " + I.t("app.tagline");
+    var s = App.settings();
+    if (s.titleCountdown === false) {
+      if (document.title !== baseTitle) document.title = baseTitle;
+      return;
+    }
+    var res = App.day(T.todayISO());
+    if (!res.running || res.recommendedLeaveTl === null) {
+      if (document.title !== baseTitle) document.title = baseTitle;
+      return;
+    }
+    var left = res.recommendedLeaveTl - T.nowMinutes();
+    var text = left > 0
+      ? res.recommendedLeave + " · " + T.formatDuration(left, "clock")
+      : "✓ " + T.formatSigned(-left, "clock");
+    document.title = text + " — " + I.t("app.name");
+  }
+
+  /* ---- Erinnerung, bevor die Pflichtpause fällig wird ---------------- */
+  var breakWarnedAt = null;
+
+  function checkBreakDue() {
+    var s = App.settings();
+    if (s.breakReminder === false) return;
+
+    var iso = T.todayISO();
+    var res = App.day(iso);
+    if (!res.running) { breakWarnedAt = null; return; }
+
+    var tier = R.nextBreakTier(res.presence, s.breakRuleset, s.customBreakTiers);
+    if (!tier) return;
+    if (res.breakTotal >= tier.require) return;      // Pause ist schon erfasst
+
+    var minutesToTier = tier.over - res.presence;
+    if (minutesToTier > 10 || minutesToTier < 0) return;
+    if (breakWarnedAt === tier.over) return;         // je Stufe nur einmal
+    breakWarnedAt = tier.over;
+
+    D.toast(I.t("toast.breakDue", {
+      v: T.formatDuration(Math.max(1, minutesToTier), "hm"),
+      req: T.formatDuration(tier.require, "hm")
+    }), {
+      tone: "warn", icon: "coffee", duration: 12000,
+      action: { label: I.t("day.startBreak"), onClick: function () { App.stamp("break"); } }
+    });
   }
 
   App.onTick = function (fn) {
@@ -12171,6 +13573,59 @@ window.ZK_SINGLE_FILE = true;
     var filtered = all;
     var index = 0;
 
+    /* Schnellerfassung und Notizsuche direkt aus der Palette */
+    function smartCommands(query) {
+      var out = [];
+      var raw = String(query || "").trim();
+      if (!raw) return out;
+
+      /* „gestern 7:45-16:30 p30“ direkt eintragen */
+      if (ZK.Planner) {
+        var parsed = ZK.Planner.parseQuickEntry(raw, T.todayISO());
+        if (parsed) {
+          var summary = parsed.dates.length === 1
+            ? I.formatDate(parsed.dates[0], { day: "2-digit", month: "2-digit" })
+            : parsed.dates.length + " × ";
+          if (parsed.type) summary += " " + I.t("type." + parsed.type);
+          if (parsed.start) summary += " " + parsed.start + "–" + (parsed.end || "?");
+          out.push({
+            group: I.t("cmd.group.actions"),
+            icon: "zap",
+            label: I.t("cmd.quickEntry", { v: summary.trim() }),
+            run: function () {
+              var patch = ZK.Planner.quickEntryToPatch(parsed, { breakLabel: I.t("day.lunch") });
+              store.setDays(patch, { label: "quick" });
+              App.afterChange();
+              D.toast(I.tn("tools.quickDone", parsed.dates.length), {
+                tone: "plus",
+                action: { label: I.t("common.undo"), onClick: function () { App.undo(); } }
+              });
+            }
+          });
+        }
+      }
+
+      /* Notizen durchsuchen */
+      if (raw.length >= 3) {
+        var needle = raw.toLowerCase();
+        var days = store.allDays();
+        Object.keys(days).sort().reverse().forEach(function (iso) {
+          if (out.length > 8) return;
+          var note = String(days[iso].note || "");
+          if (!note || note.toLowerCase().indexOf(needle) < 0) return;
+          out.push({
+            group: I.t("cmd.noteSearch"),
+            icon: "search",
+            label: I.formatDate(iso, { day: "2-digit", month: "2-digit", year: "numeric" }),
+            sub: note.slice(0, 60),
+            run: function () { App.setDate(iso, { view: "today" }); }
+          });
+        });
+      }
+
+      return out;
+    }
+
     function dateCommands(query) {
       var out = [];
       var iso = null;
@@ -12241,11 +13696,12 @@ window.ZK_SINGLE_FILE = true;
       var q = input.value.trim().toLowerCase();
       if (!q) { filtered = all; index = 0; draw(); return; }
       var dates = dateCommands(input.value);
+      var smart = smartCommands(input.value);
       var scored = all.map(function (c) { return { c: c, s: score(c, q) }; })
         .filter(function (x) { return x.s !== null; })
         .sort(function (a, b) { return a.s - b.s; })
         .map(function (x) { return x.c; });
-      filtered = dates.concat(scored);
+      filtered = dates.concat(smart).concat(scored);
       index = 0;
       draw();
     }
@@ -12393,6 +13849,7 @@ window.ZK_SINGLE_FILE = true;
   };
 
   function markExport() {
+    store.updateSettings({ lastExportAt: new Date().toISOString() });
     var a = store.getAchievements();
     a.exports = (a.exports || 0) + 1;
     store.saveAchievements(a);
@@ -12504,6 +13961,27 @@ window.ZK_SINGLE_FILE = true;
     ZK.OutlookSync.run(App);
   };
 
+  /**
+   * Erinnert daran, eine Sicherung zu ziehen. Der lokale Speicher ist die
+   * einzige Kopie — wer Browserdaten löscht, löscht das Zeitkonto mit.
+   */
+  App.checkBackupReminder = function () {
+    var s = App.settings();
+    var afterDays = s.backupReminderDays || 45;
+    if (!afterDays) return;
+    if (store.dayCount() < 15) return;
+
+    var last = s.lastExportAt ? new Date(s.lastExportAt).getTime() : null;
+    var reference = last || new Date(store.getMeta().createdAt || Date.now()).getTime();
+    var days = Math.floor((Date.now() - reference) / 86400000);
+    if (!isFinite(days) || days < afterDays) return;
+
+    D.toast(I.t("toast.backupDue", { n: days }), {
+      tone: "warn", icon: "save", duration: 14000,
+      action: { label: I.t("toast.backupAction"), onClick: function () { App.exportJSON(); } }
+    });
+  };
+
   App.requestNotifications = function () {
     if (typeof Notification === "undefined") return Promise.resolve("unsupported");
     return Notification.requestPermission().then(function (p) {
@@ -12547,6 +14025,7 @@ window.ZK_SINGLE_FILE = true;
       case "4": App.go("stats"); break;
       case "5": App.go("reports"); break;
       case "6": App.go("achievements"); break;
+      case "7": App.go("tools"); break;
     }
   }
 
@@ -12737,6 +14216,7 @@ window.ZK_SINGLE_FILE = true;
       App.scheduleReminder();
       store.makeBackup();
       App.autoSyncOutlook();
+      App.checkBackupReminder();
     }, 320);
   };
 

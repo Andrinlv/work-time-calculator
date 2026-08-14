@@ -342,6 +342,15 @@
       App.store.updateSettings({ confetti: on });
       if (on) D.confetti({ count: 40 });
     }));
+    comp.body.appendChild(rowSwitch(I.t("set.breakReminder"), I.t("set.breakReminderHint"), s.breakReminder !== false, function (on) {
+      App.store.updateSettings({ breakReminder: on });
+    }));
+    comp.body.appendChild(rowSwitch(I.t("set.titleCountdown"), I.t("set.titleCountdownHint"), s.titleCountdown !== false, function (on) {
+      App.store.updateSettings({ titleCountdown: on });
+    }));
+    comp.body.appendChild(rowNumber(I.t("set.backupReminder"), "", s.backupReminderDays || 45, I.t("common.days"), function (v) {
+      App.store.updateSettings({ backupReminderDays: Math.max(0, Math.round(v)) });
+    }));
     grid.appendChild(comp.node);
 
     /* ================================================================ */

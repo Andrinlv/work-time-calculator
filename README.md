@@ -8,7 +8,7 @@ die Feiertage deines Kantons. Alles bleibt auf deinem Gerät.
 
 ```
   ◯ ◯      ZEITKONTO
-  ◯ ●      Version 1.1.0
+  ◯ ●      Version 1.2.0
 ```
 
 ---
@@ -165,6 +165,35 @@ im Browser gäbe es dafür kein Versteck. Genau dafür ist PKCE gemacht.
 - Jede Umgebung braucht ihre eigene Umleitungs-URI in der Registrierung
   (Produktivseite, Testserver, `localhost`).
 
+### Werkzeuge, die vorausdenken
+
+- **Schnellerfassung** — eine Zeile statt vier Felder. `gestern 7:45-16:30 p45`,
+  `12.8.-16.8. ferien`, `morgen 6-14:30`. Datum, Zeitspanne, Pause und Tagesart in
+  beliebiger Reihenfolge, in vier Sprachen. Mit Vorschau vor dem Speichern — und
+  direkt aus der Schnellsuche (⌘K) heraus verfügbar.
+- **Gleitzeit-Planer** — „Ich will am 31.12. bei ±0 stehen." Die App rechnet aus,
+  was das pro verbleibendem Arbeitstag bedeutet, nennt eine Beispiel-Gehenzeit und
+  warnt, wenn der Plan über zehn Stunden am Tag verlangt. Dazu: wie viele ganze
+  freie Tage bereits in deinem Saldo stecken.
+- **Brückentage** — wo wenige Ferientage viele freie Tage ergeben, berechnet aus
+  deiner Feiertagsregion und deinem Arbeitsmodell. *1 Ferientag → 4 Tage frei* an
+  Auffahrt, *4 Ferientage → 10 Tage frei* über Ostern. Ein Klick trägt sie ein.
+- **Monatscheck** — vor dem Abschluss: nicht erfasste Tage, angefangene Tage ohne
+  Gehen-Zeit, automatische Pausenabzüge, überschrittene Höchstarbeitszeiten, zu
+  kurze Ruhezeiten. Jeder Punkt mit anklickbaren Datumsmarken.
+
+### Kleinigkeiten, die den Tag leichter machen
+
+- **Schichtvorlagen** — Büro, Früh, Spät, Nacht als Knöpfe in der Tagesansicht.
+  Ein Klick füllt Kommen, Gehen und Pause. Frei erweiterbar.
+- **Feierabend im Browser-Tab** — der Tab-Titel zeigt Gehen-Zeit und Restzeit,
+  auch wenn die App im Hintergrund liegt: `16:39 · 6:54 — Zeitkonto`.
+- **Pausen-Erinnerung** — meldet sich zehn Minuten, bevor die gesetzliche Pause
+  fällig wird, mit einem Knopf zum sofortigen Stempeln.
+- **Notizsuche** — in der Schnellsuche nach Notiztexten suchen und direkt zum Tag springen.
+- **Sicherungs-Erinnerung** — der lokale Speicher ist die einzige Kopie. Nach 45
+  Tagen ohne Export gibt es einen dezenten Hinweis.
+
 ### Und ein bisschen Spiel
 
 Serien, Stufen und 24 Abzeichen — vom *Ersten Stempel* über die *Perfekte Woche*
@@ -215,7 +244,7 @@ erreichbar und lässt sich von dort installieren.
 ## Entwicklung
 
 ```bash
-npm test      # 148 Tests für Rechenkern und Kalenderabgleich
+npm test      # 178 Tests für Rechenkern, Kalenderabgleich und Planung
 npm run build # Icons erzeugen + Einzeldatei bauen
 npm start     # lokaler Server
 ```
@@ -239,6 +268,7 @@ assets/css/
 
 assets/js/core/
   time.js               Zeit- und Datumsrechnung (reine Funktionen)
+  planner.js            Schnellerfassung, Gleitzeit-Planer, Brückentage, Monatscheck
   rules.js              Tagesarten, Pausenstaffeln, Arbeitsmodelle
   holidays.js           Feiertage inkl. Osterberechnung
   engine.js             Tages- und Zeitraumberechnung, Kontostand
@@ -264,7 +294,8 @@ tools/
   make-icons.js         erzeugt alle PNG-Icons (ohne Fremdbibliotheken)
   build-single-file.js  baut dist/zeitkonto.html
 
-tests/                  Rechenkern, Regeln, Feiertage, Export, Speicher, Kalenderabgleich
+tests/                  Rechenkern, Regeln, Feiertage, Export, Speicher,
+                        Kalenderabgleich, Planung
 ```
 
 ### Grundsätze im Code

@@ -4,6 +4,46 @@ Alle nennenswerten Änderungen an Zeitkonto. Das Format folgt lose
 [Keep a Changelog](https://keepachangelog.com/de/1.1.0/), die Versionierung
 [SemVer](https://semver.org/lang/de/).
 
+## [1.2.0] — 2026-08-14
+
+### Neu — Werkzeuge
+
+- **Schnellerfassung.** Eine Zeile statt vier Felder: `gestern 7:45-16:30 p45`,
+  `12.8.-16.8. ferien`, `morgen 6-14:30`. Datum (relativ, TT.MM oder ISO),
+  Zeitspanne, Pause und Tagesart in beliebiger Reihenfolge, in vier Sprachen.
+  Mit Vorschau samt berechnetem Saldo — auch aus der Schnellsuche heraus.
+- **Gleitzeit-Planer.** Zielsaldo bis Stichtag eingeben; die App verteilt die
+  Differenz auf die verbleibenden offenen Arbeitstage, nennt eine
+  Beispiel-Gehenzeit und meldet, wenn der Plan über zehn Stunden je Tag verlangt.
+  Dazu die Zahl der ganzen freien Tage, die im Saldo stecken.
+- **Brückentage.** Sucht Zeiträume, in denen wenige Ferientage viele freie Tage
+  ergeben — berechnet aus Feiertagsregion und Arbeitsmodell, überschneidungsfrei
+  und nach Ausbeute sortiert. Ein Klick trägt die Ferientage ein.
+- **Monatscheck.** Fasst vor dem Abschluss zusammen, was offen ist: nicht
+  erfasste Tage, angefangene Tage ohne Gehen-Zeit, automatische Pausenabzüge,
+  überschrittene Höchstarbeitszeiten, zu kurze Ruhezeiten, unlesbare Eingaben.
+
+### Neu — Alltag
+
+- **Schichtvorlagen** (Büro, Früh, Spät, Nacht) als Knöpfe in der Tagesansicht;
+  ein Klick füllt Kommen, Gehen und Pause. In den Einstellungen erweiterbar.
+- **Feierabend im Browser-Tab**: der Tab-Titel zeigt Gehen-Zeit und Restzeit,
+  auch wenn die App im Hintergrund läuft.
+- **Pausen-Erinnerung** zehn Minuten vor Erreichen der nächsten gesetzlichen
+  Pausenstufe, mit Knopf zum sofortigen Stempeln.
+- **Notizsuche** in der Schnellsuche.
+- **Sicherungs-Erinnerung** nach einstellbarer Zeit ohne Export.
+
+### Geändert
+
+- **Echte Einzahlformen.** Die Sprachdateien kennen nun `<schlüssel>.one`;
+  `I.tn()` wählt automatisch. Damit steht nirgends mehr „1 Tage".
+- Der Titel in der Kopfzeile kommt aus einer Zuordnungstabelle statt aus einer
+  Bedingungskette — eine neue Ansicht fiel sonst still auf einen fremden Titel
+  zurück (genau das war bei „Werkzeuge" passiert).
+- Serviceworker-Version auf v1.2.0.
+- 30 zusätzliche Tests, insgesamt 178.
+
 ## [1.1.0] — 2026-08-06
 
 ### Neu — Outlook-Kalender

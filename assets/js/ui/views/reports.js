@@ -137,7 +137,7 @@
       var dutyDays = range.days.filter(function (r) { return r.target > 0; }).length;
       var gapNote = D.el("div.notice.warn.mb-5");
       gapNote.innerHTML = D.icon("info") + "<div>" +
-        D.esc(I.t("report.gapNote", { gaps: t.gapDays, days: dutyDays })) + "</div>";
+        D.esc(I.tn("report.gapNote", t.gapDays, { gaps: t.gapDays, days: dutyDays })) + "</div>";
       sheet.appendChild(gapNote);
     }
 

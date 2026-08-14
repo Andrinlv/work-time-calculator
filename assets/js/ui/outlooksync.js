@@ -132,7 +132,7 @@
 
       if (opts.silent) {
         if (plan.changes.length) {
-          D.toast(I.t("ol.changesFound", { n: plan.changes.length }), {
+          D.toast(I.tn("ol.changesFound", plan.changes.length), {
             icon: "calendar",
             duration: 9000,
             action: { label: I.t("common.apply"), onClick: function () { showPreview(App, plan); } }
@@ -203,7 +203,7 @@
     if (plan.protectedDays.length) {
       var warn = D.el("div.notice.warn.mt-4");
       warn.innerHTML = D.icon("lock") +
-        "<div><strong>" + D.esc(plan.protectedDays.length === 1 ? I.t("ol.protectedOne") : I.t("ol.protectedTitle", { n: plan.protectedDays.length })) + "</strong>" +
+        "<div><strong>" + D.esc(I.tn("ol.protectedTitle", plan.protectedDays.length)) + "</strong>" +
         "<div class='sub'>" + D.esc(I.t("ol.protectedHint")) + "</div></div>";
       body.appendChild(warn);
 
@@ -301,7 +301,7 @@
     saveSettings(App, { lastSyncAt: stamp });
     App.afterChange();
 
-    D.toast(I.t("ol.applied", { n: changes.length }), {
+    D.toast(I.tn("ol.applied", changes.length), {
       tone: "plus",
       icon: "calendar",
       action: { label: I.t("common.undo"), onClick: function () { App.undo(); } }

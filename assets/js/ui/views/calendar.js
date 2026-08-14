@@ -414,7 +414,7 @@
       App.store.setDays(patch, { label: "bulk" });
       App.afterChange();
       m.close();
-      D.toast(I.t("cal.bulkDone", { n: list.length }), {
+      D.toast(I.tn("cal.bulkDone", list.length), {
         tone: "plus",
         action: { label: I.t("common.undo"), onClick: function () { App.undo(); } }
       });
@@ -447,7 +447,7 @@
         return sum + Math.round(res.baseTarget * parseFloat(factor.value));
       }, 0);
       summary.innerHTML = D.icon("info") +
-        "<div><strong>" + D.esc(I.t("cal.bulkDone", { n: list.length })) + "</strong>" +
+        "<div><strong>" + D.esc(I.tn("cal.bulkDone", list.length)) + "</strong>" +
         '<div class="sub">' + D.esc(I.t("day.credited") + " " + App.fmt(credit)) + "</div></div>";
       apply.disabled = list.length === 0;
     }
