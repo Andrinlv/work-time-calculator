@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="de" data-theme="light">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Zeitkonto · Arbeitszeit, die sich selbst erklärt</title>
+  <meta name="description" content="Arbeitszeit erfassen, Gleitzeitsaldo im Blick behalten, Pausenrecht einhalten. Läuft offline, alle Daten bleiben auf dem Gerät." />
+  <meta name="color-scheme" content="light dark" />
+  <meta name="theme-color" content="#F4F2EF" />
+  <meta name="application-name" content="Zeitkonto" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="Zeitkonto" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="format-detection" content="telephone=no" />
+  <meta name="robots" content="noindex" />
+
+  <link rel="manifest" href="app.webmanifest" />
+  <link rel="icon" href="assets/icons/icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png" />
+  <link rel="mask-icon" href="assets/icons/icon.svg" color="#857C74" />
+
+  <link rel="stylesheet" href="assets/css/tokens.css" />
+  <link rel="stylesheet" href="assets/css/base.css" />
+  <link rel="stylesheet" href="assets/css/components.css" />
+  <link rel="stylesheet" href="assets/css/views.css" />
+</head>
+
+<body>
+  <!-- ================= Ladebildschirm ================= -->
+  <div id="boot">
+    <div class="boot-inner">
+      <div class="boot-rings"><i></i><i></i><i></i><i></i></div>
+      <div class="boot-label">Zeitkonto</div>
+    </div>
+  </div>
+
+  <noscript>
+    <div style="max-width:640px;margin:60px auto;padding:28px;border:1px solid #ccc;border-radius:16px;font-family:system-ui,sans-serif">
+      <h1 style="font-size:20px;margin-bottom:10px">JavaScript wird benötigt</h1>
+      <p style="line-height:1.6;color:#555">Zeitkonto rechnet vollständig im Browser — ohne Server. Dafür muss JavaScript
+      aktiviert sein. Es werden keine Daten übertragen.</p>
+    </div>
+  </noscript>
+
+  <!-- ================= App-Gerüst ================= -->
+  <div class="app">
+    <div class="brandbar">
+      <a class="wordmark" href="#/today" aria-label="Zeitkonto">
+        <span class="mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+        <b>ZEIT</b><span>KONTO</span>
+      </a>
+    </div>
+
+    <header class="header" id="header" role="banner"></header>
+
+    <nav class="nav" id="nav" aria-label="Hauptnavigation"></nav>
+
+    <main class="main" id="viewHost" role="main" tabindex="-1"></main>
+
+    <nav class="tabbar" id="tabbar" aria-label="Ansichten"></nav>
+  </div>
+
+  <!-- ================= Programmteile ================= -->
+  <!-- Reihenfolge ist bewusst: Kern → Daten → Oberfläche → Ansichten → Start -->
+  <script src="assets/js/core/time.js"></script>
+  <script src="assets/js/core/rules.js"></script>
+  <script src="assets/js/core/holidays.js"></script>
+  <script src="assets/js/core/engine.js"></script>
+  <script src="assets/js/core/achievements.js"></script>
+
+  <script src="assets/js/data/store.js"></script>
+  <script src="assets/js/data/exporters.js"></script>
+  <script src="assets/js/data/msauth.js"></script>
+  <script src="assets/js/data/graph.js"></script>
+  <script src="assets/js/data/calendarsync.js"></script>
+
+  <script src="assets/js/ui/i18n.js"></script>
+  <script src="assets/js/ui/dom.js"></script>
+  <script src="assets/js/ui/charts.js"></script>
+  <script src="assets/js/ui/onboarding.js"></script>
+  <script src="assets/js/ui/outlooksync.js"></script>
+
+  <script src="assets/js/ui/views/today.js"></script>
+  <script src="assets/js/ui/views/calendar.js"></script>
+  <script src="assets/js/ui/views/week.js"></script>
+  <script src="assets/js/ui/views/stats.js"></script>
+  <script src="assets/js/ui/views/reports.js"></script>
+  <script src="assets/js/ui/views/achievements.js"></script>
+  <script src="assets/js/ui/views/settings.js"></script>
+
+  <script src="assets/js/ui/app.js"></script>
+</body>
+</html>

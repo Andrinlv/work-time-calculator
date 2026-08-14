@@ -1,0 +1,43 @@
+name: Tests
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Rechenkern prüfen
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Tests
+        run: npm test
+
+      - name: Icons und Einzeldatei bauen
+        run: npm run build
+
+      - name: Einzeldatei prüfen
+        run: |
+          test -f dist/zeitkonto.html
+          # Es darf kein externer Verweis übrig bleiben — die Datei muss
+          # ohne Netz und ohne Nachbardateien funktionieren.
+          if grep -Eq '(src|href)="(https?:)?//' dist/zeitkonto.html; then
+            echo "Externer Verweis in der Einzeldatei gefunden"; exit 1
+          fi
+          echo "Einzeldatei ist eigenständig ($(du -h dist/zeitkonto.html | cut -f1))"
+
+      - name: Unversionierte Änderungen melden
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "Der Bau erzeugt Änderungen, die nicht eingecheckt sind:"
+            git status --porcelain
+            echo "Bitte 'npm run build' ausführen und das Ergebnis committen."
+            exit 1
+          fi

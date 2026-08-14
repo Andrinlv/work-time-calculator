@@ -1,0 +1,26 @@
+{
+  "name": "zeitkonto",
+  "version": "1.1.0",
+  "private": true,
+  "description": "Arbeitszeit erfassen, Feierabend berechnen, Gleitzeitsaldo im Blick behalten. Läuft vollständig im Browser, offline, ohne Konto.",
+  "license": "MIT",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "node --test \"tests/*.test.js\"",
+    "test:watch": "node --test --watch \"tests/*.test.js\"",
+    "icons": "node tools/make-icons.js",
+    "build": "node tools/make-icons.js && node tools/build-single-file.js",
+    "start": "npx --yes http-server -p 8080 -c-1 .",
+    "check": "npm test && npm run build"
+  },
+  "keywords": [
+    "arbeitszeit",
+    "zeiterfassung",
+    "gleitzeit",
+    "pwa",
+    "offline"
+  ]
+}

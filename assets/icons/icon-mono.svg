@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100" role="img" aria-label="Zeitkonto">
+  <title>Zeitkonto</title>
+  
+  <circle cx="31.85" cy="31.85" r="11.36" fill="none" stroke="#857C74" stroke-width="6.98"/>
+  <circle cx="68.15" cy="31.85" r="11.36" fill="none" stroke="#857C74" stroke-width="6.98"/>
+  <circle cx="31.85" cy="68.15" r="11.36" fill="none" stroke="#857C74" stroke-width="6.98"/>
+  <circle cx="68.15" cy="68.15" r="14.29" fill="#857C74"/>
+</svg>

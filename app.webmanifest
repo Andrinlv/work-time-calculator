@@ -1,0 +1,66 @@
+{
+  "name": "Zeitkonto — Arbeitszeit & Gleitzeitsaldo",
+  "short_name": "Zeitkonto",
+  "description": "Arbeitszeit erfassen, Feierabend berechnen, Plus- und Minusstunden im Blick behalten. Läuft offline, alle Daten bleiben auf dem Gerät.",
+  "id": "/zeitkonto/",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
+  "orientation": "any",
+  "background_color": "#F4F2EF",
+  "theme_color": "#F4F2EF",
+  "lang": "de",
+  "dir": "ltr",
+  "categories": ["productivity", "business", "utilities"],
+  "prefer_related_applications": false,
+  "icons": [
+    {
+      "src": "assets/icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "assets/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "assets/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "assets/icons/maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Heute erfassen",
+      "short_name": "Heute",
+      "description": "Direkt zur Tageserfassung springen",
+      "url": "./index.html#/today",
+      "icons": [{ "src": "assets/icons/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Kalender",
+      "short_name": "Kalender",
+      "description": "Monatsübersicht mit Plus- und Minusstunden",
+      "url": "./index.html#/calendar",
+      "icons": [{ "src": "assets/icons/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Statistik",
+      "short_name": "Statistik",
+      "description": "Saldo-Verlauf und Auswertungen",
+      "url": "./index.html#/stats",
+      "icons": [{ "src": "assets/icons/icon-192.png", "sizes": "192x192" }]
+    }
+  ]
+}
