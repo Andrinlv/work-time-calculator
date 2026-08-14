@@ -114,6 +114,22 @@
     var inputCard = D.el("section.card");
     inputCard.appendChild(D.el("div.card-head", { html: "<h2>" + D.esc(I.t("day.title")) + "</h2>" }));
 
+    /* Schichtvorlagen — ein Klick füllt Kommen, Gehen und Pause */
+    var shifts = (App.settings().shiftTemplates || []);
+    if (shifts.length) {
+      var shiftRow = D.el("div.chipset.mb-4");
+      shifts.forEach(function (tpl) {
+        var chip = D.el("button.chip", {
+          type: "button",
+          "data-tip": tpl.start + "–" + tpl.end,
+          html: D.icon("zap") + "<span>" + D.esc(tpl.name) + "</span>"
+        });
+        chip.addEventListener("click", function () { applyShift(tpl); });
+        shiftRow.appendChild(chip);
+      });
+      inputCard.appendChild(shiftRow);
+    }
+
     var timeRow = D.el("div.grid-2.mb-4");
     refs.startInput = timeField(I.t("day.clockIn"), "08:00", true);
     refs.endInput = timeField(I.t("day.clockOut"), "17:00", false);
@@ -375,6 +391,26 @@
           update();
         });
         refs.typeChips.appendChild(chip);
+      });
+    }
+
+    /** Schichtvorlage auf den angezeigten Tag übertragen. */
+    function applyShift(tpl) {
+      var breaks = [];
+      if (tpl.breakStart && tpl.breakEnd) {
+        breaks.push({
+          id: "sh" + Date.now().toString(36),
+          label: I.t("day.break"),
+          start: tpl.breakStart,
+          end: tpl.breakEnd,
+          paid: false
+        });
+      }
+      App.saveDay(iso, { start: tpl.start, end: tpl.end, breaks: breaks, type: null });
+      D.toast(tpl.name, {
+        sub: tpl.start + " – " + tpl.end,
+        icon: "zap",
+        action: { label: I.t("common.undo"), onClick: function () { App.undo(); } }
       });
     }
 

@@ -45,11 +45,11 @@
     streakCard.appendChild(D.el("div.card-head", { html: "<h2>" + D.esc(I.t("ach.currentStreak")) + "</h2>" }));
     var flame = D.el("div.streak-flame");
     flame.innerHTML = '<span style="font-size:30px">' + (stats.currentStreak > 0 ? "🔥" : "🌱") + "</span>" +
-      "<span>" + D.esc(I.t("ach.dayStreak", { n: stats.currentStreak })) + "</span>";
+      "<span>" + D.esc(I.tn("ach.dayStreak", stats.currentStreak)) + "</span>";
     streakCard.appendChild(flame);
     streakCard.appendChild(D.el("p.muted", {
       style: { fontSize: "12px", marginTop: "8px" },
-      text: I.t("ach.bestStreak") + ": " + I.t("ach.dayStreak", { n: stats.bestStreak })
+      text: I.t("ach.bestStreak") + ": " + I.tn("ach.dayStreak", stats.bestStreak)
     }));
     top.appendChild(streakCard);
 
@@ -59,7 +59,7 @@
     [
       [I.t("stats.recordedDays"), String(stats.recordedDays)],
       [I.t("common.hours"), Math.round(stats.totalNet / 60) + " h"],
-      [I.t("ach.streak"), I.t("ach.dayStreak", { n: stats.bestStreak })],
+      [I.t("ach.streak"), I.tn("ach.dayStreak", stats.bestStreak)],
       ["🐓 / 🦉", stats.earlyBirds + " / " + stats.nightOwls]
     ].forEach(function (f) {
       facts.appendChild(D.el("div", {

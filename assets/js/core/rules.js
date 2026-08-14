@@ -193,7 +193,21 @@
       minRestHours: 11,           // Ruhezeit zwischen zwei Tagen
       maxWeeklyMinutes: 50 * 60,
 
+      /* Schichtvorlagen — ein Klick statt vier Felder.
+         Frei erweiterbar; die mitgelieferten decken einen Zweischichtbetrieb
+         mit Bürozeiten ab. */
+      shiftTemplates: [
+        { id: "office", name: "Büro",        start: "08:00", end: "17:00", breakStart: "12:00", breakEnd: "12:30" },
+        { id: "early",  name: "Frühschicht", start: "06:00", end: "14:30", breakStart: "09:00", breakEnd: "09:30" },
+        { id: "late",   name: "Spätschicht", start: "14:00", end: "22:30", breakStart: "18:00", breakEnd: "18:30" },
+        { id: "night",  name: "Nachtschicht", start: "22:00", end: "06:00", breakStart: "02:00", breakEnd: "02:30" }
+      ],
+
       /* Komfort */
+      breakReminder: true,        // erinnert, bevor die Pflichtpause fällig wird
+      titleCountdown: true,       // Feierabend im Browser-Tab
+      backupReminderDays: 45,     // Hinweis, wenn so lange nicht gesichert wurde
+      lastExportAt: null,
       reminderEnabled: false,
       reminderLeadMinutes: 10,
       autoStampOnOpen: false,

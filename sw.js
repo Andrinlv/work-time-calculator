@@ -13,7 +13,7 @@
    ========================================================================== */
 "use strict";
 
-const CACHE_VERSION = "zeitkonto-v1.1.0";
+const CACHE_VERSION = "zeitkonto-v1.2.0";
 const SHELL = [
   "./",
   "./index.html",
@@ -29,6 +29,7 @@ const SHELL = [
   "./assets/js/core/holidays.js",
   "./assets/js/core/engine.js",
   "./assets/js/core/achievements.js",
+  "./assets/js/core/planner.js",
   "./assets/js/data/store.js",
   "./assets/js/data/exporters.js",
   "./assets/js/data/msauth.js",
@@ -45,6 +46,7 @@ const SHELL = [
   "./assets/js/ui/views/stats.js",
   "./assets/js/ui/views/reports.js",
   "./assets/js/ui/views/achievements.js",
+  "./assets/js/ui/views/tools.js",
   "./assets/js/ui/views/settings.js",
   "./assets/js/ui/app.js",
 

@@ -15,7 +15,7 @@
   var E = ZK.Engine;
   var I = ZK.I18n;
 
-  var APP_VERSION = "1.1.0";
+  var APP_VERSION = "1.2.0";
 
   ZK.Views = ZK.Views || {};
 
@@ -26,6 +26,7 @@
     { key: "stats",        icon: "chart",        group: "insight", kbd: "4" },
     { key: "reports",      icon: "report",       group: "insight", kbd: "5" },
     { key: "achievements", icon: "trophy",       group: "insight", kbd: "6" },
+    { key: "tools",        icon: "zap",          group: "insight", kbd: "7" },
     { key: "settings",     icon: "settings",     group: "system",  kbd: "," }
   ];
 
@@ -330,8 +331,16 @@
     if (App.view === "week") {
       return I.t("week.kw", { n: T.isoWeek(App.weekAnchor) }) + " · " + T.isoWeekYear(App.weekAnchor);
     }
-    return I.t(App.view === "settings" ? "set.title" : App.view === "stats" ? "stats.title" :
-      App.view === "reports" ? "report.title" : "ach.title");
+    /* Tabelle statt Bedingungskette: eine neue Ansicht ohne Eintrag fiele
+       sonst still auf einen fremden Titel zurück. */
+    var TITLES = {
+      stats: "stats.title",
+      reports: "report.title",
+      achievements: "ach.title",
+      tools: "tools.title",
+      settings: "set.title"
+    };
+    return I.t(TITLES[App.view] || ("nav." + App.view));
   }
 
   function openNav() {
@@ -370,6 +379,59 @@
         : D.esc(text) + '<span class="sec">:' + T.pad2(now.getSeconds()) + "</span>";
     }
     App.tickers.forEach(function (fn) { try { fn(); } catch (e) { /* Ticker isolieren */ } });
+    updateTitle();
+    checkBreakDue();
+  }
+
+  /* ---- Feierabend im Browser-Tab ----------------------------------- */
+  /* Der Grundtitel wird jedes Mal neu gebildet statt gespeichert — sonst
+     bliebe er nach einem Sprachwechsel in der alten Sprache stehen. */
+  function updateTitle() {
+    var baseTitle = I.t("app.name") + " · " + I.t("app.tagline");
+    var s = App.settings();
+    if (s.titleCountdown === false) {
+      if (document.title !== baseTitle) document.title = baseTitle;
+      return;
+    }
+    var res = App.day(T.todayISO());
+    if (!res.running || res.recommendedLeaveTl === null) {
+      if (document.title !== baseTitle) document.title = baseTitle;
+      return;
+    }
+    var left = res.recommendedLeaveTl - T.nowMinutes();
+    var text = left > 0
+      ? res.recommendedLeave + " · " + T.formatDuration(left, "clock")
+      : "✓ " + T.formatSigned(-left, "clock");
+    document.title = text + " — " + I.t("app.name");
+  }
+
+  /* ---- Erinnerung, bevor die Pflichtpause fällig wird ---------------- */
+  var breakWarnedAt = null;
+
+  function checkBreakDue() {
+    var s = App.settings();
+    if (s.breakReminder === false) return;
+
+    var iso = T.todayISO();
+    var res = App.day(iso);
+    if (!res.running) { breakWarnedAt = null; return; }
+
+    var tier = R.nextBreakTier(res.presence, s.breakRuleset, s.customBreakTiers);
+    if (!tier) return;
+    if (res.breakTotal >= tier.require) return;      // Pause ist schon erfasst
+
+    var minutesToTier = tier.over - res.presence;
+    if (minutesToTier > 10 || minutesToTier < 0) return;
+    if (breakWarnedAt === tier.over) return;         // je Stufe nur einmal
+    breakWarnedAt = tier.over;
+
+    D.toast(I.t("toast.breakDue", {
+      v: T.formatDuration(Math.max(1, minutesToTier), "hm"),
+      req: T.formatDuration(tier.require, "hm")
+    }), {
+      tone: "warn", icon: "coffee", duration: 12000,
+      action: { label: I.t("day.startBreak"), onClick: function () { App.stamp("break"); } }
+    });
   }
 
   App.onTick = function (fn) {
@@ -461,6 +523,59 @@
     var filtered = all;
     var index = 0;
 
+    /* Schnellerfassung und Notizsuche direkt aus der Palette */
+    function smartCommands(query) {
+      var out = [];
+      var raw = String(query || "").trim();
+      if (!raw) return out;
+
+      /* „gestern 7:45-16:30 p30“ direkt eintragen */
+      if (ZK.Planner) {
+        var parsed = ZK.Planner.parseQuickEntry(raw, T.todayISO());
+        if (parsed) {
+          var summary = parsed.dates.length === 1
+            ? I.formatDate(parsed.dates[0], { day: "2-digit", month: "2-digit" })
+            : parsed.dates.length + " × ";
+          if (parsed.type) summary += " " + I.t("type." + parsed.type);
+          if (parsed.start) summary += " " + parsed.start + "–" + (parsed.end || "?");
+          out.push({
+            group: I.t("cmd.group.actions"),
+            icon: "zap",
+            label: I.t("cmd.quickEntry", { v: summary.trim() }),
+            run: function () {
+              var patch = ZK.Planner.quickEntryToPatch(parsed, { breakLabel: I.t("day.lunch") });
+              store.setDays(patch, { label: "quick" });
+              App.afterChange();
+              D.toast(I.tn("tools.quickDone", parsed.dates.length), {
+                tone: "plus",
+                action: { label: I.t("common.undo"), onClick: function () { App.undo(); } }
+              });
+            }
+          });
+        }
+      }
+
+      /* Notizen durchsuchen */
+      if (raw.length >= 3) {
+        var needle = raw.toLowerCase();
+        var days = store.allDays();
+        Object.keys(days).sort().reverse().forEach(function (iso) {
+          if (out.length > 8) return;
+          var note = String(days[iso].note || "");
+          if (!note || note.toLowerCase().indexOf(needle) < 0) return;
+          out.push({
+            group: I.t("cmd.noteSearch"),
+            icon: "search",
+            label: I.formatDate(iso, { day: "2-digit", month: "2-digit", year: "numeric" }),
+            sub: note.slice(0, 60),
+            run: function () { App.setDate(iso, { view: "today" }); }
+          });
+        });
+      }
+
+      return out;
+    }
+
     function dateCommands(query) {
       var out = [];
       var iso = null;
@@ -531,11 +646,12 @@
       var q = input.value.trim().toLowerCase();
       if (!q) { filtered = all; index = 0; draw(); return; }
       var dates = dateCommands(input.value);
+      var smart = smartCommands(input.value);
       var scored = all.map(function (c) { return { c: c, s: score(c, q) }; })
         .filter(function (x) { return x.s !== null; })
         .sort(function (a, b) { return a.s - b.s; })
         .map(function (x) { return x.c; });
-      filtered = dates.concat(scored);
+      filtered = dates.concat(smart).concat(scored);
       index = 0;
       draw();
     }
@@ -683,6 +799,7 @@
   };
 
   function markExport() {
+    store.updateSettings({ lastExportAt: new Date().toISOString() });
     var a = store.getAchievements();
     a.exports = (a.exports || 0) + 1;
     store.saveAchievements(a);
@@ -794,6 +911,27 @@
     ZK.OutlookSync.run(App);
   };
 
+  /**
+   * Erinnert daran, eine Sicherung zu ziehen. Der lokale Speicher ist die
+   * einzige Kopie — wer Browserdaten löscht, löscht das Zeitkonto mit.
+   */
+  App.checkBackupReminder = function () {
+    var s = App.settings();
+    var afterDays = s.backupReminderDays || 45;
+    if (!afterDays) return;
+    if (store.dayCount() < 15) return;
+
+    var last = s.lastExportAt ? new Date(s.lastExportAt).getTime() : null;
+    var reference = last || new Date(store.getMeta().createdAt || Date.now()).getTime();
+    var days = Math.floor((Date.now() - reference) / 86400000);
+    if (!isFinite(days) || days < afterDays) return;
+
+    D.toast(I.t("toast.backupDue", { n: days }), {
+      tone: "warn", icon: "save", duration: 14000,
+      action: { label: I.t("toast.backupAction"), onClick: function () { App.exportJSON(); } }
+    });
+  };
+
   App.requestNotifications = function () {
     if (typeof Notification === "undefined") return Promise.resolve("unsupported");
     return Notification.requestPermission().then(function (p) {
@@ -837,6 +975,7 @@
       case "4": App.go("stats"); break;
       case "5": App.go("reports"); break;
       case "6": App.go("achievements"); break;
+      case "7": App.go("tools"); break;
     }
   }
 
@@ -1027,6 +1166,7 @@
       App.scheduleReminder();
       store.makeBackup();
       App.autoSyncOutlook();
+      App.checkBackupReminder();
     }, 320);
   };
 
