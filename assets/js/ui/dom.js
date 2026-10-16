@@ -472,7 +472,19 @@
       }
     });
 
-    on(input, "focus", function () { setTimeout(function () { input.select(); }, 10); });
+    /* Beim Betreten alles markieren — verzögert, sonst hebt der Mausklick die
+       Markierung wieder auf. Aber nur, solange noch nichts getippt wurde:
+       sonst markiert select() die erste Ziffer und die zweite überschreibt
+       sie („1630“ würde zu „06:30“). */
+    on(input, "focus", function () {
+      var typed = false;
+      function mark() { typed = true; }
+      input.addEventListener("keydown", mark);
+      setTimeout(function () {
+        input.removeEventListener("keydown", mark);
+        if (!typed && document.activeElement === input) input.select();
+      }, 10);
+    });
   }
 
   /* ------------------------------------------------------------------ */

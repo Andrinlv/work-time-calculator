@@ -403,10 +403,13 @@
       if (document.title !== baseTitle) document.title = baseTitle;
       return;
     }
-    var left = res.recommendedLeaveTl - (T.nowMinutes() + (res.overnight ? T.DAY : 0));
-    var text = left > 0
-      ? res.recommendedLeave + " · " + T.formatDuration(left, "clock")
-      : "✓ " + T.formatSigned(-left, "clock");
+    // Gleiche Rechnung wie der Hero in „Heute“: ist das Soll erreicht, zählt
+    // die Zeit darüber — nicht der Abstand zu einer überholten Empfehlung
+    var nowTl = T.nowMinutes() + (res.overnight ? T.DAY : 0);
+    var lv = ZK.TodayState.leave(res, nowTl);
+    var text = res.remaining > 0
+      ? T.formatHHMM(lv.leaveTl) + " · " + T.formatDuration(lv.leaveTl - nowTl, "clock")
+      : "✓ " + T.formatSigned(lv.over, "clock");
     document.title = text + " — " + I.t("app.name");
   }
 
@@ -713,62 +716,47 @@
   /* Stempeluhr — von überall aufrufbar                                  */
   /* ================================================================== */
 
+  /* Was ein Stempel ändert, rechnet ZK.TodayState.stampPatch() (getestet);
+     hier wird nur gespeichert und gemeldet. Jeder Stempel ist EIN Schritt,
+     den „Rückgängig“ im Toast vollständig zurücknimmt. */
   App.stamp = function (kind) {
+    // Angefangene Notiz/Pausenbezeichnung zuerst sichern — sonst träfe
+    // „Rückgängig“ den Text statt des Stempels
+    if (ZK.Views.today && ZK.Views.today.flush) ZK.Views.today.flush();
     var iso = App.activeStampDate();
     if (App.date !== iso) App.setDate(iso);
     var rec = store.getDayOrEmpty(iso);
-    var nowStr = T.formatHHMM(T.nowMinutes());
+    var step = ZK.TodayState.stampPatch(rec, kind, T.nowMinutes(), { breakLabel: I.t("day.break") });
+    var undo = { label: I.t("common.undo"), onClick: function () { App.undo(); } };
 
-    if (kind === "in") {
-      if (rec.start && rec.end) {
-        /* Schon gegangen und wieder da: die Lücke wird zur Pause, der Tag läuft weiter */
-        var anchor = T.parseHHMM(rec.start);
-        var gap = T.intervalMinutes(T.parseHHMM(rec.end), T.nowMinutes(), anchor);
-        if (gap > 0 && gap < 12 * 60) {
-          var withGap = (rec.breaks || []).concat([{ id: "b" + Date.now(), label: I.t("day.break"), start: rec.end, end: nowStr, paid: false }]);
-          App.saveDay(iso, { end: "", breaks: withGap }, { label: "resume" });
-          D.toast(I.t("toast.resumed", { time: nowStr, v: App.fmt(gap) }), {
-            icon: "play",
-            action: { label: I.t("common.undo"), onClick: function () { App.undo(); } }
-          });
-          return;
-        }
-      }
-      if (rec.start) { D.toast(App.t("day.clockIn") + ": " + rec.start, { tone: "warn" }); return; }
-      App.saveDay(iso, { start: nowStr });
-      D.toast(I.t("toast.stampedIn", { time: nowStr }), { icon: "play" });
+    if (step.action === "none") {
+      D.toast(I.t(step.reason === "out" ? "day.clockOut" : "day.clockIn") + ": " + step.time, { tone: "warn" });
       return;
     }
+    App.saveDay(iso, step.patch, { label: "stamp" });
 
-    if (kind === "out") {
-      if (!rec.start) { App.stamp("in"); return; }
-      App.saveDay(iso, { end: nowStr });
+    if (step.action === "in") {
+      D.toast(I.t("toast.stampedIn", { time: step.time }), { icon: "play", action: undo });
+    } else if (step.action === "resume") {
+      D.toast(step.gap > 0
+        ? I.t("toast.resumed", { time: step.time, v: App.fmt(step.gap) })
+        : I.t("toast.resumedNoGap", { time: step.time }), { icon: "play", action: undo });
+    } else if (step.action === "out") {
       var res = App.day(iso);
-      D.toast(I.t("toast.stampedOut", { time: nowStr }), {
+      D.toast(I.t("toast.stampedOut", { time: step.time }), {
         icon: "stop",
-        sub: I.t("day.net") + " " + App.fmt(res.net) + " · " + I.t("day.balance") + " " + App.fmtSigned(res.balance),
-        tone: res.balance >= 0 ? "plus" : undefined
+        sub: (step.closedBreak ? I.t("toast.breakClosed") + " · " : "") +
+          I.t("day.net") + " " + App.fmt(res.net) + " · " + I.t("day.balance") + " " + App.fmtSigned(res.balance),
+        tone: res.balance >= 0 ? "plus" : undefined,
+        action: undo
       });
-      return;
-    }
-
-    if (kind === "break") {
-      var breaks = (rec.breaks || []).slice();
-      var open = null;
-      for (var i = 0; i < breaks.length; i++) {
-        if (breaks[i].start && !breaks[i].end) { open = i; break; }
-      }
-      if (open !== null) {
-        breaks[open] = Object.assign({}, breaks[open], { end: nowStr });
-        App.saveDay(iso, { breaks: breaks });
-        var mins = T.intervalMinutes(T.parseHHMM(breaks[open].start), T.parseHHMM(nowStr), T.parseHHMM(rec.start || breaks[open].start));
-        D.toast(I.t("toast.breakEnded", { v: App.fmt(mins) }), { icon: "coffee" });
-      } else {
-        if (!rec.start) App.stamp("in");
-        breaks.push({ id: "b" + Date.now(), label: I.t("day.break"), start: nowStr, end: "", paid: false });
-        App.saveDay(iso, { breaks: breaks });
-        D.toast(I.t("toast.breakStarted"), { icon: "coffee", tone: "warn" });
-      }
+    } else if (step.action === "breakEnd") {
+      D.toast(I.t("toast.breakEnded", { v: App.fmt(step.minutes) }), { icon: "coffee", action: undo });
+    } else if (step.action === "breakStart") {
+      D.toast(I.t("toast.breakStarted"), {
+        icon: "coffee", tone: "warn", action: undo,
+        sub: step.stampedIn ? I.t("toast.stampedIn", { time: step.time }) : undefined
+      });
     }
   };
 

@@ -8,7 +8,7 @@
 .clock-pill {
   display: inline-flex;
   align-items: baseline;
-  gap: 4px;
+  gap: 0;
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
   font-size: var(--fs-sm);
@@ -63,18 +63,33 @@
   .header-title .s { font-size: var(--fs-sm); color: var(--ink); font-weight: 800; letter-spacing: .02em; text-transform: none; }
 }
 
+/* Lebenszeichen eines laufenden Tages. Animiert werden nur transform und
+   opacity eines Pseudo-Elements: das erledigt der Compositor, statt dass
+   der Hauptthread den ganzen Tag 60-mal pro Sekunde neu malt. */
 .live-dot {
+  position: relative;
   width: 8px; height: 8px;
   border-radius: 50%;
   background: var(--plus);
-  box-shadow: 0 0 0 0 color-mix(in srgb, var(--plus) 60%, transparent);
-  animation: zk-live 2s infinite;
   flex: none;
 }
+.live-dot::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: inherit;
+  animation: zk-live 2s var(--ease-out) infinite;
+}
+/* Pause läuft, Tab verborgen oder weniger Bewegung gewünscht: Punkt ruht */
+.live-dot.paused::after,
+.zk-hidden .live-dot::after { animation: none; opacity: 0; }
+@media (prefers-reduced-motion: reduce) {
+  .live-dot::after { animation: none; opacity: 0; }
+}
 @keyframes zk-live {
-  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--plus) 55%, transparent) }
-  70%  { box-shadow: 0 0 0 8px transparent }
-  100% { box-shadow: 0 0 0 0 transparent }
+  from { transform: scale(1);   opacity: .55; }
+  to   { transform: scale(2.8); opacity: 0; }
 }
 
 /* ==========================================================================
@@ -112,14 +127,47 @@
   letter-spacing: -.02em;
   white-space: nowrap;
 }
-.daynav input[type="date"] {
-  border: 1px solid var(--line-strong);
-  background: var(--surface);
-  border-radius: var(--r-sm);
-  padding: 9px 11px;
-  font-size: var(--fs-sm);
-  font-weight: 650;
-  cursor: pointer;
+.daynav .date-btn .db-text { display: flex; flex-direction: column; min-width: 0; text-align: left; }
+.daynav .date-btn .dow { white-space: nowrap; }
+.daynav .date-btn .s { display: none; }
+.daynav .date-btn .ic { flex: none; }
+
+/* Das native Datumsfeld liegt unsichtbar über der Schaltfläche — nie ein
+   zweites, sichtbares Feld daneben. Ohne showPicker() (ältere Browser)
+   nimmt es den Tipp direkt entgegen. */
+.date-pick { position: relative; display: flex; min-width: 0; }
+.date-pick .date-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+.date-pick.tap-native .date-input { pointer-events: auto; cursor: pointer; }
+
+.head-actions .lbl-short { display: none; }
+
+/* Telefon: Navigation in einer Zeile, Aktionen in einer zweiten —
+   keine verwaisten Knöpfe auf eigenen Zeilen */
+@media (max-width: 560px) {
+  .today-head { gap: var(--gap-3); margin-bottom: var(--gap-4); }
+  .today-head .daynav { flex-wrap: nowrap; width: 100%; gap: 6px; }
+  .today-head .date-pick { flex: 1 1 auto; }
+  .daynav .date-btn { min-width: 0; width: 100%; padding: 7px 12px; justify-content: space-between; }
+  .today-head .today-btn { flex: none; }
+  .today-head .head-actions { width: 100%; flex-wrap: nowrap; }
+  .head-actions .lbl-long { display: none; }
+  .head-actions .lbl-short { display: inline; }
+  .head-actions .clear-day { margin-left: auto; }
+}
+@media (max-width: 400px) {
+  .daynav .date-btn { gap: 8px; padding: 7px 10px; }
+  .daynav .date-btn .l { display: none; }
+  .daynav .date-btn .s { display: inline; }
 }
 
 /* ==========================================================================
@@ -139,6 +187,8 @@
   padding: var(--gap-6);
   position: relative;
   overflow: hidden;
+  /* Eigener Stapelkontext: der Zierring liegt HINTER dem Inhalt */
+  isolation: isolate;
 }
 .hero::after {
   content: "";
@@ -149,6 +199,7 @@
   border: 44px solid var(--brand-100);
   opacity: .35;
   pointer-events: none;
+  z-index: -1;
 }
 [data-theme="dark"] .hero::after { border-color: var(--brand-800); opacity: .5; }
 
@@ -161,15 +212,21 @@
   width: 100%;
   max-width: 250px;
   margin-inline: auto;
+  /* Schriftgrössen im Ring richten sich nach dem Ring, nicht nach dem Fenster */
+  container-type: inline-size;
 }
-.ring-wrap svg { width: 100%; height: auto; max-width: 250px; overflow: visible; }
+.ring-wrap svg { display: block; width: 100%; height: auto; max-width: 250px; overflow: visible; }
 .ring-track { stroke: var(--ring-track); }
 .ring-arc {
   stroke-linecap: round;
-  transition: stroke-dashoffset .9s var(--ease-out), stroke .35s var(--ease);
+  transition: stroke-dashoffset .9s var(--ease-out), stroke .35s var(--ease), transform .9s var(--ease-out), opacity .2s;
   transform: rotate(-90deg);
   transform-origin: 50% 50%;
 }
+/* Runde Enden malen sonst auch bei 0 % einen Punkt */
+.ring-arc.is-empty { opacity: 0; }
+/* Zweite Runde über dem Soll: dunkler als der volle Ring darunter */
+.ring-arc.ring-over { stroke: color-mix(in srgb, var(--chart-plus) 60%, var(--ink)); }
 .ring-center {
   position: absolute;
   inset: 0;
@@ -180,27 +237,43 @@
   gap: 1px;
   text-align: center;
   pointer-events: none;
-  /* Der Text muss innerhalb des Rings bleiben, auch wenn „8 h 30 min“
-     länger ist als „8:30“. Deshalb Innenabstand plus Umbruch. */
-  padding: 0 21%;
+  /* Der Text muss in den INNEREN Ring passen (rund 60 % des Durchmessers) */
+  padding: 0 22%;
 }
 .ring-center .big {
   font-family: var(--font-mono);
-  font-size: clamp(19px, 4.4vw, 31px);
+  font-size: clamp(16px, 4.4vw, 28px);
+  font-size: clamp(12px, 10.5cqw, 28px);
   font-weight: 800;
   letter-spacing: -.035em;
   font-variant-numeric: tabular-nums;
   line-height: 1.06;
-  text-wrap: balance;
+  white-space: nowrap;
 }
-.ring-center .pct { font-size: var(--fs-2xs); font-weight: 800; color: var(--ink-3); letter-spacing: .09em; }
+.ring-center .big.long { font-size: clamp(12px, 8.6cqw, 23px); }
+.ring-center .pct {
+  font-size: var(--fs-2xs);
+  font-weight: 700;
+  color: var(--ink-3);
+  letter-spacing: .03em;
+  white-space: nowrap;
+}
+.ring-center .pct b { font-weight: 800; color: var(--ink-2); }
 .ring-center .cap {
-  font-size: var(--fs-3xs);
+  font-size: 9px;
   font-weight: 850;
-  letter-spacing: .14em;
+  letter-spacing: .08em;
   text-transform: uppercase;
   color: var(--ink-3);
   margin-top: 3px;
+  white-space: nowrap;
+}
+/* Kleiner Ring (Telefon): nur Zahl und Prozent */
+@container (max-width: 160px) {
+  .ring-center .pl, .ring-center .cap { display: none; }
+  .ring-center { padding: 0 14%; }
+  .ring-center .big { font-size: 12px; }
+  .ring-center .big.long { font-size: 10.5px; }
 }
 
 .hero-main { display: flex; flex-direction: column; gap: var(--gap-4); min-width: 0; }
@@ -225,14 +298,103 @@
   gap: 12px;
   flex-wrap: wrap;
 }
-.hero-time .unit { font-size: var(--fs-lg); font-weight: 700; color: var(--ink-3); letter-spacing: 0; }
+.hero-time .unit { font-size: var(--fs-lg); font-weight: 700; color: var(--ink-3); letter-spacing: 0; white-space: nowrap; }
+.hero-time .ht-main.word { font-family: var(--font-sans); font-size: clamp(28px, 4.6vw, 44px); letter-spacing: -.035em; }
+/* Dauer („8 h 24 min“) ist länger als eine Uhrzeit */
+.hero-time .ht-main.dur { font-size: clamp(32px, 4.4vw, 52px); }
+.hero-time .tone-mute { color: var(--ink-3); }
+.hero-time .tag { align-self: center; }
+.hero-eyebrow.tone-minus { color: var(--minus-ink); }
+.hero-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--c, var(--ink-3));
+}
+.hero-dot.live, .hero-dot.plus { background: var(--plus); }
+.hero-dot.break { background: var(--warn); }
+.hero-dot.minus { background: var(--minus); }
 .hero-note { font-size: var(--fs-sm); color: var(--ink-2); line-height: 1.55; max-width: 56ch; }
-.hero-note b { font-weight: 800; color: var(--ink); }
+.hero-note b { font-weight: 800; color: var(--ink); white-space: nowrap; }
+.hero-note .tag { margin-top: 6px; }
 .hero-actions { display: flex; gap: var(--gap-2); flex-wrap: wrap; }
+.hero-fix { display: flex; gap: var(--gap-2); flex-wrap: wrap; align-items: center; }
+.hero-fix .input.time { width: 108px; text-align: center; font-family: var(--font-mono); font-weight: 750; }
+.hero .shift-link { align-self: flex-start; }
 
-@media (max-width: 860px) {
-  .hero { grid-template-columns: minmax(0, 1fr); gap: var(--gap-5); padding: var(--gap-5); }
-  .ring-wrap svg { max-width: 200px; }
+/* Tablet: Ring etwas kleiner, Text daneben */
+@media (max-width: 1000px) {
+  .hero { grid-template-columns: minmax(0, 190px) minmax(0, 1fr); gap: var(--gap-5); padding: var(--gap-5); }
+  .ring-wrap, .ring-wrap svg { max-width: 190px; }
+}
+
+/* Telefon hochkant: kleiner Ring neben der Feierabendzeit, darunter Status
+   und Stempeltasten — die Hauptaktion steht so auf dem ersten Bildschirm. */
+@media (max-width: 720px) {
+  .hero {
+    grid-template-columns: 112px minmax(0, 1fr);
+    grid-template-areas:
+      "ring eyebrow"
+      "ring time"
+      "note note"
+      "fix fix"
+      "link link"
+      "strip strip"
+      "stamp stamp"
+      "shifts shifts";
+    column-gap: var(--gap-4);
+    row-gap: 0;
+    align-items: start;
+    padding: var(--gap-4);
+  }
+  .hero-main { display: contents; }
+  .ring-wrap { grid-area: ring; max-width: 112px; align-self: center; }
+  .ring-wrap svg { max-width: 112px; }
+  .hero-eyebrow { grid-area: eyebrow; align-self: end; margin-bottom: 6px; letter-spacing: .1em; }
+  .hero-time { grid-area: time; align-self: start; font-size: clamp(34px, 11vw, 46px); }
+  .hero-time .ht-main.word { font-size: clamp(24px, 7.5vw, 32px); }
+  .hero-time .ht-main.dur { font-size: clamp(24px, 7.5vw, 32px); }
+  .hero-time { row-gap: 2px; }
+  /* „8 h 38 min / 8 h 24 min“ passt neben dem kleinen Ring nur kleiner */
+  .hero-time .unit { font-size: var(--fs-sm); white-space: normal; }
+  .hero-note { grid-area: note; margin-top: var(--gap-3); }
+  .hero-fix { grid-area: fix; margin-top: var(--gap-3); }
+  .hero .shift-link { grid-area: link; margin-top: var(--gap-3); justify-self: start; }
+  .hero .running-strip { grid-area: strip; margin-top: var(--gap-3); }
+  .hero .stamp-bar { grid-area: stamp; margin-top: var(--gap-3); }
+  .hero .shift-quick { grid-area: shifts; margin-top: var(--gap-3); }
+  .hero::after { width: 220px; height: 220px; border-width: 30px; right: -90px; bottom: -110px; }
+}
+
+/* Telefon quer: Ring, Zeit und Tasten in einer Zeile — sonst bleibt
+   zwischen Kopfzeile und Tab-Leiste nur Platz für den halben Ring. */
+@media (max-width: 1000px) and (max-height: 520px) and (orientation: landscape) {
+  .hero {
+    grid-template-columns: 96px minmax(0, 1fr) auto;
+    grid-template-areas:
+      "ring eyebrow stamp"
+      "ring time stamp"
+      "note note note"
+      "fix fix fix"
+      "link link link"
+      "strip strip strip"
+      "shifts shifts shifts";
+    column-gap: var(--gap-4);
+    row-gap: 0;
+    align-items: start;
+    padding: var(--gap-4);
+  }
+  .hero-main { display: contents; }
+  .ring-wrap { grid-area: ring; max-width: 96px; align-self: center; }
+  .ring-wrap svg { max-width: 96px; }
+  .hero-eyebrow { grid-area: eyebrow; align-self: end; margin-bottom: 6px; }
+  .hero-time { grid-area: time; align-self: start; font-size: 40px; }
+  .hero-note { grid-area: note; margin-top: var(--gap-3); }
+  .hero-fix { grid-area: fix; margin-top: var(--gap-3); }
+  .hero .shift-link { grid-area: link; margin-top: var(--gap-3); justify-self: start; }
+  .hero .running-strip { grid-area: strip; margin-top: var(--gap-3); }
+  .hero .stamp-bar { grid-area: stamp; align-self: center; margin-top: 0; }
+  .hero .shift-quick { grid-area: shifts; margin-top: var(--gap-3); }
 }
 
 /* ==========================================================================
@@ -281,6 +443,51 @@
 }
 .running-strip.on-break { border-color: var(--warn-line); background: var(--warn-soft); color: var(--warn-ink); }
 .running-strip .t { font-family: var(--font-mono); font-size: var(--fs-lg); font-weight: 850; }
+.running-strip { row-gap: 4px; }
+.running-strip .rs-right { margin-left: auto; }
+.running-strip.on-break .live-dot { background: var(--warn); }
+
+/* Nebenaktion: gleiche Grösse, aber ruhig — die Farbe trägt nur das Symbol */
+.stamp-btn .ic { flex: none; }
+.stamp-btn.secondary { background: var(--surface); border-color: var(--line-strong); color: var(--ink); }
+.stamp-btn.secondary:hover { border-color: var(--ink-3); }
+.stamp-btn.secondary.k-go .ic    { color: var(--plus-ink); }
+.stamp-btn.secondary.k-stop .ic  { color: var(--minus-ink); }
+.stamp-btn.secondary.k-pause .ic { color: var(--warn-ink); }
+
+/* Schichtvorlagen neben „Kommen“ */
+.shift-quick { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.shift-quick .sq-label { font-size: var(--fs-xs); font-weight: 700; color: var(--ink-3); margin-right: 2px; }
+.shift-quick .chip { padding: 6px 11px; font-size: var(--fs-2xs); min-height: 30px; }
+.shift-quick .chip .ic { width: 13px; height: 13px; }
+
+@media (max-width: 720px) {
+  .hero .stamp-bar { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .hero .stamp-bar.single { grid-template-columns: minmax(0, 1fr); }
+  .hero .stamp-btn {
+    justify-content: center;
+    min-height: 50px;
+    padding: 10px 12px;
+    font-size: var(--fs-sm);
+    line-height: 1.2;
+    text-align: center;
+  }
+  .running-strip .rs-right { margin-left: 0; flex-basis: 100%; }
+  /* Schichtvorlagen als wischbare Zeile statt drei Umbruchzeilen */
+  .hero .shift-quick {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+    margin-inline: calc(-1 * var(--gap-4));
+    padding-inline: var(--gap-4);
+  }
+  .hero .shift-quick::-webkit-scrollbar { display: none; }
+  .hero .shift-quick > * { flex: none; }
+}
+@media (max-width: 1000px) and (max-height: 520px) and (orientation: landscape) {
+  .hero .stamp-bar { display: flex; flex-wrap: nowrap; }
+  .hero .stamp-btn { min-height: 46px; padding: 10px 16px; white-space: nowrap; }
+}
 
 /* ==========================================================================
    TAGES-ZEITSTRAHL
@@ -309,14 +516,36 @@
   width: 1px;
   background: var(--grid-line);
 }
+.timeline .tl-layer { position: absolute; inset: 0; }
+/* Beschriftung liegt über der Jetzt-Linie, mit eigenem Grund — lesbar bleibt sie immer */
 .timeline .tl-hour span {
   position: absolute;
   bottom: 2px;
   left: 3px;
+  z-index: 4;
+  padding: 0 2px;
+  border-radius: 3px;
+  background: var(--surface-inset);
   font-size: 9px;
   font-weight: 700;
   color: var(--ink-3);
   font-family: var(--font-mono);
+}
+.timeline .tl-start {
+  position: absolute;
+  top: 10px; bottom: 10px;
+  width: 0;
+  border-left: 2px solid var(--brand-600);
+  z-index: 2;
+}
+.timeline .tl-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: var(--fs-xs);
+  font-weight: 650;
+  color: var(--ink-3);
 }
 .timeline .tl-now {
   position: absolute;
@@ -360,10 +589,15 @@
 /* ==========================================================================
    PAUSENZEILEN
    ========================================================================== */
+/* Die Eingabekarte ist ein Container: ob die Pausenzeile einzeilig passt,
+   hängt an der Kartenbreite, nicht am Fenster (zweispaltig ab 721 px ist
+   die Karte schmaler als auf dem Telefon). */
+.day-input { container-type: inline-size; container-name: dayinput; }
 .break-rows { display: flex; flex-direction: column; gap: var(--gap-2); }
 .break-row {
   display: grid;
-  grid-template-columns: minmax(0, 1.2fr) 108px 108px 88px 40px;
+  grid-template-columns: minmax(0, 1fr) minmax(72px, 92px) minmax(72px, 92px) auto auto 36px;
+  grid-template-areas: "lbl st en dur paid del";
   gap: var(--gap-2);
   align-items: center;
   padding: 9px 10px;
@@ -372,25 +606,65 @@
   border: 1px solid var(--line);
   animation: zk-slide-in .25s var(--ease-out) both;
 }
+.break-row .break-label { grid-area: lbl; }
+.break-row .break-start { grid-area: st; }
+.break-row .break-end { grid-area: en; }
+.break-row .paid-toggle { grid-area: paid; }
+.break-row .del { grid-area: del; }
 .break-row .dur {
+  grid-area: dur;
+  min-width: 46px;
   font-family: var(--font-mono);
   font-size: var(--fs-xs);
   font-weight: 750;
   color: var(--ink-3);
   text-align: center;
+  white-space: nowrap;
 }
 .break-row .input { min-height: 38px; }
-@media (max-width: 720px) {
+@container dayinput (max-width: 500px) {
   .break-row {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 40px;
-    grid-template-areas: "lbl lbl del" "st en dur";
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto 36px;
+    grid-template-areas: "lbl lbl paid del" "st en dur dur";
   }
-  .break-row > :nth-child(1) { grid-area: lbl }
-  .break-row > :nth-child(2) { grid-area: st }
-  .break-row > :nth-child(3) { grid-area: en }
-  .break-row > :nth-child(4) { grid-area: dur }
-  .break-row > :nth-child(5) { grid-area: del }
 }
+@supports not (container-type: inline-size) {
+  @media (max-width: 1300px) {
+    .break-row {
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto 36px;
+      grid-template-areas: "lbl lbl paid del" "st en dur dur";
+    }
+  }
+}
+
+/* Bezahlte Pause (z. B. Kurzpause laut GAV): wird nicht abgezogen */
+.paid-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 32px;
+  padding: 0 10px;
+  border-radius: var(--r-pill);
+  border: 1px dashed var(--line-strong);
+  background: transparent;
+  color: var(--ink-3);
+  font-size: var(--fs-2xs);
+  font-weight: 750;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: all var(--t-fast);
+}
+.paid-toggle .ic { display: none; width: 12px; height: 12px; }
+.paid-toggle:hover { border-color: var(--ink-3); color: var(--ink-2); }
+.paid-toggle[aria-pressed="true"] { border-style: solid; border-color: var(--plus-line); background: var(--plus-soft); color: var(--plus-ink); }
+.paid-toggle[aria-pressed="true"] .ic { display: inline-block; }
+
+.break-empty { font-size: var(--fs-xs); margin-top: 4px; }
+
+/* Kennzahl als Wort („✓ Soll erreicht“) statt Zahl: kleiner, damit sie in
+   schmalen Karten auf einer Zeile bleibt */
+.kpi .k-val.k-word { font-size: var(--fs-lg); font-weight: 800; letter-spacing: -.01em; line-height: 1.35; }
+
 
 /* ==========================================================================
    KALENDER
