@@ -220,16 +220,39 @@
   cursor: pointer;
 }
 
-.input-wrap { position: relative; display: flex; align-items: center; }
+/* Zahl mit Einheit: Die Einheit steht als eigenes Element neben der Zahl
+   im gemeinsamen Rahmen — so überlappt sie nie, egal wie lang sie ist. */
+.input-wrap {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--line-input);
+  background: var(--surface);
+  transition: border-color var(--t-fast), box-shadow var(--t-fast);
+}
+.input-wrap:hover { border-color: var(--ink-3); }
+.input-wrap:focus-within { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), 0 0 0 4.5px var(--focus-ring); }
+.input-wrap:has(.input.invalid) { border-color: var(--minus); }
+.input-wrap .input {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 40px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  padding-right: 4px;
+}
+.input-wrap .input:focus { box-shadow: none; }
 .input-wrap .suffix {
-  position: absolute;
-  right: 11px;
+  flex: none;
+  padding: 0 12px 0 4px;
   font-size: var(--fs-2xs);
   font-weight: 700;
   color: var(--ink-3);
+  white-space: nowrap;
   pointer-events: none;
 }
-.input-wrap .input { padding-right: 46px; }
 
 /* ---- Schalter --------------------------------------------------------- */
 .switch {

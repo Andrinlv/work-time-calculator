@@ -66,7 +66,7 @@
     }
     return ZK.MsAuth.signIn({ prompt: "select_account", returnTo: "#/settings/" + App.date })
       .catch(function (err) {
-        D.toast(String(err.message || err), { tone: "minus", duration: 8000 });
+        D.toast(errorText(err, "ol.err.signIn"), { tone: "minus", duration: 8000 });
         return false;
       });
   }
@@ -146,9 +146,7 @@
     }).catch(function (err) {
       running = false;
       if (dismiss) dismiss();
-      var msg = String(err && err.message ? err.message : err);
-      if (err && err.status === 401) msg = I.t("ol.sessionExpired");
-      if (!opts.silent) D.toast(msg, { tone: "minus", duration: 9000 });
+      if (!opts.silent) D.toast(errorText(err, "ol.err.sync"), { tone: "minus", duration: 9000 });
       return null;
     });
   }
@@ -159,21 +157,45 @@
   }
 
   /* ------------------------------------------------------------------ */
+  /* Texte                                                               */
+  /* ------------------------------------------------------------------ */
+
+  /** Outlook-Status („showAs“) so benannt, wie ihn Outlook selbst anzeigt. */
+  function showAsLabel(value) {
+    var key = "ol.showAs." + value;
+    var text = I.t(key);
+    return text === key ? String(value) : text;
+  }
+
+  /**
+   * Verständliche Fehlermeldung statt roher Browser- oder Graph-Texte.
+   * `fallbackKey` beschreibt, was gerade nicht geklappt hat.
+   */
+  function errorText(err, fallbackKey) {
+    var status = err && err.status;
+    if (status === 401) return I.t("ol.sessionExpired");
+    if (status === 403) return I.t("ol.err.forbidden");
+    if (status === 429) return I.t("ol.err.busy");
+    if (typeof navigator !== "undefined" && navigator.onLine === false) return I.t("ol.err.offline");
+    if (err && (err.name === "TypeError" || /fetch|network/i.test(String(err.message || "")))) return I.t("ol.err.network");
+    return I.t(fallbackKey || "ol.err.sync") + (status ? " (HTTP " + status + ")" : "");
+  }
+
+  /* ------------------------------------------------------------------ */
   /* Vorschau                                                            */
   /* ------------------------------------------------------------------ */
 
   function showPreview(App, plan) {
-    var body = D.el("div.col");
+    var body = D.el("div.ol-preview");
 
-    /* Kopfzeile mit Zahlen */
-    var summary = D.el("div.grid-3.mb-4");
-    kpi(summary, I.t("ol.changes"), String(plan.changes.length), "", plan.changes.length ? "info" : "");
-    kpi(summary, I.t("ol.unchanged"), String(plan.unchanged), "");
-    kpi(summary, I.t("ol.protected"), String(plan.protectedDays.length), "", plan.protectedDays.length ? "warn" : "");
+    /* Kopfzeile mit Zahlen — auch auf dem Telefon in einer Reihe */
+    var summary = D.el("div.ol-kpis");
+    kpi(summary, I.t("ol.changes"), plan.changes.length, plan.changes.length ? "info" : "");
+    kpi(summary, I.t("ol.unchanged"), plan.unchanged, "");
+    kpi(summary, I.t("ol.protected"), plan.protectedDays.length, plan.protectedDays.length ? "warn" : "");
     body.appendChild(summary);
 
-    body.appendChild(D.el("p.muted", {
-      style: { fontSize: "12px", marginBottom: "10px" },
+    body.appendChild(D.el("p.ol-range", {
       text: I.t("ol.rangeInfo", {
         from: I.formatDate(plan.range.from, { day: "2-digit", month: "2-digit", year: "numeric" }),
         to: I.formatDate(plan.range.to, { day: "2-digit", month: "2-digit", year: "numeric" }),
@@ -181,22 +203,20 @@
       })
     }));
 
+    var selected = Object.create(null);
+    var apply;
     if (!plan.changes.length) {
       var ok = D.el("div.notice.plus");
       ok.innerHTML = D.icon("check") + "<div><strong>" + D.esc(I.t("ol.upToDate")) + "</strong></div>";
       body.appendChild(ok);
     } else {
-      var list = D.el("div", {
-        style: { maxHeight: "42vh", overflowY: "auto", border: "1px solid var(--line)", borderRadius: "var(--r-md)" }
-      });
-      var selected = Object.create(null);
-      plan.changes.forEach(function (change, i) { selected[i] = true; });
-
+      /* Eine Liste ohne eigenen Rollbalken — gerollt wird nur der Dialog */
+      var list = D.el("div.ol-changes");
       plan.changes.forEach(function (change, i) {
-        list.appendChild(changeRow(App, change, i, selected));
+        selected[i] = true;
+        list.appendChild(changeRow(change, i, selected, function () { updateApply(); }));
       });
       body.appendChild(list);
-      plan._selected = selected;
     }
 
     /* Geschützte Tage benennen — Vertrauen entsteht durch Sichtbarkeit */
@@ -222,7 +242,7 @@
     }
 
     var cancel = D.el("button.btn", { type: "button", text: I.t("common.cancel") });
-    var apply = D.el("button.btn.primary", {
+    apply = D.el("button.btn.primary", {
       type: "button",
       text: I.t("ol.applyN", { n: plan.changes.length }),
       disabled: plan.changes.length === 0
@@ -235,59 +255,63 @@
       size: "wide",
       footer: [cancel, apply]
     });
+    m.box.classList.add("ol-modal");
+
+    function chosen() {
+      return plan.changes.filter(function (c, i) { return selected[i]; });
+    }
+    function updateApply() {
+      var n = chosen().length;
+      apply.textContent = I.t("ol.applyN", { n: n });
+      apply.disabled = n === 0;
+    }
 
     cancel.addEventListener("click", function () { m.close(); });
     apply.addEventListener("click", function () {
-      var chosen = plan.changes.filter(function (c, i) { return plan._selected[i]; });
+      var list = chosen();
       m.close();
-      applyChanges(App, chosen);
+      applyChanges(App, list);
     });
   }
 
-  function changeRow(App, change, index, selected) {
-    var row = D.el("label", {
-      style: {
-        display: "grid",
-        gridTemplateColumns: "26px 92px minmax(0,1fr) auto",
-        gap: "10px",
-        alignItems: "center",
-        padding: "9px 12px",
-        borderBottom: "1px solid var(--line-faint)",
-        cursor: "pointer"
-      }
-    });
+  function changeRow(change, index, selected, onToggle) {
+    var row = D.el("label.ol-change");
 
-    var box = D.el("input", { type: "checkbox", checked: true, style: { width: "16px", height: "16px" } });
-    box.addEventListener("change", function () { selected[index] = box.checked; });
+    var box = D.el("input", { type: "checkbox", checked: true });
+    box.addEventListener("change", function () {
+      selected[index] = box.checked;
+      row.classList.toggle("off", !box.checked);
+      onToggle();
+    });
     row.appendChild(box);
 
     var wd = T.weekdayOf(change.date);
-    row.appendChild(D.el("div", {
-      html: "<b style='font-size:12.5px'>" + D.esc(I.weekdayName(wd, "short")) + " " +
-        D.esc(I.formatDate(change.date, { day: "2-digit", month: "2-digit" })) + "</b>"
+    row.appendChild(D.el("span.ol-date", {
+      text: String(I.weekdayName(wd, "short")).replace(/\.$/, "") + " " + I.formatDate(change.date, { day: "2-digit", month: "2-digit" })
     }));
 
-    var desc = D.el("div", { style: { minWidth: "0", fontSize: "12.5px" } });
+    var desc = D.el("span.ol-desc");
+    var subject = change.subject ? "<span class='ol-subj'>" + D.esc(change.subject) + "</span>" : "";
     if (change.action === "clear") {
-      desc.innerHTML = "<span class='tone-minus'>" + D.esc(I.t("ol.willClear")) + "</span>" +
+      desc.innerHTML = "<b class='tone-minus'>" + D.esc(I.t("ol.willClear")) + "</b>" +
         (change.before && change.before.type
-          ? " <span class='muted'>(" + D.esc(I.t("type." + change.before.type)) + ")</span>" : "");
+          ? "<span class='ol-subj'>" + D.esc(I.t("type." + change.before.type)) + "</span>" : "");
     } else if (change.action === "location") {
-      desc.innerHTML = D.icon("home") + " <b>" + D.esc(I.t("loc." + change.location)) + "</b>" +
-        (change.subject ? " <span class='muted'>· " + D.esc(change.subject) + "</span>" : "");
+      desc.innerHTML = D.icon("home") + "<b>" + D.esc(I.t("loc." + change.location)) + "</b>" + subject;
     } else {
       desc.innerHTML =
         "<b style='color:" + R.dayType(change.type).color + "'>" + D.esc(I.t("type." + change.type)) + "</b>" +
-        (change.factor < 1 ? " <span class='tag'>" + Math.round(change.factor * 100) + " %</span>" : "") +
-        (change.subject ? " <span class='muted'>· " + D.esc(change.subject) + "</span>" : "");
+        (change.factor < 1 ? "<span class='tag'>" + Math.round(change.factor * 100) + " %</span>" : "") +
+        subject;
     }
+    if (change.subject) row.title = change.subject;
     row.appendChild(desc);
 
     var tag = change.reason === "new" ? I.t("ol.tagNew")
       : change.reason === "update" ? I.t("ol.tagUpdate")
         : change.reason === "homeoffice" ? I.t("loc.home")
           : I.t("ol.tagRemoved");
-    row.appendChild(D.el("span.tag", { text: tag }));
+    row.appendChild(D.el("span.tag.ol-tag", { text: tag }));
 
     return row;
   }
@@ -308,11 +332,10 @@
     });
   }
 
-  function kpi(host, title, value, sub, tone) {
-    var node = D.el("div.kpi" + (tone ? ".accent-" + tone : ""));
-    node.innerHTML = '<div class="k-title">' + D.esc(title) + "</div>" +
-      '<div class="k-val mono">' + D.esc(value) + "</div>" +
-      (sub ? '<div class="k-sub">' + D.esc(sub) + "</div>" : "");
+  function kpi(host, title, value, tone) {
+    var node = D.el("div.ol-kpi" + (tone ? "." + tone : ""));
+    node.innerHTML = '<span class="k-title">' + D.esc(title) + "</span>" +
+      '<b class="k-val mono">' + D.esc(String(value)) + "</b>";
     host.appendChild(node);
   }
 
@@ -323,14 +346,16 @@
   function chooseCalendars(App) {
     var s = settingsOf(App);
     var body = D.el("div.col");
-    body.appendChild(D.el("p.muted", { text: I.t("ol.calendarsHint"), style: { fontSize: "13px" } }));
-    var list = D.el("div.col", { style: { gap: "6px" } });
+    body.appendChild(D.el("p.muted.ol-hint", { text: I.t("ol.calendarsHint") }));
+    var list = D.el("div.ol-cals");
     body.appendChild(list);
-    list.appendChild(D.el("div.skeleton", { style: { height: "44px" } }));
+    list.appendChild(D.el("div.skeleton", { style: { height: "52px" } }));
+    list.appendChild(D.el("div.skeleton", { style: { height: "52px" } }));
 
     var cancel = D.el("button.btn", { type: "button", text: I.t("common.cancel") });
     var save = D.el("button.btn.primary", { type: "button", text: I.t("common.save"), disabled: true });
     var m = D.modal({ title: I.t("ol.calendars"), body: body, footer: [cancel, save] });
+    m.box.classList.add("ol-modal");
     cancel.addEventListener("click", function () { m.close(); });
 
     var chosen = (s.calendarIds || ["primary"]).slice();
@@ -340,27 +365,32 @@
       save.disabled = false;
       calendars.forEach(function (cal) {
         var id = cal.isDefaultCalendar ? "primary" : cal.id;
-        var wrap = D.el("label.switch", { style: { justifyContent: "space-between", width: "100%" } });
-        var input = D.el("input", { type: "checkbox", checked: chosen.indexOf(id) >= 0 });
+        /* Name links, Schalter rechts — wie jede Einstellungszeile */
+        var row = D.el("label.ol-cal", { title: cal.name || "" });
+        var text = D.el("span.ol-cal-name", {
+          html: "<b>" + D.esc(cal.name || "—") + "</b>" +
+            (cal.isDefaultCalendar ? "<small>" + D.esc(I.t("ol.defaultCalendar")) + "</small>" : "")
+        });
+        row.appendChild(text);
+        var sw = D.el("span.switch");
+        var input = D.el("input", { type: "checkbox", checked: chosen.indexOf(id) >= 0, "aria-label": cal.name || "—" });
         input.addEventListener("change", function () {
           var at = chosen.indexOf(id);
           if (input.checked && at < 0) chosen.push(id);
           if (!input.checked && at >= 0) chosen.splice(at, 1);
         });
-        wrap.appendChild(input);
-        wrap.appendChild(D.el("span.track"));
-        wrap.appendChild(D.el("span.lbl", {
-          html: D.esc(cal.name || "—") + (cal.isDefaultCalendar ? "<small>" + D.esc(I.t("ol.defaultCalendar")) + "</small>" : "")
-        }));
-        list.appendChild(wrap);
+        sw.appendChild(input);
+        sw.appendChild(D.el("span.track"));
+        row.appendChild(sw);
+        list.appendChild(row);
       });
       if (!calendars.length) {
-        list.appendChild(D.el("p.muted", { text: I.t("common.empty"), style: { fontSize: "13px" } }));
+        list.appendChild(D.el("p.muted.ol-hint", { text: I.t("ol.noCalendars") }));
       }
     }).catch(function (err) {
       D.clear(list);
       var box = D.el("div.notice.minus");
-      box.innerHTML = D.icon("alert") + "<div>" + D.esc(String(err.message || err)) + "</div>";
+      box.innerHTML = D.icon("alert") + "<div>" + D.esc(errorText(err, "ol.err.calendars")) + "</div>";
       list.appendChild(box);
     });
 
@@ -380,50 +410,58 @@
     var rules = s.rules.map(function (r) { return Object.assign({}, r); });
 
     var body = D.el("div.col");
-    body.appendChild(D.el("p.muted", { text: I.t("ol.rulesHint"), style: { fontSize: "13px" } }));
+    body.appendChild(D.el("p.muted.ol-hint", { text: I.t("ol.rulesHint") }));
+    var grid = D.el("div.ol-rules");
+    body.appendChild(grid);
 
-    rules.forEach(function (rule) {
-      var card = D.el("div", {
-        style: { border: "1px solid var(--line)", borderRadius: "var(--r-sm)", padding: "12px" }
-      });
+    rules.forEach(function (rule, i) {
+      var card = D.el("div.ol-rule");
+      /* Reine Statusregel (z. B. „Abwesend“ ohne Stichwort): kein Stichwortfeld */
+      var statusOnly = !rule.keywords && rule.showAs && rule.showAs.length;
+      var statusText = (rule.showAs || []).map(function (v) { return I.t("ol.quoted", { v: showAsLabel(v) }); }).join(", ");
 
-      var head = D.el("div.row", { style: { justifyContent: "space-between", marginBottom: "8px" } });
-      var label = rule.locationOnly
-        ? I.t("loc." + rule.locationOnly)
-        : I.t("type." + rule.type);
+      var head = D.el("label.ol-rule-head");
+      var label = rule.locationOnly ? I.t("loc." + rule.locationOnly) : I.t("type." + rule.type);
       head.appendChild(D.el("b", {
         text: label,
-        style: { fontSize: "13px", color: rule.locationOnly ? "var(--ink)" : R.dayType(rule.type).color }
+        style: { color: rule.locationOnly ? "var(--ink)" : R.dayType(rule.type).color }
       }));
-
-      var toggle = D.el("label.switch");
-      var input = D.el("input", { type: "checkbox", checked: rule.enabled !== false });
-      input.addEventListener("change", function () { rule.enabled = input.checked; });
+      var toggle = D.el("span.switch");
+      var input = D.el("input", { type: "checkbox", checked: rule.enabled !== false, "aria-label": label });
+      input.addEventListener("change", function () {
+        rule.enabled = input.checked;
+        card.classList.toggle("off", !input.checked);
+      });
       toggle.appendChild(input);
       toggle.appendChild(D.el("span.track"));
       head.appendChild(toggle);
       card.appendChild(head);
+      card.classList.toggle("off", rule.enabled === false);
 
-      if (rule.showAs && rule.showAs.length) {
-        card.appendChild(D.el("div", {
-          style: { fontSize: "11px", color: "var(--ink-3)", marginBottom: "6px" },
-          text: I.t("ol.showAsMatch", { v: rule.showAs.join(", ") })
+      if (statusOnly) {
+        card.appendChild(D.el("p.ol-rule-note", {
+          text: I.t(rule.allDayOnly ? "ol.ruleStatusAllDay" : "ol.ruleStatus", { status: statusText })
         }));
+      } else {
+        if (statusText) {
+          card.appendChild(D.el("p.ol-rule-note", { text: I.t("ol.showAsMatch", { v: statusText }) }));
+        }
+        var field = D.el("div.field");
+        var id = "ol-kw-" + (rule.id || i);
+        field.appendChild(D.el("label", { text: I.t("ol.keywords"), "for": id }));
+        var kw = D.el("input.input", {
+          type: "text",
+          id: id,
+          value: (rule.keywords || []).join(", "),
+          placeholder: I.t("ol.keywordsPlaceholder")
+        });
+        kw.addEventListener("change", function () {
+          rule.keywords = kw.value.split(",").map(function (k) { return k.trim(); }).filter(Boolean);
+        });
+        field.appendChild(kw);
+        card.appendChild(field);
       }
-
-      var field = D.el("div.field");
-      field.appendChild(D.el("label", { text: I.t("ol.keywords") }));
-      var kw = D.el("input.input", {
-        type: "text",
-        value: (rule.keywords || []).join(", "),
-        placeholder: I.t("ol.keywordsPlaceholder")
-      });
-      kw.addEventListener("change", function () {
-        rule.keywords = kw.value.split(",").map(function (k) { return k.trim(); }).filter(Boolean);
-      });
-      field.appendChild(kw);
-      card.appendChild(field);
-      body.appendChild(card);
+      grid.appendChild(card);
     });
 
     var reset = D.el("button.btn.ghost.left", { type: "button", text: I.t("common.reset") });
@@ -431,11 +469,13 @@
     var save = D.el("button.btn.primary", { type: "button", text: I.t("common.save") });
 
     var m = D.modal({ title: I.t("ol.rules"), body: body, size: "wide", footer: [reset, cancel, save] });
+    m.box.classList.add("ol-modal");
     cancel.addEventListener("click", function () { m.close(); });
     reset.addEventListener("click", function () {
       saveSettings(App, { rules: CS.DEFAULT_RULES.map(function (r) { return Object.assign({}, r); }) });
       m.close();
       App.renderView();
+      D.toast(I.t("ol.rulesReset"));
     });
     save.addEventListener("click", function () {
       saveSettings(App, { rules: rules });
@@ -453,8 +493,11 @@
     signIn: signIn,
     signOut: signOut,
     run: run,
+    showPreview: showPreview,
     chooseCalendars: chooseCalendars,
     editRules: editRules,
+    showAsLabel: showAsLabel,
+    errorText: errorText,
     deviceTimeZone: deviceTimeZone
   };
 })(typeof self !== "undefined" ? self : this);
