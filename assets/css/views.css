@@ -782,6 +782,26 @@
   color: var(--ink-2);
 }
 
+.safety { display: grid; gap: var(--gap-2); }
+.safety-row {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-3);
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+  font-size: var(--fs-sm);
+  color: var(--ink-2);
+}
+.safety-row .safety-ic { display: inline-flex; color: var(--warn); flex: none; }
+.safety-row.ok .safety-ic { color: var(--plus); }
+.safety-row .safety-text { flex: 1; min-width: 0; line-height: 1.45; }
+.safety-row .safety-text b { display: block; color: var(--ink); }
+.safety-row .safety-text small { display: block; font-size: var(--fs-xs); color: var(--ink-3); }
+.safety-row .btn { flex: none; }
+.safety-hint { font-size: var(--fs-xs); color: var(--ink-3); line-height: 1.5; margin: 2px 2px 0; }
+
 .storage-meter {
   display: flex;
   align-items: center;

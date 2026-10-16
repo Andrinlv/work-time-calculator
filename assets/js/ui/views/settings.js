@@ -443,12 +443,18 @@
       });
     }
 
+    /* Datensicherheit: dauerhafter Speicher, automatische Sicherung */
+    data.body.appendChild(D.el("div.section-title.mt-4", { text: I.t("set.safety") }));
+    var safety = D.el("div.safety");
+    data.body.appendChild(safety);
+    renderSafety(safety, App);
+
     var diag = App.store.diagnostics();
     var diagBox = D.el("div.storage-meter.mt-4");
     diagBox.innerHTML = D.icon("info") +
       "<span>" + D.esc(I.t("set.storage")) + ": <b>" + Math.round(diag.bytes / 1024) + " KB</b> · " +
-      D.esc(diag.days + " " + I.t("common.days")) + " · Schema v" + diag.schema +
-      (diag.volatile ? " · <b style='color:var(--warn)'>nur im Arbeitsspeicher</b>" : "") + "</span>";
+      D.esc(I.tn("common.nDays", diag.days)) + " · Schema v" + diag.schema +
+      (diag.volatile ? " · <b style='color:var(--warn)'>" + D.esc(I.t("set.volatile")) + "</b>" : "") + "</span>";
     data.body.appendChild(diagBox);
 
     var resetBtn = D.el("button.btn.minus.block.mt-4", { type: "button", html: D.icon("trash") + "<span>" + D.esc(I.t("set.resetAll")) + "</span>" });
@@ -647,6 +653,65 @@
   /* ==================================================================== */
   /* Bausteine                                                             */
   /* ==================================================================== */
+
+  function renderSafety(host, App) {
+    D.clear(host);
+    var info = App.storageInfo || {};
+
+    /* Dauerhafter Speicher */
+    var persist = D.el("div.safety-row" + (info.persisted ? ".ok" : ""));
+    persist.appendChild(D.el("span.safety-ic", { html: D.icon(info.persisted ? "shield" : "alert") }));
+    persist.appendChild(D.el("span.safety-text", { text: info.persisted ? I.t("set.persistOn") : I.t("set.persistOff") }));
+    if (!info.persisted && info.supported !== false && navigator.storage && navigator.storage.persist) {
+      var protect = D.el("button.btn.sm", { type: "button", text: I.t("set.persistBtn") });
+      protect.addEventListener("click", function () {
+        App.requestPersistence(true).then(function (ok) {
+          if (!ok) D.toast(I.t("set.persistDenied"), { tone: "warn", duration: 7000 });
+          renderSafety(host, App);
+        });
+      });
+      persist.appendChild(protect);
+    }
+    host.appendChild(persist);
+
+    /* Automatische Sicherungen */
+    [["", I.t("set.autoBackup")], ["prev", I.t("set.prevBackup")]].forEach(function (pair) {
+      var backup = App.store.readBackup(pair[0]);
+      if (!backup && pair[0] === "prev") return;
+      var row = D.el("div.safety-row");
+      row.appendChild(D.el("span.safety-ic", { html: D.icon("save") }));
+      var label = backup
+        ? I.tn("set.autoBackupAt", backup.days, { date: I.formatDate(String(backup.at).slice(0, 10), { day: "numeric", month: "short", year: "numeric" }) + " " + String(new Date(backup.at).toTimeString()).slice(0, 5) })
+        : I.t("set.autoBackupNone");
+      row.appendChild(D.el("span.safety-text", { html: "<b>" + D.esc(pair[1]) + "</b><small>" + D.esc(label) + "</small>" }));
+      if (backup) {
+        var btn = D.el("button.btn.sm", { type: "button", text: I.t("set.restore") });
+        btn.addEventListener("click", function () {
+          D.confirmDialog({
+            title: I.t("set.restore"),
+            message: I.t("set.restoreConfirm", { date: I.formatDate(String(backup.at).slice(0, 10), { day: "numeric", month: "long", year: "numeric" }), n: backup.days }),
+            okLabel: I.t("set.restore"),
+            cancelLabel: I.t("common.cancel")
+          }).then(function (ok) { if (ok) App.restoreBackup(pair[0]); });
+        });
+        row.appendChild(btn);
+      }
+      host.appendChild(row);
+    });
+
+    /* iPhone/iPad im Browser: Safari räumt nach sieben Tagen ohne Besuch */
+    var ios = /iP(hone|ad|od)/.test(navigator.userAgent || "") || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+    if (ios && !App.isStandalone()) {
+      host.appendChild(D.el("p.safety-hint", { text: I.t("set.iosHint") }));
+    }
+
+    if (App.refreshStorageInfo && !host.dataset.refreshed) {
+      host.dataset.refreshed = "1";
+      App.refreshStorageInfo().then(function (next) {
+        if (next.persisted !== info.persisted && host.isConnected) renderSafety(host, App);
+      });
+    }
+  }
 
   function section(title, iconName) {
     var node = D.el("section.card");

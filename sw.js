@@ -76,7 +76,9 @@ self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches.keys()
       .then((keys) => Promise.all(
-        keys.filter((k) => k !== CACHE_VERSION).map((k) => caches.delete(k))
+        // Nur eigene, ältere Caches löschen: auf github.io teilen sich alle
+        // Projektseiten eines Kontos denselben Ursprung und damit den Cache-Speicher.
+        keys.filter((k) => k.indexOf("zeitkonto-") === 0 && k !== CACHE_VERSION).map((k) => caches.delete(k))
       ))
       .then(() => self.clients.claim())
   );

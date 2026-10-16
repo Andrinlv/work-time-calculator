@@ -261,3 +261,157 @@ test("Ein voller Speicher meldet einen Fehler statt zu schweigen", () => {
   assert.equal(errors.length, 1);
   assert.equal(store.getDay("2026-08-03").start, "08:00", "im Arbeitsspeicher bleibt der Wert erhalten");
 });
+
+/* ---------------------------------------------------------------------- */
+/* Mehrere Fenster teilen sich einen Speicher                              */
+/* ---------------------------------------------------------------------- */
+
+function twoWindows() {
+  const backend = S.memoryBackend();
+  const a = S.createStore({ backend: backend, defaultSettings: R.defaultSettings });
+  a.load();
+  a.setDay("2026-08-03", { start: "08:00", end: "17:00" }, { immediate: true });
+  const b = S.createStore({ backend: backend, defaultSettings: R.defaultSettings });
+  b.load();
+  return { backend, a, b };
+}
+
+test("Zwei Fenster überschreiben sich nicht gegenseitig", () => {
+  const { backend, a, b } = twoWindows();
+  a.setDay("2026-08-04", { start: "07:30", end: "16:30" });
+  a.flush();
+  // Fenster B kennt den 4.8. noch nicht und speichert einen anderen Tag
+  b.setDay("2026-08-05", { start: "09:00", end: "18:00" });
+  b.flush();
+
+  const saved = JSON.parse(backend.getItem(S.KEY));
+  assert.equal(saved.days["2026-08-04"].start, "07:30", "Eingabe aus Fenster A bleibt erhalten");
+  assert.equal(saved.days["2026-08-05"].start, "09:00", "Eingabe aus Fenster B ist gespeichert");
+  assert.equal(b.getDay("2026-08-04").start, "07:30", "B hat den Stand von A übernommen");
+});
+
+test("Beim selben Tag gewinnt die jüngste Eingabe", () => {
+  const { backend, a, b } = twoWindows();
+  a.setDay("2026-08-03", { end: "18:00" }); a.flush();
+  b.setDay("2026-08-03", { end: "19:00" }); b.flush();
+  assert.equal(JSON.parse(backend.getItem(S.KEY)).days["2026-08-03"].end, "19:00");
+});
+
+test("Löschen in einem Fenster wird vom anderen nicht rückgängig gemacht", () => {
+  const { backend, a, b } = twoWindows();
+  a.deleteDay("2026-08-03"); a.flush();
+  b.updateSettings({ lang: "fr" }); b.flush();
+  const saved = JSON.parse(backend.getItem(S.KEY));
+  assert.equal(saved.days["2026-08-03"], undefined, "der gelöschte Tag bleibt gelöscht");
+  assert.equal(saved.settings.lang, "fr");
+});
+
+test("Einstellungen aus beiden Fenstern werden zusammengeführt", () => {
+  const { backend, a, b } = twoWindows();
+  a.updateSettings({ holidayRegion: "CH-BE" }); a.flush();
+  b.updateSettings({ theme: "dark" }); b.flush();
+  const saved = JSON.parse(backend.getItem(S.KEY));
+  assert.equal(saved.settings.holidayRegion, "CH-BE");
+  assert.equal(saved.settings.theme, "dark");
+});
+
+test("syncExternal übernimmt fremde Änderungen und meldet sie", () => {
+  const { backend, a, b } = twoWindows();
+  const events = [];
+  b.subscribe((evt) => events.push(evt));
+  a.setDay("2026-08-06", { start: "06:00" }); a.flush();
+  assert.equal(b.syncExternal(backend.getItem(S.KEY)), true);
+  assert.equal(b.getDay("2026-08-06").start, "06:00");
+  const ext = events.find((e) => e.type === "external");
+  assert.ok(ext, "Ereignis für die Oberfläche");
+  assert.deepEqual(ext.days, ["2026-08-06"]);
+  assert.equal(b.syncExternal(backend.getItem(S.KEY)), false, "derselbe Stand löst nichts zweimal aus");
+});
+
+test("Rückgängig nimmt nur die eigenen Änderungen zurück", () => {
+  const { backend, a, b } = twoWindows();
+  b.setDay("2026-08-10", { start: "08:00" }); b.flush();
+  a.setDay("2026-08-11", { start: "07:00" }); a.flush();
+  b.syncExternal(backend.getItem(S.KEY));
+  assert.equal(b.getDay("2026-08-11").start, "07:00");
+  b.undo(); b.flush();
+  const saved = JSON.parse(backend.getItem(S.KEY));
+  assert.equal(saved.days["2026-08-10"], undefined, "B's eigene Eingabe ist zurückgenommen");
+  assert.equal(saved.days["2026-08-11"].start, "07:00", "A's Eingabe bleibt stehen");
+});
+
+test("Abzeichen gehen beim Zusammenführen nicht verloren", () => {
+  const { backend, a, b } = twoWindows();
+  a.saveAchievements({ earned: { first: "2026-08-03" }, xp: 10, bestStreak: 1, seen: {} }); a.flush();
+  b.saveAchievements({ earned: { week: "2026-08-07" }, xp: 30, bestStreak: 3, seen: {} }); b.flush();
+  const ach = JSON.parse(backend.getItem(S.KEY)).achievements;
+  assert.ok(ach.earned.first && ach.earned.week);
+  assert.equal(ach.xp, 30);
+});
+
+test("Import im Modus „replace“ setzt sich gegen ein anderes Fenster durch", () => {
+  const { backend, a, b } = twoWindows();
+  a.setDay("2026-08-12", { start: "08:00" }); a.flush();
+  b.importState({ days: { "2026-09-01": { start: "07:00" } } }, "replace"); b.flush();
+  const saved = JSON.parse(backend.getItem(S.KEY));
+  assert.deepEqual(Object.keys(saved.days), ["2026-09-01"]);
+});
+
+test("Daten einer neueren App-Version werden nicht zurückgestuft", () => {
+  const backend = S.memoryBackend();
+  backend.setItem(S.KEY, JSON.stringify({ version: S.SCHEMA + 1, settings: {}, days: { "2026-08-03": { start: "08:00", future: { x: 1 } } } }));
+  const store = S.createStore({ backend: backend, defaultSettings: R.defaultSettings });
+  store.load();
+  assert.equal(store.isNewerSchema(), true);
+  store.setDay("2026-08-04", { start: "09:00" }, { immediate: true });
+  const saved = JSON.parse(backend.getItem(S.KEY));
+  assert.equal(saved.version, S.SCHEMA + 1, "Versionsnummer bleibt");
+  assert.deepEqual(saved.days["2026-08-03"].future, { x: 1 }, "unbekannte Felder bleiben erhalten");
+});
+
+test("Ein leerer Stand überschreibt nie eine gefüllte Sicherung", () => {
+  const backend = S.memoryBackend();
+  const store = S.createStore({ backend: backend, defaultSettings: R.defaultSettings });
+  store.load();
+  store.setDay("2026-08-03", { start: "08:00" }, { immediate: true });
+  assert.equal(store.makeBackup(), true);
+  // Datenschaden: Hauptstand unlesbar, App startet leer
+  backend.setItem(S.KEY, "{kaputt");
+  const after = S.createStore({ backend: backend, defaultSettings: R.defaultSettings });
+  after.load();
+  assert.equal(after.dayCount(), 0);
+  assert.equal(after.makeBackup(), false, "leerer Stand wird nicht gesichert");
+  assert.equal(after.readBackup().data.days["2026-08-03"].start, "08:00", "die gute Sicherung ist noch da");
+  assert.equal(after.readBackup().days, 1);
+  assert.equal(after.readCorrupt(), "{kaputt");
+});
+
+test("Sicherung vom Vortag bleibt als zweite Stufe erhalten", () => {
+  const backend = S.memoryBackend();
+  backend.setItem("zeitkonto:backup", JSON.stringify({ at: "2026-08-01T10:00:00.000Z", data: { days: { "2026-07-31": { start: "08:00" } } } }));
+  const store = S.createStore({ backend: backend, defaultSettings: R.defaultSettings });
+  store.load();
+  store.setDay("2026-08-03", { start: "08:00" }, { immediate: true });
+  store.makeBackup();
+  assert.ok(store.readBackup("prev").data.days["2026-07-31"], "Vortagssicherung");
+  assert.ok(store.readBackup().data.days["2026-08-03"], "aktuelle Sicherung");
+});
+
+test("Bei vollem Speicher wird zuerst die alte Sicherung geopfert", () => {
+  const mem = S.memoryBackend();
+  let limit = true;
+  const backend = {
+    getItem: (k) => mem.getItem(k),
+    removeItem: (k) => { mem.removeItem(k); limit = false; },
+    setItem: (k, v) => { if (k === S.KEY && limit) { const e = new Error("quota"); e.name = "QuotaExceededError"; throw e; } mem.setItem(k, v); }
+  };
+  mem.setItem("zeitkonto:backup:prev", "x".repeat(100));
+  const store = S.createStore({ backend: backend, defaultSettings: R.defaultSettings });
+  store.load();
+  const errors = [];
+  store.subscribe((evt) => { if (evt.type === "error") errors.push(evt); });
+  store.setDay("2026-08-03", { start: "08:00" }, { immediate: true });
+  assert.equal(errors.length, 0, "nach dem Aufräumen klappt das Speichern");
+  assert.equal(mem.getItem("zeitkonto:backup:prev"), null);
+  assert.ok(JSON.parse(mem.getItem(S.KEY)).days["2026-08-03"]);
+});

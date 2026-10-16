@@ -1038,6 +1038,127 @@
       window.navigator.standalone === true;
   };
 
+  /* ================================================================== */
+  /* Mehrere Fenster                                                     */
+  /* ================================================================== */
+
+  /* Ein anderes Fenster hat gespeichert. Während jemand hier tippt, wird
+     nicht neu gezeichnet (das würde Fokus und Cursor stehlen) — das holt
+     der nächste Fokuswechsel nach. */
+  var externalPending = false;
+
+  function isTyping() {
+    var el = document.activeElement;
+    return !!(el && /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) && el.type !== "checkbox" && el.type !== "radio");
+  }
+
+  function onExternalChange(evt) {
+    if (evt.newer) warnNewerVersion();
+    if (evt.settings) { App.applyLanguage(); App.applyTheme(); App.applyDensity(); }
+    if (isTyping()) { externalPending = true; return; }
+    externalPending = false;
+    App.renderChrome();
+    App.renderView();
+    D.toast(I.t("toast.otherWindow"), { icon: "refresh", duration: 2600 });
+  }
+
+  document.addEventListener("focusout", function () {
+    if (!externalPending) return;
+    setTimeout(function () {
+      if (!externalPending || isTyping()) return;
+      externalPending = false;
+      App.renderChrome();
+      App.renderView();
+    }, 0);
+  });
+
+  var newerWarned = false;
+  function warnNewerVersion() {
+    if (newerWarned) return;
+    newerWarned = true;
+    D.toast(I.t("toast.newerVersion"), {
+      tone: "warn", icon: "refresh", duration: 15000,
+      action: { label: I.t("toast.reload"), onClick: function () { store.flush(); location.reload(); } }
+    });
+  }
+
+  /* ================================================================== */
+  /* Dauerhafter Speicher                                                */
+  /* ================================================================== */
+
+  /* Ohne diese Zusage darf der Browser localStorage bei Speichermangel
+     räumen. Chrome, Edge und Safari entscheiden still; Firefox fragt den
+     Nutzer — dort nur auf ausdrücklichen Klick in den Einstellungen. */
+  App.storageInfo = { supported: false, persisted: false };
+
+  App.refreshStorageInfo = function () {
+    if (!(navigator.storage && navigator.storage.persisted)) return Promise.resolve(App.storageInfo);
+    App.storageInfo.supported = true;
+    return navigator.storage.persisted().then(function (p) {
+      App.storageInfo.persisted = !!p;
+      return App.storageInfo;
+    }).catch(function () { return App.storageInfo; });
+  };
+
+  App.requestPersistence = function (userInitiated) {
+    if (!(navigator.storage && navigator.storage.persist)) return Promise.resolve(false);
+    var prompts = /firefox/i.test(navigator.userAgent || "");
+    if (prompts && !userInitiated) return Promise.resolve(false);
+    return navigator.storage.persist().then(function (ok) {
+      App.storageInfo.supported = true;
+      App.storageInfo.persisted = !!ok;
+      return !!ok;
+    }).catch(function () { return false; });
+  };
+
+  /* ================================================================== */
+  /* Beschädigte Daten                                                   */
+  /* ================================================================== */
+
+  App.restoreBackup = function (which) {
+    var backup = store.readBackup(which);
+    if (!backup || !backup.data) return false;
+    store.importState(backup.data, "replace");
+    store.updateMeta({ recoveredFromCorruption: false, onboarded: true });
+    App.applyTheme(); App.applyDensity(); App.applyLanguage();
+    App.afterChange();
+    D.toast(I.t("toast.restored"), {
+      tone: "plus", icon: "check",
+      action: { label: I.t("common.undo"), onClick: function () { App.undo(); } }
+    });
+    return true;
+  };
+
+  function offerRecovery() {
+    var which = store.readBackup() ? "" : "prev";
+    var backup = store.readBackup(which);
+    var body = D.el("div");
+    body.appendChild(D.el("p", { text: I.t("recover.text"), style: { marginBottom: "12px", lineHeight: "1.55" } }));
+    body.appendChild(D.el("p.muted", {
+      text: backup ? I.t("recover.backup", { date: I.formatDate(backup.at.slice(0, 10), { day: "numeric", month: "long", year: "numeric" }), n: backup.days })
+        : I.t("recover.noBackup"),
+      style: { lineHeight: "1.55" }
+    }));
+    var fresh = D.el("button.btn", { type: "button", text: I.t("recover.fresh") });
+    var download = D.el("button.btn", { type: "button", html: D.icon("download") + "<span>" + D.esc(I.t("recover.download")) + "</span>" });
+    var footer = [fresh, download];
+    var restore = null;
+    if (backup) {
+      restore = D.el("button.btn.primary", { type: "button", html: D.icon("refresh") + "<span>" + D.esc(I.t("recover.restore")) + "</span>" });
+      footer.push(restore);
+    }
+    var m = D.modal({ title: I.t("recover.title"), body: body, footer: footer, size: "slim" });
+    fresh.addEventListener("click", function () {
+      store.updateMeta({ recoveredFromCorruption: false });
+      m.close();
+      App.runOnboarding();
+    });
+    download.addEventListener("click", function () {
+      D.download("zeitkonto-rohdaten.txt", store.readCorrupt() || "", "text/plain");
+    });
+    if (restore) restore.addEventListener("click", function () { m.close(); App.restoreBackup(which); });
+  }
+
   function setupServiceWorker() {
     if (!("serviceWorker" in navigator)) return;
     if (location.protocol === "file:") return;   // lokal geöffnete Datei braucht keinen SW
@@ -1048,6 +1169,8 @@
         if (!sw) return;
         sw.addEventListener("statechange", function () {
           if (sw.state === "installed" && navigator.serviceWorker.controller) {
+            // Wird die App das nächste Mal verlassen, lädt sie still die neue Version
+            App.updateReady = true;
             D.toast(I.t("toast.updateReady"), {
               icon: "refresh",
               duration: 12000,
@@ -1116,7 +1239,12 @@
 
     window.addEventListener("beforeunload", function () { store.flush(); });
     document.addEventListener("visibilitychange", function () {
-      if (document.visibilityState === "hidden") store.flush();
+      if (document.visibilityState === "hidden") {
+        store.flush();
+        // Neue Version im Hintergrund übernehmen: gespeichert ist alles,
+        // Ansicht und Datum stehen in der Adresse — der Wechsel ist unsichtbar.
+        if (App.updateReady && !isTyping()) { App.updateReady = false; location.reload(); }
+      }
       else { App.renderChrome(); if (App.view === "today") App.renderView(); }
     });
 
@@ -1125,7 +1253,9 @@
 
     store.subscribe(function (evt) {
       if (evt.type === "error") D.toast(I.t("toast.storageFull"), { tone: "minus", duration: 9000 });
+      if (evt.type === "external") onExternalChange(evt);
     });
+    if (store.isNewerSchema()) warnNewerVersion();
 
     var resizeRedraw = D.debounce(function () {
       if (["stats", "week", "reports"].indexOf(App.view) >= 0) App.renderView();
@@ -1161,7 +1291,10 @@
     }
 
     setTimeout(function () {
-      App.runOnboarding();
+      if (store.dayCount() > 0) App.requestPersistence(false);
+      else App.refreshStorageInfo();
+      if (store.getMeta().recoveredFromCorruption) offerRecovery();
+      else App.runOnboarding();
       App.checkAchievements();
       App.scheduleReminder();
       store.makeBackup();
