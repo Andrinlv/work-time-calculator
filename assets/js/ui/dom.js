@@ -211,7 +211,7 @@
     head.innerHTML =
       '<div><h2>' + esc(opts.title || "") + "</h2>" +
       (opts.sub ? '<div class="sub">' + esc(opts.sub) + "</div>" : "") + "</div>";
-    var closeBtn = el("button.btn.ghost.icon.sm.close", { type: "button", "aria-label": "Schliessen", html: icon("x") });
+    var closeBtn = el("button.btn.ghost.icon.sm.close", { type: "button", "aria-label": ZK.I18n ? ZK.I18n.t("common.close") : "×", html: icon("x") });
     closeBtn.addEventListener("click", function () { close(); });
     head.appendChild(closeBtn);
 
@@ -277,7 +277,7 @@
   function confirmDialog(opts) {
     return new Promise(function (resolve) {
       var decided = false;
-      var cancel = el("button.btn", { type: "button", text: opts.cancelLabel || "Abbrechen" });
+      var cancel = el("button.btn", { type: "button", text: opts.cancelLabel || (ZK.I18n ? ZK.I18n.t("common.cancel") : "×") });
       var ok = el("button.btn" + (opts.danger ? ".minus" : ".primary"), { type: "button", text: opts.okLabel || "OK" });
       var m = modal({
         title: opts.title,

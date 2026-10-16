@@ -567,7 +567,7 @@
     var box = D.el("div.empty");
     box.innerHTML =
       '<div class="rings"><i></i><i></i></div>' +
-      "<p>" + D.esc(message || "Noch keine Daten für dieses Diagramm.") + "</p>";
+      "<p>" + D.esc(message || ZK.I18n.t("chart.empty")) + "</p>";
     container.appendChild(box);
     return box;
   }

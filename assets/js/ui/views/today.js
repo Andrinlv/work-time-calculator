@@ -535,7 +535,7 @@
 
       /* --- Kennzahlen --- */
       D.clear(refs.kpiGrid);
-      kpi(I.t("day.net"), App.fmt(res.net), res.netRaw !== res.net ? "roh " + App.fmt(res.netRaw) : App.fmt(res.presence) + " " + I.t("day.presence").toLowerCase(), "");
+      kpi(I.t("day.net"), App.fmt(res.net), res.netRaw !== res.net ? I.t("day.raw", { v: App.fmt(res.netRaw) }) : App.fmt(res.presence) + " " + I.t("day.presence").toLowerCase(), "");
       kpi(I.t("day.balance"), App.fmtSigned(res.balance), I.t("day.target") + " " + App.fmt(res.target), res.balance > 0 ? "plus" : res.balance < 0 ? "minus" : "");
       kpi(I.t("day.breakTotal"), App.fmt(res.breakTotal),
         res.autoDeducted ? "+" + App.fmt(res.autoDeducted) + " " + I.t("day.autoDeducted").toLowerCase() : I.t("day.requiredBreak") + " " + App.fmt(res.requiredBreak),

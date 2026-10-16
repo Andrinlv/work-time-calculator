@@ -370,8 +370,7 @@
     } else {
       var hint = D.el("div.notice.info");
       hint.innerHTML = D.icon("info") +
-        "<div><strong>Safari / iOS</strong><div class='sub'>Teilen-Symbol → „Zum Home-Bildschirm“. " +
-        "Android/Chrome: Menü → „App installieren“.</div></div>";
+        "<div><strong>Safari / iOS</strong><div class='sub'>" + D.esc(I.t("set.installHowto")) + "</div></div>";
       inst.body.appendChild(hint);
     }
     grid.appendChild(inst.node);
