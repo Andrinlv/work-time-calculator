@@ -819,6 +819,103 @@
 }
 
 /* ==========================================================================
+   WERKZEUGE
+   ========================================================================== */
+/* ---- Schnellerfassung ------------------------------------------------ */
+.qe-hint { font-size: 12.5px; margin-bottom: 12px; }
+.qe-preview:not(:empty) { margin-top: var(--gap-3); display: grid; gap: var(--gap-2); }
+.qe-read { font-size: var(--fs-xs); color: var(--ink-2); line-height: 1.45; }
+.qe-read span { color: var(--ink-3); font-weight: 650; }
+
+.qe-msg {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 9px 11px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--minus-line);
+  background: var(--minus-soft);
+  color: var(--minus);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  line-height: 1.45;
+}
+.qe-msg .ic { flex: none; width: 15px; height: 15px; margin-top: 1px; }
+
+.qe-list { display: grid; gap: 6px; }
+.qe-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 3px 10px;
+  align-items: center;
+  padding: 8px 10px;
+  border-radius: var(--r-sm);
+  border: 1px solid transparent;
+  background: var(--surface-2);
+  font-size: var(--fs-xs);
+}
+.qe-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+.qe-date { font-weight: 800; white-space: nowrap; color: var(--ink); }
+.qe-bal { font-weight: 800; text-align: right; white-space: nowrap; }
+.qe-change {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 6px;
+  min-width: 0;
+  color: var(--ink-2);
+  line-height: 1.45;
+}
+.qe-change > span { min-width: 0; overflow-wrap: anywhere; }
+.qe-before { color: var(--ink-3); }
+.qe-after { font-weight: 650; color: var(--ink); }
+.qe-to { display: inline-flex; align-items: baseline; gap: 6px; min-width: 0; }
+.qe-arrow { display: inline-flex; align-self: center; flex: none; color: var(--ink-3); }
+.qe-arrow .ic { width: 12px; height: 12px; }
+.qe-row.is-over { border-color: var(--warn-line); background: var(--warn-soft); }
+.qe-row.is-kept .qe-after { color: var(--ink-3); font-weight: 550; text-decoration: line-through; }
+.qe-row.is-skip { background: transparent; border-color: var(--line); }
+.qe-row.is-skip .qe-date { color: var(--ink-3); }
+.qe-more { font-size: var(--fs-xs); color: var(--ink-3); }
+.qe-over { align-items: flex-start; padding: 2px 0; }
+.qe-over .lbl small { margin-top: 2px; }
+.qe-card .chip.mono { font-size: var(--fs-2xs); }
+
+/* Schnellerfassung in der Befehlspalette: Hinweis, dass erst geprüft wird */
+.palette-item .sub.warn { color: var(--warn); }
+.palette-item.warn .ic { color: var(--warn); }
+
+/* ---- Gleitzeit-Planer ----------------------------------------------- */
+.field .hint.err { color: var(--minus); font-weight: 600; }
+.pl-example { font-size: 12.5px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+
+/* ---- Brückentage ------------------------------------------------------ */
+.bridge-list { display: grid; gap: 10px; }
+.bridge-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 13px 15px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+}
+.bridge-info { min-width: 0; }
+.bridge-head { font-size: 14px; font-weight: 800; letter-spacing: -.02em; color: var(--ink); }
+.bridge-when { font-size: 12px; color: var(--ink-3); margin-top: 3px; line-height: 1.45; }
+.bridge-dates { font-size: 11px; color: var(--ink-3); margin-top: 4px; line-height: 1.5; }
+.bridge-side { display: flex; align-items: center; gap: 10px; }
+.bridge-side .tag .ic { width: 12px; height: 12px; }
+
+/* Auf dem Handy steht der Text in voller Breite, Verhältnis und Knopf darunter */
+@media (max-width: 560px) {
+  .bridge-row { grid-template-columns: minmax(0, 1fr); gap: 10px; padding: 12px 13px; }
+  .bridge-side { justify-content: space-between; }
+}
+
+/* ==========================================================================
    DRUCK
    ========================================================================== */
 @media print {

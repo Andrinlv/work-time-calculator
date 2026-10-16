@@ -527,6 +527,8 @@
     var all = buildCommands();
     var filtered = all;
     var index = 0;
+    /* Wohin der Fokus nach dem Schliessen zurückkehrt (z. B. ins Feld der Schnellerfassung) */
+    var returnFocus = document.activeElement;
 
     /* Schnellerfassung und Notizsuche direkt aus der Palette */
     function smartCommands(query) {
@@ -534,28 +536,42 @@
       var raw = String(query || "").trim();
       if (!raw) return out;
 
-      /* „gestern 7:45-16:30 p30“ direkt eintragen */
-      if (ZK.Planner) {
-        var parsed = ZK.Planner.parseQuickEntry(raw, T.todayISO());
-        if (parsed) {
-          var summary = parsed.dates.length === 1
-            ? I.formatDate(parsed.dates[0], { day: "2-digit", month: "2-digit" })
-            : parsed.dates.length + " × ";
-          if (parsed.type) summary += " " + I.t("type." + parsed.type);
-          if (parsed.start) summary += " " + parsed.start + "–" + (parsed.end || "?");
+      /* „gestern 7:45-16:30 p30“ eintragen — nie stillschweigend über
+         Erfasstes: trifft die Eingabe erfasste Tage, öffnet Enter erst
+         die Prüfung mit Vorher/Nachher. */
+      var Q = ZK.QuickEntry;
+      if (Q) {
+        var qa = Q.analyze(raw);
+        /* Ein blosses Stichwort („ferien“) rangiert hinter echten Befehlen */
+        var late = !qa.start && qa.dateKind === "default";
+        if (qa.ok) {
+          var qp = Q.plan(App, qa);
+          if (!qp.error && (qp.fresh || qp.occupied)) {
+            var needsReview = qp.occupied > 0;
+            out.push({
+              group: I.t("tools.quick"),
+              icon: "zap",
+              label: I.t("cmd.quickEntry", { v: Q.summary(App, qa) }),
+              sub: needsReview ? I.tn("cmd.qeConfirm", qp.occupied) : (qp.skipped ? I.tn("tools.qeSkipped", qp.skipped) : ""),
+              warn: needsReview,
+              late: late,
+              run: function () {
+                if (needsReview) Q.review(App, qa, qp);
+                else Q.apply(App, qp, false);
+              }
+            });
+          }
+        } else if (qa.error && /\d/.test(raw) &&
+                   ["empty", "unreadable", "unknown", "only-date"].indexOf(qa.error.code) < 0) {
+          /* Sieht nach Schnellerfassung aus, ist aber nicht lesbar: sagen,
+             warum, und zum Korrigieren in die Werkzeuge springen. */
           out.push({
-            group: I.t("cmd.group.actions"),
-            icon: "zap",
-            label: I.t("cmd.quickEntry", { v: summary.trim() }),
-            run: function () {
-              var patch = ZK.Planner.quickEntryToPatch(parsed, { breakLabel: I.t("day.lunch") });
-              store.setDays(patch, { label: "quick" });
-              App.afterChange();
-              D.toast(I.tn("tools.quickDone", parsed.dates.length), {
-                tone: "plus",
-                action: { label: I.t("common.undo"), onClick: function () { App.undo(); } }
-              });
-            }
+            group: I.t("tools.quick"),
+            icon: "alert",
+            label: Q.errorText(App, qa.error),
+            warn: true,
+            late: true,
+            run: function () { Q.openInTools(App, raw); }
           });
         }
       }
@@ -584,13 +600,13 @@
     function dateCommands(query) {
       var out = [];
       var iso = null;
-      if (/^\d{4}-\d{2}-\d{2}$/.test(query) && T.isValidISO(query)) iso = query;
-      else {
-        var m = /^(\d{1,2})[.\/](\d{1,2})(?:[.\/](\d{2,4}))?$/.exec(query.trim());
-        if (m) {
-          var year = m[3] ? (+m[3] < 100 ? 2000 + +m[3] : +m[3]) : new Date().getFullYear();
-          var candidate = year + "-" + T.pad2(+m[2]) + "-" + T.pad2(+m[1]);
-          if (T.isValidISO(candidate)) iso = candidate;
+      var q = query.trim().toLowerCase();
+      /* „12.10.“, „12.10“, „12/10“, „12.10.2026“, ISO — und „gestern“, „demain“ … */
+      if (ZK.Planner) {
+        iso = ZK.Planner.parseDateToken(q, T.todayISO());
+        var rel = ZK.Planner.RELATIVE_DAYS;
+        if (!iso && Object.prototype.hasOwnProperty.call(rel, q.replace(/[’`´]/g, "'"))) {
+          iso = T.addDays(T.todayISO(), rel[q.replace(/[’`´]/g, "'")]);
         }
       }
       if (iso) {
@@ -629,12 +645,12 @@
           list.appendChild(D.el("div.palette-group", { text: cmd.group }));
           lastGroup = cmd.group;
         }
-        var btn = D.el("button.palette-item", {
+        var btn = D.el("button.palette-item" + (cmd.warn && !cmd.sub ? ".warn" : ""), {
           type: "button", role: "option",
           "aria-selected": i === index ? "true" : "false",
           html: D.icon(cmd.icon || "right") +
             "<span>" + D.esc(cmd.label) +
-            (cmd.sub ? '<span class="sub"> · ' + D.esc(cmd.sub) + "</span>" : "") + "</span>" +
+            (cmd.sub ? '<span class="sub' + (cmd.warn ? " warn" : "") + '"> · ' + D.esc(cmd.sub) + "</span>" : "") + "</span>" +
             (cmd.kbd ? "<kbd>" + D.esc(cmd.kbd) + "</kbd>" : "")
         });
         btn.addEventListener("click", function () { close(); cmd.run(); });
@@ -656,7 +672,10 @@
         .filter(function (x) { return x.s !== null; })
         .sort(function (a, b) { return a.s - b.s; })
         .map(function (x) { return x.c; });
-      filtered = dates.concat(smart).concat(scored);
+      filtered = dates
+        .concat(smart.filter(function (c) { return !c.late; }))
+        .concat(scored)
+        .concat(smart.filter(function (c) { return c.late; }));
       index = 0;
       draw();
     }
@@ -679,6 +698,9 @@
     function close() {
       paletteOpen = false;
       if (scrim.parentNode) scrim.parentNode.removeChild(scrim);
+      if (returnFocus && returnFocus !== document.body && returnFocus.focus && document.contains(returnFocus)) {
+        try { returnFocus.focus({ preventScroll: true }); } catch (e) { /* Fokus ist Kür */ }
+      }
     }
 
     draw();

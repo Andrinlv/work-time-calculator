@@ -143,8 +143,9 @@ test("Ohne Arbeitstage ist kein Plan möglich", () => {
 test("Ein sportlicher Plan wird als solcher gemeldet", () => {
   const entspannt = P.distributeBalance(0, 300, workdays(20));
   assert.equal(entspannt.strained, false);
-  const sportlich = P.distributeBalance(0, 1200, workdays(5));
-  assert.equal(sportlich.strained, true, "über 10 Stunden pro Tag");
+  const sportlich = P.distributeBalance(0, 300, workdays(5));
+  assert.equal(sportlich.feasible, true);
+  assert.equal(sportlich.strained, true, "über 9 Stunden netto pro Tag");
 });
 
 test("Kompensationstage aus dem Saldo", () => {
@@ -305,4 +306,93 @@ test("Prognose schreibt den Schnitt fort", () => {
   assert.equal(f.balance, 180);
   assert.equal(f.remainingWorkdays, 10);
   assert.equal(P.forecast(120, 10, 0).balance, 120);
+});
+
+/* ====================================================================== */
+/* Unmögliche Pläne, Brücken über Wochenenden, Monatscheck ohne Doppel     */
+/* ====================================================================== */
+
+test("Ein zu grosses Plus ist nicht abbaubar — und das wird gesagt", () => {
+  const days = [{ date: "2026-10-19", target: 504 }, { date: "2026-10-20", target: 504 }];
+  const plan = P.distributeBalance(3000, 0, days);
+  assert.equal(plan.feasible, false);
+  assert.equal(plan.reason, "too-much-plus");
+  // Jeder Tag am Anschlag: gar nicht arbeiten, nicht weniger
+  plan.days.forEach((d) => {
+    assert.equal(d.plannedNet, 0);
+    assert.equal(d.deltaPerDay, -504);
+  });
+  assert.equal(plan.achievable, -1008);
+  assert.equal(plan.shortfall, -1992, "so viel Plus bleibt trotzdem stehen");
+});
+
+test("Ein Ziel über dem Tagesmaximum ist nicht erreichbar", () => {
+  const plan = P.distributeBalance(0, 1200, workdays(5), { maxNet: 600 });
+  assert.equal(plan.feasible, false);
+  assert.equal(plan.reason, "over-max");
+  assert.equal(plan.needNet, 744, "braucht 12 h 24 min pro Tag");
+  plan.days.forEach((d) => assert.equal(d.plannedNet, 600));
+});
+
+test("Ein bereits gearbeiteter Tag kann nicht unter das Erreichte geplant werden", () => {
+  const days = [{ date: "2026-10-16", target: 504, min: 300 }, { date: "2026-10-19", target: 504 }];
+  const plan = P.distributeBalance(300, 0, days);
+  assert.equal(plan.feasible, true);
+  assert.ok(plan.days[0].plannedNet >= 300);
+  const sum = plan.days.reduce((a, d) => a + d.deltaPerDay, 0);
+  assert.equal(sum, -300);
+});
+
+test("Pfingsten: die Brücke beginnt am Samstag davor", () => {
+  const list = P.bridgeDays(bridgeOpts("CH-ZH", 2026));
+  const pfingsten = list.filter((b) => b.from <= "2026-05-25" && b.to >= "2026-05-25")[0];
+  assert.ok(pfingsten, "Vorschlag rund um Pfingstmontag");
+  assert.equal(pfingsten.from, "2026-05-23");
+  assert.equal(pfingsten.to, "2026-05-31");
+  assert.equal(pfingsten.ratio, 2.25);
+});
+
+test("Kein Vorschlag beginnt mitten im Wochenende", () => {
+  const list = P.bridgeDays(bridgeOpts("CH-ZH", 2026));
+  assert.deepEqual(list.filter((b) => T.weekdayOf(b.from) === 0).map((b) => b.from), []);
+});
+
+test("Brücken über den Jahreswechsel werden gefunden", () => {
+  const h26 = H.forYear(2026, "CH-ZH"), h27 = H.forYear(2027, "CH-ZH");
+  const list = P.bridgeDays({
+    from: "2026-12-01", to: "2027-01-10",
+    isHoliday: (iso) => !!(h26[iso] || h27[iso]),
+    isWorkday: (iso) => { const wd = T.weekdayOf(iso); return wd >= 1 && wd <= 5; }
+  });
+  assert.ok(list.some((b) => b.from < "2027-01-01" && b.to >= "2027-01-01"), JSON.stringify(list.map((b) => b.from + "–" + b.to)));
+});
+
+test("Ein vergessenes Gehen zählt im Monatscheck genau einmal", () => {
+  const days = { "2026-08-03": { date: "2026-08-03", start: "08:00", end: "" } };
+  const audit = auditFor(days, "2026-08-03", "2026-08-03");
+  assert.deepEqual(audit.issues.map((i) => i.code + ":" + i.count), ["incomplete:1"]);
+  assert.equal(audit.total, 1);
+  assert.equal(audit.errors, 1);
+});
+
+test("Vor dem ersten Eintrag gibt es keine Lücken", () => {
+  const settings = Object.assign(R.defaultSettings(), { autoHolidays: false });
+  const range = E.computeRange("2026-08-03", "2026-08-07", () => null, settings);
+  const audit = P.auditRange(range.days, "2026-09-01", { since: "2026-08-06" });
+  const gap = audit.issues.filter((i) => i.code === "gap")[0];
+  assert.equal(gap.count, 2, "nur 06. und 07.08.");
+  assert.equal(P.auditRange(range.days, "2026-09-01", { since: "2026-09-01" }).clean, true);
+});
+
+test("Mehrere unlesbare Angaben am selben Tag zählen einmal", () => {
+  const days = { "2026-08-03": { date: "2026-08-03", start: "abc", end: "xyz", breaks: [] } };
+  const audit = auditFor(days, "2026-08-03", "2026-08-03");
+  const invalid = audit.issues.filter((i) => i.code === "invalid")[0];
+  assert.equal(invalid.count, 1);
+});
+
+test("Abwesenheit mit Stempelzeiten erscheint im Monatscheck", () => {
+  const days = { "2026-08-03": { date: "2026-08-03", type: "vacation", start: "08:00", end: "12:00", breaks: [], absenceFactor: 1 } };
+  const audit = auditFor(days, "2026-08-03", "2026-08-03");
+  assert.ok(audit.issues.some((i) => i.code === "absence-with-times"), JSON.stringify(audit.issues.map((i) => i.code)));
 });
