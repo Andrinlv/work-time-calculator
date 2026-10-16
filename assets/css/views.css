@@ -50,8 +50,8 @@
 }
 .saldo-pill.plus  { border-color: var(--plus-line);  background: var(--plus-soft) }
 .saldo-pill.minus { border-color: var(--minus-line); background: var(--minus-soft) }
-.saldo-pill.plus .val  { color: var(--plus) }
-.saldo-pill.minus .val { color: var(--minus) }
+.saldo-pill.plus .val  { color: var(--plus-ink) }
+.saldo-pill.minus .val { color: var(--minus-ink) }
 
 /* Auf schmalen Geräten weicht die Uhr — der Titel und der Saldo sind
    wichtiger, und die Systemuhr ist ohnehin sichtbar. */
@@ -261,9 +261,9 @@
 .stamp-btn:hover { transform: translateY(-1px); box-shadow: var(--shadow-md); }
 .stamp-btn:active { transform: translateY(0); }
 .stamp-btn .ic { width: 19px; height: 19px; }
-.stamp-btn.go    { background: var(--plus);  border-color: var(--plus);  color: #fff }
-.stamp-btn.stop  { background: var(--minus); border-color: var(--minus); color: #fff }
-.stamp-btn.pause { background: var(--warn);  border-color: var(--warn);  color: #fff }
+.stamp-btn.go    { background: var(--plus-solid);  border-color: var(--plus-solid);  color: var(--on-tone) }
+.stamp-btn.stop  { background: var(--minus-solid); border-color: var(--minus-solid); color: var(--on-tone) }
+.stamp-btn.pause { background: var(--warn-solid);  border-color: var(--warn-solid);  color: var(--on-tone) }
 .stamp-btn:disabled { opacity: .35; pointer-events: none; box-shadow: none; }
 
 .running-strip {
@@ -276,10 +276,10 @@
   background: var(--plus-soft);
   font-size: var(--fs-sm);
   font-weight: 700;
-  color: var(--plus);
+  color: var(--plus-ink);
   flex-wrap: wrap;
 }
-.running-strip.on-break { border-color: var(--warn-line); background: var(--warn-soft); color: var(--warn); }
+.running-strip.on-break { border-color: var(--warn-line); background: var(--warn-soft); color: var(--warn-ink); }
 .running-strip .t { font-family: var(--font-mono); font-size: var(--fs-lg); font-weight: 850; }
 
 /* ==========================================================================
@@ -442,7 +442,11 @@
 }
 .cal-cell:nth-child(7n) { border-right: 0; }
 .cal-cell:hover { background: var(--surface-3); }
-.cal-cell.other { opacity: .38; }
+/* Nachbarmonat: über Farbe gedämpft statt über Deckkraft — mit .38
+   Deckkraft fielen Datum und Saldo auf 1.6:1 und waren kaum lesbar. */
+.cal-cell.other:not(:hover, .selected) { background: var(--bg); }
+.cal-cell.other :is(.d, .kw, .bal, .times, .flag) { color: var(--ink-3); }
+.cal-cell.other :is(.type-strip, .mini-bar, .note-dot) { opacity: .45; }
 .cal-cell.weekend { background: var(--surface-2); }
 .cal-cell.today { box-shadow: inset 0 0 0 2px var(--brand-500); }
 .cal-cell.selected { background: var(--accent-soft); box-shadow: inset 0 0 0 2px var(--ink-3); }
@@ -798,8 +802,8 @@
   font-size: var(--fs-sm);
   color: var(--ink-2);
 }
-.safety-row .safety-ic { display: inline-flex; color: var(--warn); flex: none; }
-.safety-row.ok .safety-ic { color: var(--plus); }
+.safety-row .safety-ic { display: inline-flex; color: var(--warn-ink); flex: none; }
+.safety-row.ok .safety-ic { color: var(--plus-ink); }
 .safety-row .safety-text { flex: 1; min-width: 0; line-height: 1.45; }
 .safety-row .safety-text b { display: block; color: var(--ink); }
 .safety-row .safety-text small { display: block; font-size: var(--fs-xs); color: var(--ink-3); }

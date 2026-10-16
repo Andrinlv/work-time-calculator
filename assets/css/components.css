@@ -75,7 +75,10 @@
   transition: background var(--t-fast), border-color var(--t-fast),
               transform var(--t-fast), box-shadow var(--t-fast), color var(--t-fast);
 }
-.btn:hover { background: var(--surface-3); border-color: var(--ink-3); }
+/* Hover setzt nur Variablen: so behalten Varianten (primary, plus …) ihre
+   eigene Hover-Fläche. Ein direktes `background` hier hat früher die
+   Primärtaste beim Überfahren weiss auf hellgrau gemacht. */
+.btn:hover { --btn-bg: var(--surface-3); --btn-line: var(--line-input); }
 .btn:active { transform: translateY(1px) scale(.995); }
 .btn:disabled, .btn[aria-disabled="true"] { opacity: .42; cursor: not-allowed; pointer-events: none; }
 .btn .ic { width: 16px; height: 16px; flex: none; }
@@ -86,8 +89,7 @@
   --btn-line: transparent;
   box-shadow: var(--shadow-sm);
 }
-.btn.primary:hover { --btn-bg: var(--brand-700); box-shadow: var(--shadow-md); }
-[data-theme="dark"] .btn.primary:hover { --btn-bg: #FFFFFF; }
+.btn.primary:hover { --btn-bg: var(--surface-invert-hover); box-shadow: var(--shadow-md); }
 
 .btn.ghost { --btn-bg: transparent; --btn-line: transparent; color: var(--ink-2); }
 .btn.ghost:hover { --btn-bg: var(--surface-3); color: var(--ink); }
@@ -95,12 +97,14 @@
 .btn.soft { --btn-bg: var(--surface-3); --btn-line: transparent; }
 .btn.soft:hover { --btn-bg: var(--surface-inset); }
 
-.btn.plus  { --btn-bg: var(--plus-soft);  --btn-ink: var(--plus);  --btn-line: var(--plus-line); }
-.btn.minus { --btn-bg: var(--minus-soft); --btn-ink: var(--minus); --btn-line: var(--minus-line); }
-.btn.warn  { --btn-bg: var(--warn-soft);  --btn-ink: var(--warn);  --btn-line: var(--warn-line); }
-.btn.info  { --btn-bg: var(--info-soft);  --btn-ink: var(--info);  --btn-line: var(--info-line); }
+.btn.plus  { --btn-bg: var(--plus-soft);  --btn-ink: var(--plus-ink);  --btn-line: var(--plus-line); }
+.btn.minus { --btn-bg: var(--minus-soft); --btn-ink: var(--minus-ink); --btn-line: var(--minus-line); }
+.btn.warn  { --btn-bg: var(--warn-soft);  --btn-ink: var(--warn-ink);  --btn-line: var(--warn-line); }
+.btn.info  { --btn-bg: var(--info-soft);  --btn-ink: var(--info-ink);  --btn-line: var(--info-line); }
 .btn.plus:hover  { --btn-bg: color-mix(in srgb, var(--plus) 20%, transparent); }
 .btn.minus:hover { --btn-bg: color-mix(in srgb, var(--minus) 20%, transparent); }
+.btn.warn:hover  { --btn-bg: color-mix(in srgb, var(--warn) 20%, transparent); }
+.btn.info:hover  { --btn-bg: color-mix(in srgb, var(--info) 20%, transparent); }
 
 .btn.sm { min-height: 32px; padding: 0 11px; font-size: var(--fs-xs); border-radius: var(--r-xs); gap: 5px; }
 .btn.sm .ic { width: 14px; height: 14px; }
@@ -146,10 +150,12 @@
   white-space: nowrap;
 }
 .segmented button:hover { color: var(--ink); }
+/* Weiss auf --surface-3 allein trennt nur 1.1:1 — die Kontur macht die
+   Auswahl auch ohne Schatten erkennbar (≥ 3:1). */
 .segmented button[aria-pressed="true"] {
   background: var(--surface);
   color: var(--ink);
-  box-shadow: var(--shadow-xs);
+  box-shadow: 0 0 0 1px var(--line-input), var(--shadow-xs);
 }
 
 /* ---- Eingabefelder ---------------------------------------------------- */
@@ -164,25 +170,26 @@
   color: var(--ink-2);
 }
 .field .hint { font-size: var(--fs-2xs); color: var(--ink-3); line-height: 1.45; }
-.field .err { font-size: var(--fs-2xs); color: var(--minus); font-weight: 650; }
+.field .err { font-size: var(--fs-2xs); color: var(--minus-ink); font-weight: 650; }
 
 .input, .select, .textarea {
   width: 100%;
   min-height: 42px;
   padding: 9px 12px;
   border-radius: var(--r-sm);
-  border: 1px solid var(--line-strong);
+  border: 1px solid var(--line-input);
   background: var(--surface);
   color: var(--ink);
   font-size: var(--fs-md);
   outline: none;
   transition: border-color var(--t-fast), box-shadow var(--t-fast), background var(--t-fast);
 }
-.input::placeholder, .textarea::placeholder { color: var(--ink-3); opacity: .6; }
+.input::placeholder, .textarea::placeholder { color: var(--ink-3); opacity: 1; }
 .input:hover, .select:hover, .textarea:hover { border-color: var(--ink-3); }
+/* Innen eine satte 1-px-Kontur (≥ 3:1), aussen der weiche Halo */
 .input:focus, .select:focus, .textarea:focus {
-  border-color: var(--brand-500);
-  box-shadow: 0 0 0 3.5px var(--focus-ring);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent), 0 0 0 4.5px var(--focus-ring);
 }
 .input.time {
   font-family: var(--font-mono);
@@ -237,7 +244,7 @@
   width: 42px; height: 24px;
   border-radius: var(--r-pill);
   background: var(--surface-inset);
-  border: 1px solid var(--line-strong);
+  border: 1px solid var(--line-input);
   position: relative;
   flex: none;
   transition: background var(--t), border-color var(--t);
@@ -248,13 +255,16 @@
   top: 2px; left: 2px;
   width: 18px; height: 18px;
   border-radius: 50%;
-  background: var(--surface);
+  /* Aus: dunkler Knopf auf heller Schiene (hell) bzw. heller Knopf auf
+     dunkler Schiene (dunkel) — ein Knopf in Flächenfarbe verschwand im
+     Dunkelmodus (1.2:1). Ein: weisser Knopf auf gefüllter Schiene. */
+  background: var(--ink-3);
   box-shadow: var(--shadow-xs);
   transition: transform var(--t-slow), background var(--t);
 }
-.switch input:checked + .track { background: var(--brand-500); border-color: var(--brand-500); }
+.switch input:checked + .track { background: var(--switch-on); border-color: var(--switch-on); }
 .switch input:checked + .track::after { transform: translateX(18px); background: #fff; }
-.switch input:focus-visible + .track { box-shadow: 0 0 0 3.5px var(--focus-ring); }
+.switch input:focus-visible + .track { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent); }
 .switch .lbl { font-size: var(--fs-sm); font-weight: 650; }
 .switch .lbl small { display: block; font-size: var(--fs-2xs); color: var(--ink-3); font-weight: 550; }
 
@@ -273,10 +283,10 @@
   background: var(--surface-3);
   white-space: nowrap;
 }
-.tag.plus  { color: var(--plus);  background: var(--plus-soft);  border-color: var(--plus-line); }
-.tag.minus { color: var(--minus); background: var(--minus-soft); border-color: var(--minus-line); }
-.tag.warn  { color: var(--warn);  background: var(--warn-soft);  border-color: var(--warn-line); }
-.tag.info  { color: var(--info);  background: var(--info-soft);  border-color: var(--info-line); }
+.tag.plus  { color: var(--plus-ink);  background: var(--plus-soft);  border-color: var(--plus-line); }
+.tag.minus { color: var(--minus-ink); background: var(--minus-soft); border-color: var(--minus-line); }
+.tag.warn  { color: var(--warn-ink);  background: var(--warn-soft);  border-color: var(--warn-line); }
+.tag.info  { color: var(--info-ink);  background: var(--info-soft);  border-color: var(--info-line); }
 .tag.solid { background: var(--surface-invert); color: var(--ink-invert); border-color: transparent; }
 .tag .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: none; }
 
@@ -303,7 +313,9 @@
   border-color: transparent;
   box-shadow: var(--shadow-xs);
 }
-.chip[aria-pressed="true"] .swatch { box-shadow: 0 0 0 2px rgba(255, 255, 255, .35); }
+/* Kontrastring in Schriftfarbe: sonst verschwindet z. B. der helle
+   Arbeit-Punkt im Dunkelmodus auf dem hellen Chip. */
+.chip[aria-pressed="true"] .swatch { box-shadow: 0 0 0 1.5px var(--ink-invert); }
 
 /* ---- Kennzahl (KPI) --------------------------------------------------- */
 .kpi {
@@ -383,12 +395,13 @@
 }
 .notice .ic { flex: none; width: 17px; height: 17px; margin-top: 1px; }
 .notice strong { font-weight: 800; }
-.notice.warn  { background: var(--warn-soft);  border-color: var(--warn-line);  color: var(--warn); }
-.notice.minus { background: var(--minus-soft); border-color: var(--minus-line); color: var(--minus); }
-.notice.plus  { background: var(--plus-soft);  border-color: var(--plus-line);  color: var(--plus); }
-.notice.info  { background: var(--info-soft);  border-color: var(--info-line);  color: var(--info); }
+.notice.warn  { background: var(--warn-soft);  border-color: var(--warn-line);  color: var(--warn-ink); }
+.notice.minus { background: var(--minus-soft); border-color: var(--minus-line); color: var(--minus-ink); }
+.notice.plus  { background: var(--plus-soft);  border-color: var(--plus-line);  color: var(--plus-ink); }
+.notice.info  { background: var(--info-soft);  border-color: var(--info-line);  color: var(--info-ink); }
 .notice p { color: inherit; }
-.notice .sub { opacity: .82; font-size: var(--fs-xs); }
+/* Ohne Abdunklung: die Funktionsschrift liegt schon knapp über 4.5:1 */
+.notice .sub { font-size: var(--fs-xs); }
 
 /* ---- Tabelle ---------------------------------------------------------- */
 .table-wrap { overflow-x: auto; border-radius: var(--r-md); border: 1px solid var(--line); }
@@ -526,9 +539,14 @@ table.data tfoot td {
 }
 [data-theme="dark"] .toast .act { background: rgba(0, 0, 0, .12); }
 .toast .act:hover { background: rgba(255, 255, 255, .28); }
-.toast.plus  { background: var(--plus);  color: #fff }
-.toast.minus { background: var(--minus); color: #fff }
-.toast.warn  { background: var(--warn);  color: #fff }
+.toast.plus  { background: var(--plus-solid);  color: var(--on-tone) }
+.toast.minus { background: var(--minus-solid); color: var(--on-tone) }
+.toast.warn  { background: var(--warn-solid);  color: var(--on-tone) }
+/* Auf farbigen Toasts: Untertitel voll deckend, Aktionsknopf zur Gegenfarbe
+   der Schrift hin getönt (hell: dunkler, dunkel: heller) */
+.toast:is(.plus, .minus, .warn) .body span { opacity: 1; }
+.toast:is(.plus, .minus, .warn) .act { background: color-mix(in srgb, var(--surface-invert) 22%, transparent); }
+.toast:is(.plus, .minus, .warn) .act:hover { background: color-mix(in srgb, var(--surface-invert) 34%, transparent); }
 
 /* ---- Befehlspalette --------------------------------------------------- */
 .palette-scrim {

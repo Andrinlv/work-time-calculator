@@ -98,7 +98,7 @@ h1, h2, h3, h4 {
 :focus:not(:focus-visible) { outline: none; }
 
 ::selection {
-  background: var(--brand-500);
+  background: var(--brand-600);   /* Weiss auf --brand-500 wäre 4.1:1 */
   color: #fff;
 }
 
@@ -373,10 +373,11 @@ h1, h2, h3, h4 {
 .muted { color: var(--ink-3) }
 .fw-7 { font-weight: 700 } .fw-8 { font-weight: 800 } .fw-9 { font-weight: 900 }
 
-.tone-plus  { color: var(--plus) }
-.tone-minus { color: var(--minus) }
-.tone-warn  { color: var(--warn) }
-.tone-info  { color: var(--info) }
+/* Schrift in Funktionsfarbe: immer die *-ink-Stufe, nie die Fläche */
+.tone-plus  { color: var(--plus-ink) }
+.tone-minus { color: var(--minus-ink) }
+.tone-warn  { color: var(--warn-ink) }
+.tone-info  { color: var(--info-ink) }
 .tone-mute  { color: var(--ink-3) }
 
 /* ==========================================================================
