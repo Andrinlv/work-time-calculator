@@ -5,10 +5,18 @@ const assert = require("node:assert/strict");
 const R = require("../assets/js/core/rules.js");
 const S = require("../assets/js/data/store.js");
 
-function fresh() {
-  const store = S.createStore({ backend: S.memoryBackend(), defaultSettings: R.defaultSettings });
+function fresh(opts) {
+  const store = S.createStore(Object.assign({ backend: S.memoryBackend(), defaultSettings: R.defaultSettings }, opts || {}));
   store.load();
   return store;
+}
+
+/* Uhr zum Vorstellen: Rückgängig fasst schnelle Folgeänderungen zusammen */
+function fakeClock(start) {
+  let now = start || 1000000;
+  const fn = () => now;
+  fn.tick = (ms) => { now += ms; };
+  return fn;
 }
 
 test("Ein frischer Speicher startet leer mit Standardeinstellungen", () => {
@@ -54,8 +62,10 @@ test("Massenänderungen und Löschen per null", () => {
 });
 
 test("Rückgängig und Wiederherstellen", () => {
-  const store = fresh();
+  const clock = fakeClock();
+  const store = fresh({ clock });
   store.setDay("2026-08-06", { start: "08:00" });
+  clock.tick(5000);
   store.setDay("2026-08-06", { start: "09:00" });
   assert.equal(store.canUndo(), true);
 
@@ -414,4 +424,366 @@ test("Bei vollem Speicher wird zuerst die alte Sicherung geopfert", () => {
   assert.equal(errors.length, 0, "nach dem Aufräumen klappt das Speichern");
   assert.equal(mem.getItem("zeitkonto:backup:prev"), null);
   assert.ok(JSON.parse(mem.getItem(S.KEY)).days["2026-08-03"]);
+});
+
+/* ---------------------------------------------------------------------- */
+/* Rückgängig: kleine Schritte, zusammengefasstes Tippen                    */
+/* ---------------------------------------------------------------------- */
+
+const E = require("../assets/js/core/engine.js");
+
+function bigStore(opts) {
+  const store = fresh(opts);
+  const map = {};
+  for (let i = 0; i < 300; i++) {
+    const iso = new Date(Date.UTC(2025, 0, 1 + i)).toISOString().slice(0, 10);
+    map[iso] = { start: "08:00", end: "17:00", breaks: [{ id: "b" + i, start: "12:00", end: "12:30", paid: false }], note: "Tag " + i };
+  }
+  store.setDays(map);
+  return store;
+}
+
+test("Ein Tastendruck serialisiert nicht mehr den ganzen Datenbestand", () => {
+  const clock = fakeClock();
+  const store = bigStore({ clock });
+  const whole = JSON.stringify(store.state).length;
+  const original = JSON.stringify;
+  let written = 0;
+  JSON.stringify = function () { const out = original.apply(JSON, arguments); written += out ? out.length : 0; return out; };
+  try {
+    for (let k = 0; k < 40; k++) {
+      store.setDay("2026-08-03", { end: "17:" + String(k).padStart(2, "0") });
+      clock.tick(3000);   // jedes Mal ein eigener Schritt
+    }
+  } finally { JSON.stringify = original; }
+  assert.ok(written < whole / 4, "serialisiert: " + written + " Zeichen, Gesamtstand: " + whole);
+  assert.equal(store.diagnostics().undoDepth > 40, true);
+});
+
+test("Schnelles Tippen in einem Feld ergibt einen einzigen Rückgängig-Schritt", () => {
+  const clock = fakeClock();
+  const store = fresh({ clock });
+  store.setDay("2026-08-03", { start: "07:00", end: "16:00" });
+  clock.tick(5000);
+  ["0", "07", "074", "0745"].forEach((v) => { store.setDay("2026-08-03", { start: v }); clock.tick(300); });
+  assert.equal(store.getDay("2026-08-03").start, "0745");
+  store.undo();
+  assert.equal(store.getDay("2026-08-03").start, "07:00", "ein Schritt nimmt das ganze Wort zurück");
+  store.redo();
+  assert.equal(store.getDay("2026-08-03").start, "0745");
+});
+
+test("Pause oder anderes Feld beginnt einen neuen Schritt", () => {
+  const clock = fakeClock();
+  const store = fresh({ clock });
+  store.setDay("2026-08-03", { start: "07:00" });
+  clock.tick(500);
+  store.setDay("2026-08-03", { end: "16:00" });      // anderes Feld
+  clock.tick(2000);
+  store.setDay("2026-08-03", { end: "16:30" });      // nach einer Pause
+  store.undo();
+  assert.equal(store.getDay("2026-08-03").end, "16:00");
+  store.undo();
+  assert.equal(store.getDay("2026-08-03").end || "", "");
+  assert.equal(store.getDay("2026-08-03").start, "07:00");
+  store.undo();
+  assert.equal(store.getDay("2026-08-03"), null);
+});
+
+test("Nach einem Rückgängig wächst kein alter Schritt weiter", () => {
+  const clock = fakeClock();
+  const store = fresh({ clock });
+  store.setDay("2026-08-03", { start: "07:00" });
+  clock.tick(5000);
+  store.setDay("2026-08-03", { start: "08:00" });
+  store.undo();                                     // zurück auf 07:00
+  clock.tick(200);
+  store.setDay("2026-08-03", { start: "09:00" });
+  store.undo();
+  assert.equal(store.getDay("2026-08-03").start, "07:00");
+});
+
+test("Unveränderte Eingabe legt keinen Schritt an und markiert nichts", () => {
+  const { backend, a, b } = twoWindows();
+  const depth = b.diagnostics().undoDepth;
+  b.setDay("2026-08-03", { start: "08:00" });       // Feld verlassen ohne Änderung
+  assert.equal(b.diagnostics().undoDepth, depth, "kein leerer Schritt");
+  a.setDay("2026-08-03", { start: "06:30" }); a.flush();
+  b.updateSettings({ theme: "dark" }); b.flush();
+  assert.equal(JSON.parse(backend.getItem(S.KEY)).days["2026-08-03"].start, "06:30", "B überstimmt A nicht grundlos");
+});
+
+test("Rückgängig nach fremder Änderung am selben Tag lässt die fremde stehen", () => {
+  const { backend, a, b } = twoWindows();
+  b.setDay("2026-08-03", { note: "von B" }); b.flush();
+  a.syncExternal(backend.getItem(S.KEY));
+  a.setDay("2026-08-03", { note: "von A" }); a.flush();
+  b.syncExternal(backend.getItem(S.KEY));
+  assert.equal(b.getDay("2026-08-03").note, "von A");
+  b.undo(); b.flush();
+  assert.equal(JSON.parse(backend.getItem(S.KEY)).days["2026-08-03"].note, "von A", "A's neuere Eingabe bleibt");
+});
+
+test("Zurücksetzen ist vollständig umkehrbar — Erfolge und Einrichtung inklusive", () => {
+  const backend = S.memoryBackend();
+  backend.setItem(S.KEY, JSON.stringify({
+    version: 3, settings: { workloadPercent: 80 },
+    days: { "2026-08-03": { date: "2026-08-03", start: "08:00", end: "17:00" } },
+    achievements: { earned: { first: "2026-08-03" }, xp: 970, bestStreak: 4, seen: {} },
+    meta: { onboarded: true, createdAt: "2026-01-01T00:00:00.000Z" },
+    projects: [{ id: "p1" }]
+  }));
+  const store = S.createStore({ backend, defaultSettings: R.defaultSettings });
+  store.load();
+  store.reset(false);
+  assert.equal(store.dayCount(), 0);
+  assert.equal(store.getMeta().onboarded, false);
+  assert.equal(store.undo(), "reset");
+  assert.equal(store.getDay("2026-08-03").start, "08:00");
+  assert.equal(store.getAchievements().xp, 970);
+  assert.equal(store.getMeta().onboarded, true, "der Einrichtungsassistent erscheint nicht erneut");
+  assert.equal(store.getSettings().workloadPercent, 80);
+  store.flush();
+  const saved = JSON.parse(backend.getItem(S.KEY));
+  assert.deepEqual(saved.projects, [{ id: "p1" }], "auch Bereiche einer neueren Version kommen zurück");
+  assert.equal(saved.meta.onboarded, true);
+  store.redo();
+  assert.equal(store.dayCount(), 0);
+});
+
+test("Rückgängig nach einem Import nimmt auch die Erfolge zurück", () => {
+  const store = fresh();
+  store.importState({ days: {}, achievements: { earned: { first: "2026-01-01" }, xp: 10 } }, "merge");
+  assert.equal(store.getAchievements().earned.first, "2026-01-01");
+  store.undo();
+  assert.deepEqual(store.getAchievements().earned, {});
+});
+
+test("Buchhaltung (letzter Export, letzter Abgleich) ist kein eigener Schritt", () => {
+  const store = fresh();
+  store.updateSettings({ outlook: { enabled: true, rules: [], lastSyncAt: null } });
+  store.setDays({ "2026-08-05": { type: "vacation", source: "outlook" } }, { label: "outlook" });
+  store.updateSettings({ outlook: { enabled: true, rules: [], lastSyncAt: "2026-08-06T10:00:00Z" } });
+  store.updateSettings({ lastExportAt: "2026-08-06T10:00:00Z" });
+  assert.equal(store.undo(), "outlook", "Rückgängig trifft den Abgleich, nicht dessen Zeitstempel");
+  assert.equal(store.getDay("2026-08-05"), null);
+  assert.equal(store.getSettings().outlook.lastSyncAt, "2026-08-06T10:00:00Z");
+});
+
+test("rev() zählt jede Datenänderung", () => {
+  const store = fresh();
+  const r0 = store.rev();
+  store.setDay("2026-08-03", { start: "08:00" });
+  store.updateSettings({ theme: "dark" });
+  assert.equal(store.rev(), r0 + 2);
+  store.setDay("2026-08-03", { start: "08:00" });   // unverändert
+  assert.equal(store.rev(), r0 + 2);
+  store.undo();
+  assert.equal(store.rev(), r0 + 3);
+});
+
+/* ---------------------------------------------------------------------- */
+/* Import: prüfen, migrieren, nie die Berechnung zum Absturz bringen         */
+/* ---------------------------------------------------------------------- */
+
+test("Import migriert eine alte Sicherung (Schema 1)", () => {
+  const store = fresh();
+  store.importState({ app: "Zeitkonto", schema: 1, days: {
+    "2026-08-03": { start: "08:00", end: "17:00", breaks: [{ start: "12:00", end: "12:30" }] }
+  } }, "merge");
+  const d = store.getDay("2026-08-03");
+  assert.ok(d.breaks[0].id, "Pausen-ID ergänzt");
+  assert.equal(d.breaks[0].paid, false);
+  assert.equal(d.absenceFactor, 1);
+  assert.equal(d.location, "office");
+});
+
+test("Import überspringt kaputte Tage, zählt sie und rechnet danach fehlerfrei", () => {
+  const store = fresh();
+  const file = { days: {
+    "2026-08-03": { start: "08:00", end: "17:00", breaks: "12:00-12:30" },
+    "2026-08-04": { start: 800 },
+    "2026-08-05": { start: "08:00", end: "16:00", breaks: [null] },
+    "2026-08-06": { start: "08:00", end: "17:00", breaks: [{ start: "12:00", end: "12:45" }] },
+    "2026-08-07": "Ferien"
+  } };
+  const before = JSON.stringify(file);
+  const result = store.importState(file, "merge");
+  assert.equal(result.added, 1);
+  assert.equal(result.invalid, 4);
+  assert.equal(result.skipped, 4);
+  assert.equal(JSON.stringify(file), before, "die Datei selbst bleibt unverändert");
+  Object.keys(store.allDays()).forEach((iso) => {
+    assert.doesNotThrow(() => E.computeDay(store.getDay(iso), { settings: store.getSettings(), holiday: null, isToday: false }));
+  });
+});
+
+test("Ein Import ganz ohne lesbare Tage bricht mit verständlichem Code ab", () => {
+  const store = fresh();
+  store.setDay("2026-08-01", { start: "08:00" });
+  assert.throws(() => store.importState({ days: { "2026-08-03": { breaks: "x" } } }, "replace"), (e) => e.code === "no-valid-days");
+  assert.equal(store.getDay("2026-08-01").start, "08:00", "nichts wurde verändert");
+  assert.throws(() => store.importState([], "merge"), (e) => e.code === "invalid");
+  assert.throws(() => store.importState({ settings: {} }, "merge"), (e) => e.code === "no-days");
+});
+
+test("Import beim Zusammenführen: nur die Felder aus der Datei überschreiben", () => {
+  const store = fresh();
+  store.setDay("2026-08-03", { start: "08:00", end: "17:00", note: "meine Notiz", location: "home" });
+  store.importState({ schema: 3, days: { "2026-08-03": { end: "18:00" } } }, "merge");
+  const d = store.getDay("2026-08-03");
+  assert.equal(d.end, "18:00");
+  assert.equal(d.note, "meine Notiz");
+  assert.equal(d.location, "home");
+});
+
+test("Import übernimmt nur Einstellungen mit passendem Typ", () => {
+  const store = fresh();
+  store.importState({ days: {}, settings: { workloadPercent: "achtzig", theme: "dark", autoHolidays: "ja", futureKey: { a: 1 } } }, "merge");
+  const s = store.getSettings();
+  assert.equal(s.workloadPercent, 100);
+  assert.equal(s.theme, "dark");
+  assert.equal(s.autoHolidays, true);
+  assert.deepEqual(s.futureKey, { a: 1 }, "unbekannte Einstellungen bleiben erhalten");
+});
+
+/* ---------------------------------------------------------------------- */
+/* Vorwärtskompatibel: Neueres wird mitgeführt, nie zurückgestuft           */
+/* ---------------------------------------------------------------------- */
+
+test("Unbekannte Bereiche und Felder überleben Laden, Speichern, Export und Import", () => {
+  const backend = S.memoryBackend();
+  backend.setItem(S.KEY, JSON.stringify({
+    version: S.SCHEMA + 1, settings: { lang: "fr" },
+    days: { "2026-08-03": { start: "08:00", projectId: "p1" } },
+    projects: [{ id: "p1", name: "Alpha" }]
+  }));
+  const store = S.createStore({ backend, defaultSettings: R.defaultSettings });
+  store.load();
+  store.setDay("2026-08-04", { start: "09:00" }, { immediate: true });
+  const saved = JSON.parse(backend.getItem(S.KEY));
+  assert.deepEqual(saved.projects, [{ id: "p1", name: "Alpha" }]);
+  assert.equal(saved.version, S.SCHEMA + 1);
+  assert.equal(saved.days["2026-08-03"].projectId, "p1");
+
+  const dump = store.exportState();
+  assert.equal(dump.schema, S.SCHEMA + 1, "Export stuft nicht zurück");
+  assert.deepEqual(dump.projects, [{ id: "p1", name: "Alpha" }]);
+
+  const other = fresh();
+  const result = other.importState(JSON.parse(JSON.stringify(dump)), "replace");
+  assert.equal(result.newer, true);
+  assert.deepEqual(other.state.projects, [{ id: "p1", name: "Alpha" }]);
+  assert.equal(other.getDay("2026-08-03").projectId, "p1");
+  assert.equal(other.state.app, undefined, "die Export-Hülle gehört nicht in den Zustand");
+});
+
+test("Laden repariert Tage, statt die Berechnung abstürzen zu lassen", () => {
+  const backend = S.memoryBackend();
+  backend.setItem(S.KEY, JSON.stringify({ version: 3, days: {
+    "2026-08-03": { start: "08:00", end: "17:00", breaks: [null, { start: "12:00", end: "12:30" }], targetOverride: "viel" }
+  } }));
+  const store = S.createStore({ backend, defaultSettings: R.defaultSettings });
+  store.load();
+  const d = store.getDay("2026-08-03");
+  assert.equal(d.breaks.length, 1);
+  assert.equal(d.targetOverride, null);
+  assert.doesNotThrow(() => E.computeDay(d, { settings: store.getSettings(), holiday: null, isToday: false }));
+});
+
+/* ---------------------------------------------------------------------- */
+/* Voller Speicher                                                          */
+/* ---------------------------------------------------------------------- */
+
+function quotaError() { const e = new Error("The quota has been exceeded."); e.name = "QuotaExceededError"; e.code = 22; return e; }
+
+test("Voller Speicher beim Start: Daten werden trotzdem gelesen, nicht der flüchtige Speicher", () => {
+  const mem = S.memoryBackend();
+  mem.setItem(S.KEY, JSON.stringify({ version: 3, days: { "2026-08-03": { start: "08:00" } }, meta: { onboarded: true } }));
+  const full = {
+    getItem: (k) => mem.getItem(k),
+    removeItem: (k) => mem.removeItem(k),
+    setItem: () => { throw quotaError(); }
+  };
+  const had = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+  Object.defineProperty(globalThis, "localStorage", { value: full, configurable: true, writable: true });
+  try {
+    const detected = S.detectBackend();
+    assert.equal(detected.backend, full, "localStorage bleibt in Gebrauch");
+    assert.equal(detected.full, true);
+    const store = S.createStore({ defaultSettings: R.defaultSettings, listen: false });
+    store.load();
+    assert.equal(store.dayCount(), 1);
+    assert.equal(store.getMeta().onboarded, true, "kein Einrichtungsassistent");
+    const diag = store.diagnostics();
+    assert.equal(diag.volatile, false);
+    assert.equal(diag.full, true);
+    assert.equal(store.makeBackup(), false, "keine zusätzliche Kopie in einen vollen Speicher");
+  } finally {
+    if (had) Object.defineProperty(globalThis, "localStorage", had);
+    else delete globalThis.localStorage;
+  }
+});
+
+test("Gesperrter Speicher (SecurityError) fällt auf den Arbeitsspeicher zurück", () => {
+  const had = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+  Object.defineProperty(globalThis, "localStorage", { get() { const e = new Error("denied"); e.name = "SecurityError"; throw e; }, configurable: true });
+  try {
+    assert.equal(S.detectBackend().backend.volatile, true);
+  } finally {
+    if (had) Object.defineProperty(globalThis, "localStorage", had);
+    else delete globalThis.localStorage;
+  }
+});
+
+test("Speicherwarnung kommt nicht bei jedem Tastendruck", () => {
+  const clock = fakeClock();
+  const backend = { getItem: () => null, removeItem: () => {}, setItem: () => { throw quotaError(); } };
+  const store = S.createStore({ backend, defaultSettings: R.defaultSettings, clock });
+  store.load();
+  const errors = [];
+  store.subscribe((evt) => { if (evt.type === "error") errors.push(evt); });
+  store.setDay("2026-08-03", { start: "0" }, { immediate: true });
+  clock.tick(400);
+  store.setDay("2026-08-03", { start: "08" }, { immediate: true });
+  assert.equal(errors.length, 1);
+  assert.equal(errors[0].quota, true);
+  assert.equal(store.diagnostics().full, true);
+  clock.tick(31000);
+  store.setDay("2026-08-03", { start: "08:00" }, { immediate: true });
+  assert.equal(errors.length, 2, "nach einer Weile wird erneut gewarnt");
+});
+
+test("Als letzte Stufe weicht die Startsicherung den aktuellen Daten", () => {
+  const mem = S.memoryBackend();
+  const LIMIT = 3000;
+  const size = () => ["zeitkonto:v1", "zeitkonto:backup"].reduce((n, k) => n + (mem.getItem(k) || "").length, 0);
+  const backend = {
+    getItem: (k) => mem.getItem(k),
+    removeItem: (k) => mem.removeItem(k),
+    setItem: (k, v) => {
+      const next = size() - (mem.getItem(k) || "").length + String(v).length;
+      if (next > LIMIT) throw quotaError();
+      mem.setItem(k, v);
+    }
+  };
+  mem.setItem("zeitkonto:backup", "x".repeat(2000));
+  const store = S.createStore({ backend, defaultSettings: R.defaultSettings });
+  store.load();
+  assert.equal(store.setDay("2026-08-03", { note: "y".repeat(1200) }, { immediate: true }).note.length, 1200);
+  assert.ok(JSON.parse(mem.getItem(S.KEY)).days["2026-08-03"], "die Daten sind gespeichert");
+  assert.equal(mem.getItem("zeitkonto:backup"), null, "die alte Sicherung musste weichen");
+});
+
+test("Speichergrösse kommt aus dem Gedächtnis, nicht aus einem erneuten Lesen", () => {
+  const mem = S.memoryBackend();
+  let reads = 0;
+  const backend = { getItem: (k) => { reads++; return mem.getItem(k); }, setItem: (k, v) => mem.setItem(k, v), removeItem: (k) => mem.removeItem(k) };
+  const store = S.createStore({ backend, defaultSettings: R.defaultSettings });
+  store.load();
+  store.setDay("2026-08-03", { start: "08:00" }, { immediate: true });
+  const before = reads;
+  const d = store.diagnostics();
+  assert.equal(reads, before);
+  assert.equal(d.bytes, mem.getItem(S.KEY).length);
 });

@@ -11,6 +11,10 @@
    Einstellungen er selbst geändert hat. Hat inzwischen ein anderes
    Fenster gespeichert, wird dessen Stand übernommen und nur die eigenen
    Änderungen kommen obendrauf.
+
+   Vorwärtskompatibel: Felder und Bereiche, die erst eine neuere Version
+   kennt, werden unverändert mitgeführt, und die Schema-Nummer wird nie
+   zurückgestuft. Ein veralteter Tab löscht so nichts, was er nicht kennt.
    ========================================================================== */
 (function (root, factory) {
   if (typeof module === "object" && module.exports) module.exports = factory();
@@ -21,6 +25,17 @@
   var KEY = "zeitkonto:v1";
   var BACKUP_KEY = "zeitkonto:backup";
   var SCHEMA = 3;
+  var UNDO_LIMIT = 100;
+  var COALESCE_MS = 1500;     // schnelle Folgeänderungen = ein Rückgängig-Schritt
+  var ERROR_REPEAT_MS = 30000; // dieselbe Speicherwarnung höchstens alle 30 s
+
+  /* Bereiche, die diese Version selbst verwaltet. Alles andere auf oberster
+     Ebene stammt von einer neueren Version und wird nur durchgereicht. */
+  var KNOWN_PARTS = { version: 1, settings: 1, days: 1, achievements: 1, meta: 1 };
+  /* Hülle einer Export-Datei — gehört nicht in den gespeicherten Zustand. */
+  var EXPORT_ENVELOPE = { app: 1, schema: 1, exportedAt: 1, state: 1 };
+
+  function has(obj, k) { return Object.prototype.hasOwnProperty.call(obj, k); }
 
   /**
    * Prüft einen Tagesschlüssel auf ein echtes Kalenderdatum.
@@ -32,6 +47,48 @@
     var y = +iso.slice(0, 4), m = +iso.slice(5, 7), d = +iso.slice(8, 10);
     var date = new Date(y, m - 1, d);
     return date.getFullYear() === y && date.getMonth() === m - 1 && date.getDate() === d;
+  }
+
+  function isPlainObject(v) { return !!v && typeof v === "object" && !Array.isArray(v); }
+  function isNum(v) { return typeof v === "number" && isFinite(v); }
+
+  /**
+   * Säubert einen Tageseintrag so weit, dass die Berechnung nicht stolpern
+   * kann. Unbekannte Felder (neuere Version) bleiben erhalten.
+   *
+   * strict = true (Import): ein Feld mit falschem Typ macht den ganzen Tag
+   * unbrauchbar → null, damit nichts still verfälscht übernommen wird.
+   * strict = false (Laden): reparieren — der Tag ist ja schon gespeichert.
+   */
+  function cleanDay(d, iso, strict) {
+    if (!isPlainObject(d)) return null;
+    var out = d;
+    var bad = false;
+    out.date = iso;
+    // Beim Import fehlende Felder nicht ergänzen: beim Zusammenführen
+    // gilt „was in der Datei steht, gewinnt; was fehlt, bleibt“.
+    ["start", "end", "note"].forEach(function (k) {
+      var v = out[k];
+      if (v === undefined) { if (!strict) out[k] = ""; return; }
+      if (v === null) { out[k] = ""; return; }
+      if (typeof v !== "string") { bad = true; out[k] = ""; }
+    });
+    if (out.breaks === null || (out.breaks === undefined && !strict)) out.breaks = [];
+    if (out.breaks !== undefined) {
+      if (!Array.isArray(out.breaks)) { bad = true; out.breaks = []; }
+      out.breaks = out.breaks.filter(function (b) {
+        var ok = isPlainObject(b) &&
+          (b.start === undefined || b.start === null || typeof b.start === "string") &&
+          (b.end === undefined || b.end === null || typeof b.end === "string");
+        if (!ok) bad = true;
+        return ok;
+      });
+    }
+    if (out.type !== undefined && out.type !== null && typeof out.type !== "string") { bad = true; out.type = null; }
+    if (out.location !== undefined && out.location !== null && typeof out.location !== "string") { bad = true; delete out.location; }
+    if (out.absenceFactor !== undefined && out.absenceFactor !== null && !isNum(out.absenceFactor)) { bad = true; delete out.absenceFactor; }
+    if (out.targetOverride !== undefined && out.targetOverride !== null && !isNum(out.targetOverride)) { bad = true; out.targetOverride = null; }
+    return strict && bad ? null : out;
   }
 
   /* ------------------------------------------------------------------ */
@@ -47,17 +104,32 @@
     };
   }
 
+  function isQuotaError(e) {
+    var s = String((e && (e.name || "")) + " " + (e && e.message || e));
+    return /quota|exceeded|NS_ERROR_DOM_QUOTA_REACHED/i.test(s) || !!(e && (e.code === 22 || e.code === 1014));
+  }
+
+  /**
+   * localStorage, sobald es sich lesen lässt. Ein voller Speicher ist KEIN
+   * Grund für den flüchtigen Arbeitsspeicher: Auf github.io teilen sich alle
+   * Projektseiten eines Kontos dieselben 5 MB — ist das Kontingent fremd
+   * belegt, scheitert schon die Schreibprobe, die eigenen Daten sind aber
+   * vollständig lesbar. Nur wenn der Zugriff selbst verboten ist
+   * (SecurityError, Speicher fehlt), bleibt der Arbeitsspeicher.
+   */
   function detectBackend() {
+    var ls = null;
+    try { ls = (typeof localStorage !== "undefined") ? localStorage : null; } catch (e) { ls = null; }
+    if (!ls) return { backend: memoryBackend(), full: false };
+    try { ls.getItem(KEY); } catch (e) { return { backend: memoryBackend(), full: false }; }
     try {
-      var ls = (typeof localStorage !== "undefined") ? localStorage : null;
-      if (!ls) return memoryBackend();
-      var probe = "zeitkonto:probe";
-      ls.setItem(probe, "1");
-      ls.removeItem(probe);
-      return ls;
+      ls.setItem("zeitkonto:probe", "1");
+      ls.removeItem("zeitkonto:probe");
     } catch (e) {
-      return memoryBackend();
+      if (!isQuotaError(e)) return { backend: memoryBackend(), full: false };
+      return { backend: ls, full: true };
     }
+    return { backend: ls, full: false };
   }
 
   /* ------------------------------------------------------------------ */
@@ -87,7 +159,7 @@
   };
 
   function migrate(state) {
-    var from = state.version || 1;
+    var from = +state.version || 1;
     // Daten einer neueren App-Version nie auf ein älteres Schema zurückstufen
     if (from > SCHEMA) return state;
     for (var v = from + 1; v <= SCHEMA; v++) {
@@ -98,33 +170,34 @@
     return state;
   }
 
-  function isQuotaError(e) {
-    var s = String((e && (e.name || "")) + " " + (e && e.message || e));
-    return /quota|exceeded|NS_ERROR_DOM_QUOTA_REACHED/i.test(s) || (e && (e.code === 22 || e.code === 1014));
-  }
-
   /* ------------------------------------------------------------------ */
   /* Store                                                               */
   /* ------------------------------------------------------------------ */
   function createStore(options) {
     options = options || {};
-    var backend = options.backend || detectBackend();
+    var detected = options.backend ? { backend: options.backend, full: false } : detectBackend();
+    var backend = detected.backend;
     var defaults = options.defaultSettings || function () { return {}; };
+    var clock = options.clock || function () { return Date.now(); };
 
     var state = null;
     var listeners = [];
     var undoStack = [];
     var redoStack = [];
+    var lastPushed = null;       // jüngster Rückgängig-Schritt (nur der darf wachsen)
     var saveTimer = null;
     var dirty = false;
     var lastError = null;
+    var lastErrorEmit = 0;
+    var full = detected.full;    // Speicher voll (Schreibprobe oder letztes Speichern gescheitert)
     var lastRaw = null;          // zuletzt gelesener/geschriebener Rohstand
     var pending = freshPending();
     var newerSchema = false;
+    var revision = 0;
 
     /** Was dieses Fenster seit dem letzten Speichern selbst verändert hat. */
     function freshPending() {
-      return { days: {}, settings: {}, meta: {}, achievements: false, full: false };
+      return { days: {}, settings: {}, meta: {}, parts: {}, achievements: false, full: false };
     }
 
     function blank() {
@@ -147,6 +220,9 @@
       try { raw = backend.getItem(KEY); } catch (e) { lastError = e; }
       lastRaw = raw;
       pending = freshPending();
+      undoStack.length = 0;
+      redoStack.length = 0;
+      lastPushed = null;
       if (!raw) { state = blank(); return state; }
       try {
         state = parseRaw(raw);
@@ -164,27 +240,25 @@
 
     function parseRaw(raw) {
       var parsed = JSON.parse(raw);
-      if (!parsed || typeof parsed !== "object") throw new Error("bad shape");
-      if ((parsed.version || 1) > SCHEMA) newerSchema = true;
+      if (!isPlainObject(parsed)) throw new Error("bad shape");
+      if ((+parsed.version || 1) > SCHEMA) newerSchema = true;
       return migrate(normalize(parsed));
     }
 
     function normalize(parsed) {
       var s = blank();
-      s.version = parsed.version || 1;
-      s.settings = Object.assign(defaults(), parsed.settings || {});
-      s.days = parsed.days && typeof parsed.days === "object" ? parsed.days : {};
-      s.achievements = Object.assign({ earned: {}, xp: 0, bestStreak: 0, seen: {} }, parsed.achievements || {});
-      s.meta = Object.assign(s.meta, parsed.meta || {});
+      // Unbekannte Bereiche einer neueren Version unverändert mitführen
+      Object.keys(parsed).forEach(function (k) {
+        if (!has(KNOWN_PARTS, k)) s[k] = parsed[k];
+      });
+      s.version = +parsed.version || 1;
+      s.settings = Object.assign(defaults(), isPlainObject(parsed.settings) ? parsed.settings : {});
+      s.days = isPlainObject(parsed.days) ? parsed.days : {};
+      s.achievements = Object.assign({ earned: {}, xp: 0, bestStreak: 0, seen: {} }, isPlainObject(parsed.achievements) ? parsed.achievements : {});
+      s.meta = Object.assign(s.meta, isPlainObject(parsed.meta) ? parsed.meta : {});
       // Tageseinträge säubern
       Object.keys(s.days).forEach(function (iso) {
-        var d = s.days[iso];
-        if (!d || typeof d !== "object" || !isValidDateKey(iso)) { delete s.days[iso]; return; }
-        d.date = iso;
-        d.breaks = Array.isArray(d.breaks) ? d.breaks : [];
-        d.start = typeof d.start === "string" ? d.start : "";
-        d.end = typeof d.end === "string" ? d.end : "";
-        d.note = typeof d.note === "string" ? d.note : "";
+        if (!isValidDateKey(iso) || !cleanDay(s.days[iso], iso, false)) delete s.days[iso];
       });
       return s;
     }
@@ -194,6 +268,25 @@
       if (saveTimer) clearTimeout(saveTimer);
       if (immediate) return flush();
       saveTimer = setTimeout(flush, 220);
+    }
+
+    /** Schreibt den Hauptstand; bei vollem Speicher werden zuerst Sicherungen geopfert, nie die Daten. */
+    function writeMain(raw) {
+      try { backend.setItem(KEY, raw); return; } catch (e) { if (!isQuotaError(e)) throw e; }
+      try { backend.removeItem(BACKUP_KEY + ":prev"); backend.removeItem(BACKUP_KEY + ":corrupt"); } catch (e2) { /* egal */ }
+      try { backend.setItem(KEY, raw); return; } catch (e) { if (!isQuotaError(e)) throw e; }
+      // Letzte Stufe: die Startsicherung ist ein älterer Stand derselben Daten
+      var backup = null;
+      try { backup = backend.getItem(BACKUP_KEY); } catch (e3) { backup = null; }
+      if (!backup) { backend.setItem(KEY, raw); return; }
+      try { backend.removeItem(BACKUP_KEY); } catch (e4) { /* egal */ }
+      try {
+        backend.setItem(KEY, raw);
+      } catch (e) {
+        // Hat nichts genützt — dann wenigstens die Sicherung zurücklegen
+        try { backend.setItem(BACKUP_KEY, backup); } catch (e5) { /* nichts mehr zu machen */ }
+        throw e;
+      }
     }
 
     function flush() {
@@ -206,23 +299,26 @@
         try { current = backend.getItem(KEY); } catch (e) { current = null; }
         if (current && current !== lastRaw && !pending.full) external = absorb(current);
         var raw = JSON.stringify(state);
-        try {
-          backend.setItem(KEY, raw);
-        } catch (e) {
-          // Platz schaffen: zuerst die ältere Sicherung opfern, nie die Daten
-          if (!isQuotaError(e)) throw e;
-          try { backend.removeItem(BACKUP_KEY + ":prev"); backend.removeItem(BACKUP_KEY + ":corrupt"); } catch (e2) { /* egal */ }
-          backend.setItem(KEY, raw);
-        }
+        writeMain(raw);
         lastRaw = raw;
         dirty = false;
         pending = freshPending();
         lastError = null;
+        lastErrorEmit = 0;
+        full = false;
         if (external) emit(external);
         return true;
       } catch (e) {
         lastError = e;
-        emit({ type: "error", error: e, quota: isQuotaError(e) });
+        if (external) emit(external);   // fremder Stand ist übernommen, auch wenn Schreiben scheiterte
+        var quota = isQuotaError(e);
+        if (quota) full = true;
+        // Nicht bei jedem Tastendruck erneut warnen
+        var now = clock();
+        if (!lastErrorEmit || now - lastErrorEmit >= ERROR_REPEAT_MS) {
+          lastErrorEmit = now;
+          emit({ type: "error", error: e, quota: quota });
+        }
         return false;
       }
     }
@@ -230,9 +326,11 @@
     /* ---- Mehrere Fenster -------------------------------------------- */
 
     /** Vergleichsform eines Tages: Standardfelder ergänzt, Schlüssel sortiert. */
-    function dayJSON(d) {
+    function dayJSON(d, ignoreStamp) {
       if (!d) return "";
-      return stable(Object.assign({ breaks: [], start: "", end: "", note: "" }, d));
+      var v = Object.assign({ breaks: [], start: "", end: "", note: "" }, d);
+      if (ignoreStamp) delete v.updatedAt;
+      return stable(v);
     }
 
     function stable(v) {
@@ -265,20 +363,27 @@
           changedDays.push(iso);
         }
       });
-      var settingsChanged = false;
+      var changedSettings = [];
       Object.keys(ext.settings).forEach(function (k) {
         if (pending.settings[k]) return;
-        if (stable(ext.settings[k]) !== stable(mine.settings[k])) settingsChanged = true;
+        if (stable(ext.settings[k]) !== stable(mine.settings[k])) changedSettings.push(k);
       });
-      Object.keys(pending.settings).forEach(function (k) { ext.settings[k] = mine.settings[k]; });
+      Object.keys(pending.settings).forEach(function (k) {
+        if (mine.settings[k] === undefined) delete ext.settings[k];
+        else ext.settings[k] = mine.settings[k];
+      });
       Object.keys(pending.meta).forEach(function (k) { ext.meta[k] = mine.meta[k]; });
+      Object.keys(pending.parts).forEach(function (k) {
+        if (mine[k] === undefined) delete ext[k];
+        else ext[k] = mine[k];
+      });
       ext.achievements = mergeAchievements(ext.achievements, mine.achievements);
       if (!newerSchema) ext.version = SCHEMA;
       state = ext;
       lastRaw = raw;
-      rebaseHistory(changedDays, settingsChanged);
-      if (!changedDays.length && !settingsChanged) return null;
-      return { type: "external", days: changedDays, settings: settingsChanged, newer: newerSchema };
+      rebaseHistory(changedDays, changedSettings);
+      if (!changedDays.length && !changedSettings.length) return null;
+      return { type: "external", days: changedDays, settings: changedSettings.length > 0, settingKeys: changedSettings, newer: newerSchema };
     }
 
     /** Abzeichen gehen beim Zusammenführen nie verloren. */
@@ -295,22 +400,22 @@
     /**
      * Rückgängig-Stände an fremde Änderungen anpassen — sonst würde ein
      * „Rückgängig“ hier auch die Eingaben aus dem anderen Fenster löschen.
+     * Ein Schritt kennt nur die Tage und Einstellungen, die er selbst
+     * verändert hat; nur dort wird der „Vorher“-Wert nachgeführt.
      */
-    function rebaseHistory(changedDays, settingsChanged) {
-      if (!changedDays.length && !settingsChanged) return;
+    function rebaseHistory(changedDays, changedSettings) {
+      if (!changedDays.length && !changedSettings.length) return;
       [undoStack, redoStack].forEach(function (stack) {
         stack.forEach(function (entry) {
-          try {
-            var snap = JSON.parse(entry.snap);
-            changedDays.forEach(function (iso) {
-              if (state.days[iso]) snap.days[iso] = state.days[iso];
-              else delete snap.days[iso];
-            });
-            if (settingsChanged) snap.settings = state.settings;
-            entry.snap = JSON.stringify(snap);
-          } catch (e) { /* Eintrag bleibt wie er ist */ }
+          changedDays.forEach(function (iso) {
+            if (has(entry.days, iso)) entry.days[iso] = dayRaw(iso);
+          });
+          changedSettings.forEach(function (k) {
+            if (has(entry.settings, k)) entry.settings[k] = settingRaw(k);
+          });
         });
       });
+      lastPushed = null;   // nach fremden Änderungen beginnt ein neuer Schritt
     }
 
     /**
@@ -333,8 +438,10 @@
     }
 
     function emit(evt) {
+      evt = evt || { type: "change" };
+      if (evt.type !== "error") revision++;
       listeners.forEach(function (fn) {
-        try { fn(evt || { type: "change" }, state); } catch (e) { /* Listener isolieren */ }
+        try { fn(evt, state); } catch (e) { /* Listener isolieren */ }
       });
     }
 
@@ -356,9 +463,15 @@
 
     function setDay(iso, patch, opts) {
       opts = opts || {};
-      pushUndo(opts.label || "day");
       var current = state.days[iso] || { date: iso, breaks: [] };
       var next = Object.assign({}, current, patch, { date: iso, updatedAt: new Date().toISOString() });
+      // Nichts geändert (z. B. Feld verlassen ohne Eingabe): kein Rückgängig-
+      // Schritt und keine Markierung — sonst überstimmt dieses Fenster beim
+      // Zusammenführen grundlos die Eingabe eines anderen.
+      if (state.days[iso] && dayJSON(current, true) === dayJSON(next, true)) return current;
+      var label = opts.label || "day";
+      var entry = beginUndo(label, opts.undo === false ? false : label + "|" + iso + "|" + Object.keys(patch || {}).sort().join(","));
+      if (entry) trackDay(entry, iso);
       state.days[iso] = next;
       pending.days[iso] = true;
       persist(opts.immediate);
@@ -368,7 +481,8 @@
 
     function deleteDay(iso, opts) {
       if (!state.days[iso]) return false;
-      pushUndo((opts && opts.label) || "delete");
+      var entry = beginUndo((opts && opts.label) || "delete", opts && opts.undo === false ? false : null);
+      if (entry) trackDay(entry, iso);
       delete state.days[iso];
       pending.days[iso] = true;
       persist();
@@ -377,8 +491,9 @@
     }
 
     function setDays(map, opts) {
-      pushUndo((opts && opts.label) || "bulk");
+      var entry = beginUndo((opts && opts.label) || "bulk", opts && opts.undo === false ? false : null);
       Object.keys(map).forEach(function (iso) {
+        if (entry) trackDay(entry, iso);
         pending.days[iso] = true;
         if (map[iso] === null) delete state.days[iso];
         else state.days[iso] = Object.assign({}, state.days[iso] || { date: iso, breaks: [] }, map[iso], { date: iso, updatedAt: new Date().toISOString() });
@@ -395,11 +510,37 @@
 
     function getSettings() { return state.settings; }
 
+    /**
+     * Reine Buchhaltung (letzter Export, letzter Kalenderabgleich) ist kein
+     * eigener Rückgängig-Schritt — sonst nimmt „Rückgängig“ nach einem
+     * Abgleich nur dessen Zeitstempel zurück statt der übernommenen Tage.
+     */
+    function isBookkeeping(patch) {
+      var keys = Object.keys(patch || {});
+      if (!keys.length) return true;
+      return keys.every(function (k) {
+        if (k === "lastExportAt") return true;
+        if (k === "outlook" && isPlainObject(patch.outlook) && isPlainObject(state.settings.outlook)) {
+          var a = Object.assign({}, state.settings.outlook, { lastSyncAt: null });
+          var b = Object.assign({}, patch.outlook, { lastSyncAt: null });
+          return stable(a) === stable(b);
+        }
+        return false;
+      });
+    }
+
     function updateSettings(patch, opts) {
-      pushUndo("settings");
+      opts = opts || {};
+      patch = patch || {};
+      var quiet = opts.undo === false || isBookkeeping(patch);
+      var keys = Object.keys(patch).sort();
+      var entry = quiet ? null : beginUndo("settings", "settings|" + keys.join(","));
+      keys.forEach(function (k) {
+        if (entry) trackSetting(entry, k);
+        pending.settings[k] = true;
+      });
       Object.assign(state.settings, patch);
-      Object.keys(patch || {}).forEach(function (k) { pending.settings[k] = true; });
-      persist(opts && opts.immediate);
+      persist(opts.immediate);
       emit({ type: "settings", patch: patch });
       return state.settings;
     }
@@ -425,50 +566,118 @@
     }
 
     /* ---- Rückgängig ------------------------------------------------- */
+    /*
+       Ein Schritt merkt sich nur, was er verändert: den Vorher-Stand der
+       betroffenen Tage und Einstellungen (als JSON, damit spätere Änderungen
+       an denselben Objekten ihn nicht verfälschen) und — bei Import und
+       Zurücksetzen — ganze Bereiche wie Erfolge und Meta-Daten. Ein
+       Tastendruck kostet so einige hundert Bytes statt einer Kopie aller
+       Daten. Schnelle Folgeänderungen am selben Feld (Tippen in einem
+       Zeitfeld) wachsen in den jüngsten Schritt hinein, statt je einen
+       eigenen anzulegen.
 
-    function snapshot() {
-      return JSON.stringify({ days: state.days, settings: state.settings });
+       Eintrag: { label, key, at, days: {iso: json|ABSENT},
+                  settings: {key: json|ABSENT}, parts: {name: json|ABSENT} }
+    */
+    var ABSENT = "";   // „gab es vorher nicht“ — gültiges JSON ist nie leer
+
+    function rawOf(v) { return v === undefined ? ABSENT : JSON.stringify(v); }
+    function dayRaw(iso) { return state.days[iso] ? JSON.stringify(state.days[iso]) : ABSENT; }
+    function settingRaw(k) { return rawOf(state.settings[k]); }
+
+    /**
+     * Beginnt einen Schritt oder setzt den jüngsten fort.
+     * key: Zusammenfassungs-Schlüssel (null = nie zusammenfassen,
+     *      false = gar kein Schritt).
+     */
+    function beginUndo(label, key) {
+      if (key === false) return null;
+      var now = clock();
+      redoStack.length = 0;
+      var top = undoStack[undoStack.length - 1];
+      if (key && top && top === lastPushed && top.key === key && now - top.at < COALESCE_MS) {
+        top.at = now;
+        return top;
+      }
+      var entry = { label: label, key: key || null, at: now, days: {}, settings: {}, parts: null };
+      undoStack.push(entry);
+      if (undoStack.length > UNDO_LIMIT) undoStack.shift();
+      lastPushed = entry;
+      return entry;
     }
 
-    function pushUndo(label) {
-      try {
-        undoStack.push({ label: label, snap: snapshot(), at: Date.now() });
-        if (undoStack.length > 40) undoStack.shift();
-        redoStack.length = 0;
-      } catch (e) { /* Snapshot ist optional */ }
+    function trackDay(entry, iso) {
+      if (!has(entry.days, iso)) entry.days[iso] = dayRaw(iso);
     }
 
-    function applySnapshot(snap) {
-      var parsed = JSON.parse(snap);
-      // Nur was sich wirklich unterscheidet, gilt als eigene Änderung
-      var keys = {};
-      Object.keys(state.days).forEach(function (k) { keys[k] = 1; });
-      Object.keys(parsed.days).forEach(function (k) { keys[k] = 1; });
-      Object.keys(keys).forEach(function (iso) {
-        if (dayJSON(state.days[iso]) !== dayJSON(parsed.days[iso])) pending.days[iso] = true;
+    function trackSetting(entry, k) {
+      if (!has(entry.settings, k)) entry.settings[k] = settingRaw(k);
+    }
+
+    function trackPart(entry, name) {
+      entry.parts = entry.parts || {};
+      if (!has(entry.parts, name)) entry.parts[name] = rawOf(state[name]);
+    }
+
+    /** Setzt die Vorher-Werte eines Schritts ein; liefert den Gegen-Schritt. */
+    function applyEntry(entry) {
+      var inverse = { label: entry.label, key: null, at: clock(), days: {}, settings: {}, parts: null };
+      Object.keys(entry.days).forEach(function (iso) {
+        var cur = dayRaw(iso);
+        var want = entry.days[iso];
+        inverse.days[iso] = cur;
+        if (cur === want) return;
+        if (want === ABSENT) delete state.days[iso];
+        else state.days[iso] = JSON.parse(want);
+        pending.days[iso] = true;
       });
-      Object.keys(parsed.settings || {}).forEach(function (k) {
-        if (stable(parsed.settings[k]) !== stable(state.settings[k])) pending.settings[k] = true;
+      Object.keys(entry.settings).forEach(function (k) {
+        var cur = settingRaw(k);
+        var want = entry.settings[k];
+        inverse.settings[k] = cur;
+        if (cur === want) return;
+        if (want === ABSENT) delete state.settings[k];
+        else state.settings[k] = JSON.parse(want);
+        pending.settings[k] = true;
       });
-      state.days = parsed.days;
-      state.settings = parsed.settings;
-      persist(true);
-      emit({ type: "restore" });
+      if (entry.parts) {
+        inverse.parts = {};
+        Object.keys(entry.parts).forEach(function (name) {
+          var cur = rawOf(state[name]);
+          var want = entry.parts[name];
+          inverse.parts[name] = cur;
+          if (cur === want) return;
+          var prev = state[name];
+          if (want === ABSENT) delete state[name];
+          else state[name] = JSON.parse(want);
+          if (name === "achievements") pending.achievements = true;
+          else if (name === "meta") {
+            Object.keys(Object.assign({}, prev || {}, state.meta || {})).forEach(function (k) { pending.meta[k] = true; });
+            state.meta = state.meta || {};
+          }
+          else if (name !== "version") pending.parts[name] = true;
+        });
+      }
+      return inverse;
     }
 
     function undo() {
       if (!undoStack.length) return false;
       var entry = undoStack.pop();
-      redoStack.push({ label: entry.label, snap: snapshot() });
-      applySnapshot(entry.snap);
+      redoStack.push(applyEntry(entry));
+      lastPushed = null;
+      persist(true);
+      emit({ type: "restore" });
       return entry.label;
     }
 
     function redo() {
       if (!redoStack.length) return false;
       var entry = redoStack.pop();
-      undoStack.push({ label: entry.label, snap: snapshot() });
-      applySnapshot(entry.snap);
+      undoStack.push(applyEntry(entry));
+      lastPushed = null;
+      persist(true);
+      emit({ type: "restore" });
       return entry.label;
     }
 
@@ -478,66 +687,159 @@
     /* ---- Import / Export -------------------------------------------- */
 
     function exportState() {
-      return {
+      var out = {
         app: "Zeitkonto",
-        schema: SCHEMA,
+        schema: Math.max(+state.version || SCHEMA, SCHEMA),
         exportedAt: new Date().toISOString(),
         settings: state.settings,
         days: state.days,
         achievements: state.achievements,
         meta: { createdAt: state.meta.createdAt }
       };
+      // Bereiche einer neueren Version gehören zur vollständigen Sicherung
+      Object.keys(state).forEach(function (k) {
+        if (!has(KNOWN_PARTS, k) && !has(EXPORT_ENVELOPE, k)) out[k] = state[k];
+      });
+      return out;
+    }
+
+    function importError(code, message) {
+      var e = new Error(message);
+      e.code = code;
+      return e;
+    }
+
+    /** Einstellungen aus einer Datei: nur Werte, deren Typ zur App passt. */
+    function cleanSettings(incoming) {
+      var base = defaults();
+      var out = {};
+      Object.keys(incoming).forEach(function (k) {
+        var v = incoming[k];
+        var ref = base[k];
+        if (v === undefined) return;
+        if (ref !== null && ref !== undefined && v !== null) {
+          if (typeof ref === "number" && !isNum(v)) return;
+          if (typeof ref === "boolean" && typeof v !== "boolean") return;
+          if (typeof ref === "string" && typeof v !== "string") return;
+          if (typeof ref === "object" && (typeof v !== "object" || Array.isArray(ref) !== Array.isArray(v))) return;
+        }
+        out[k] = v;
+      });
+      return out;
+    }
+
+    function cleanAchievements(a) {
+      return {
+        earned: isPlainObject(a.earned) ? a.earned : {},
+        seen: isPlainObject(a.seen) ? a.seen : {},
+        xp: isNum(a.xp) ? a.xp : 0,
+        bestStreak: isNum(a.bestStreak) ? a.bestStreak : 0
+      };
     }
 
     /**
-     * @param {Object} data  geparster Export
+     * Liest eine Sicherung ein. Die Datei wird zuerst vollständig geprüft
+     * und auf den aktuellen Stand migriert — erst dann wird etwas geändert.
+     * Unbrauchbare Tage werden übersprungen und gezählt, statt die
+     * Berechnung später zum Absturz zu bringen.
+     *
+     * @param {Object} data  geparster Export (oder roher Speicherstand)
      * @param {String} mode  "replace" | "merge" | "merge-keep"
+     * @returns {{added, updated, skipped, invalid, newer}}
      */
     function importState(data, mode) {
-      if (!data || typeof data !== "object") throw new Error("Ungültige Datei");
-      var incomingDays = data.days || (data.state && data.state.days);
-      if (!incomingDays || typeof incomingDays !== "object") throw new Error("Keine Tagesdaten gefunden");
+      if (!isPlainObject(data)) throw importError("invalid", "Ungültige Datei");
+      var src = isPlainObject(data.state) && !data.days ? data.state : data;
+      var incomingDays = src.days;
+      if (!isPlainObject(incomingDays)) throw importError("no-days", "Keine Tagesdaten gefunden");
 
-      pushUndo("import");
-      var added = 0, updated = 0, skipped = 0;
+      // 1. Prüfen und migrieren — auf Kopien, die Datei bleibt unberührt
+      var version = +(data.schema || src.version || data.version) || 1;
+      var days = {};
+      var invalid = 0, badKeys = 0, total = 0;
+      Object.keys(incomingDays).forEach(function (iso) {
+        total++;
+        if (!isValidDateKey(iso)) { badKeys++; return; }
+        var copy;
+        try { copy = JSON.parse(JSON.stringify(incomingDays[iso])); } catch (e) { copy = null; }
+        var clean = cleanDay(copy, iso, true);
+        if (!clean) { invalid++; return; }
+        days[iso] = clean;
+      });
+      if (total > 0 && !Object.keys(days).length) {
+        throw importError("no-valid-days", "Keine gültigen Tagesdaten gefunden");
+      }
+      days = migrate({ version: version, days: days }).days;
+      var settings = isPlainObject(src.settings) ? cleanSettings(JSON.parse(JSON.stringify(src.settings))) : null;
+      var achievements = isPlainObject(src.achievements) ? cleanAchievements(JSON.parse(JSON.stringify(src.achievements))) : null;
+      var extras = {};
+      Object.keys(src).forEach(function (k) {
+        if (!has(KNOWN_PARTS, k) && !has(EXPORT_ENVELOPE, k)) extras[k] = src[k];
+      });
+
+      // 2. Anwenden — als ein einziger Rückgängig-Schritt
+      var entry = beginUndo("import", null);
+      var added = 0, updated = 0, skipped = invalid + badKeys;
 
       if (mode === "replace") {
+        Object.keys(state.days).forEach(function (iso) { trackDay(entry, iso); });
+        Object.keys(days).forEach(function (iso) { trackDay(entry, iso); });
         state.days = {};
-        if (data.settings) state.settings = Object.assign(defaults(), data.settings);
+        if (settings) {
+          var next = Object.assign(defaults(), settings);
+          Object.keys(Object.assign({}, state.settings, next)).forEach(function (k) { trackSetting(entry, k); });
+          state.settings = next;
+        }
         pending.full = true;
       }
 
-      Object.keys(incomingDays).forEach(function (iso) {
-        if (!isValidDateKey(iso)) { skipped++; return; }
-        var incoming = incomingDays[iso];
-        if (!incoming || typeof incoming !== "object") { skipped++; return; }
-        incoming.date = iso;
-        if (!state.days[iso]) { state.days[iso] = incoming; pending.days[iso] = true; added++; return; }
+      Object.keys(days).forEach(function (iso) {
+        var incoming = days[iso];
+        trackDay(entry, iso);
+        if (!state.days[iso]) {
+          state.days[iso] = Object.assign({ date: iso, start: "", end: "", note: "", breaks: [] }, incoming);
+          pending.days[iso] = true;
+          added++;
+          return;
+        }
         if (mode === "merge-keep") { skipped++; return; }
         state.days[iso] = Object.assign({}, state.days[iso], incoming);
         pending.days[iso] = true;
         updated++;
       });
 
-      if (mode === "merge" && data.settings) {
-        state.settings = Object.assign(state.settings, data.settings);
-        Object.keys(data.settings).forEach(function (k) { pending.settings[k] = true; });
+      if (mode === "merge" && settings) {
+        Object.keys(settings).forEach(function (k) { trackSetting(entry, k); pending.settings[k] = true; });
+        Object.assign(state.settings, settings);
       }
-      if (data.achievements && mode !== "merge-keep") {
-        state.achievements = Object.assign(state.achievements, data.achievements);
+      if (achievements && mode !== "merge-keep") {
+        trackPart(entry, "achievements");
+        state.achievements = mergeAchievements(state.achievements, achievements);
+        pending.achievements = true;
       }
+      Object.keys(extras).forEach(function (k) {
+        if (mode !== "replace" && state[k] !== undefined) return;
+        trackPart(entry, k);
+        state[k] = extras[k];
+        pending.parts[k] = true;
+      });
 
-      state = migrate(state);
       persist(true);
       emit({ type: "import" });
-      return { added: added, updated: updated, skipped: skipped };
+      return { added: added, updated: updated, skipped: skipped, invalid: invalid, newer: version > SCHEMA };
     }
 
+    /** Alles löschen — vollständig umkehrbar (Tage, Einstellungen, Erfolge, Meta). */
     function reset(keepSettings) {
-      pushUndo("reset");
-      var keep = keepSettings ? state.settings : null;
-      state = blank();
-      if (keep) state.settings = keep;
+      var entry = beginUndo("reset", null);
+      var fresh = blank();
+      Object.keys(state.days).forEach(function (iso) { trackDay(entry, iso); });
+      if (keepSettings) fresh.settings = state.settings;
+      else Object.keys(Object.assign({}, state.settings, fresh.settings)).forEach(function (k) { trackSetting(entry, k); });
+      Object.keys(Object.assign({}, state, fresh)).forEach(function (k) {
+        if (k !== "days" && k !== "settings") trackPart(entry, k);
+      });
+      state = fresh;
       pending.full = true;
       persist(true);
       emit({ type: "reset" });
@@ -550,9 +852,10 @@
      * eine gefüllte Sicherung (sonst wäre sie nach einem Datenschaden oder
      * einem versehentlichen Zurücksetzen genau dann weg, wenn man sie braucht).
      * Die Sicherung vom Vortag bleibt als zweite Stufe erhalten.
+     * Ist der Speicher voll, unterbleibt sie — der Platz gehört den Daten.
      */
     function makeBackup() {
-      if (!state || !dayCount()) return false;
+      if (!state || !dayCount() || full) return false;
       try {
         var prev = readBackup();
         var now = new Date();
@@ -586,9 +889,8 @@
 
     /* ---- Diagnose --------------------------------------------------- */
 
-    function usageBytes() {
-      try { return (backend.getItem(KEY) || "").length; } catch (e) { return 0; }
-    }
+    /** Grösse des gespeicherten Stands — aus dem Gedächtnis statt bei jedem Aufruf neu gelesen. */
+    function usageBytes() { return lastRaw ? lastRaw.length : 0; }
 
     function diagnostics() {
       return {
@@ -596,6 +898,7 @@
         days: dayCount(),
         bytes: usageBytes(),
         volatile: !!backend.volatile,
+        full: full,
         newerSchema: newerSchema,
         lastError: lastError ? String(lastError.message || lastError) : null,
         undoDepth: undoStack.length
@@ -633,6 +936,9 @@
       readCorrupt: readCorrupt,
       syncExternal: syncExternal,
       isNewerSchema: function () { return newerSchema; },
+      isFull: function () { return full; },
+      /** Zähler, der bei jeder Datenänderung steigt — Schlüssel für Zwischenspeicher. */
+      rev: function () { return revision; },
       diagnostics: diagnostics
     };
   }
@@ -640,7 +946,9 @@
   return {
     createStore: createStore,
     memoryBackend: memoryBackend,
+    detectBackend: detectBackend,
     isValidDateKey: isValidDateKey,
+    cleanDay: cleanDay,
     SCHEMA: SCHEMA,
     KEY: KEY
   };

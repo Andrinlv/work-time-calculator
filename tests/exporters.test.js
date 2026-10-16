@@ -52,7 +52,8 @@ test("CSV maskiert Trennzeichen und Anführungszeichen in Notizen", () => {
   const csv = X.toCSV(buildRange(days).days, { labels: LABELS });
   assert.ok(csv.indexOf('"Kunde ""Meier""; Rückruf nötig"') >= 0, "Zelle muss vollständig maskiert sein");
   const line = csv.replace(/^﻿/, "").split("\r\n")[1];
-  assert.equal(splitRespectingQuotes(line, ";").length, 20, "Spaltenzahl darf sich nicht verschieben");
+  assert.equal(splitRespectingQuotes(line, ";").length, X.CSV_COLUMNS.length, "Spaltenzahl darf sich nicht verschieben");
+  assert.equal(X.CSV_COLUMNS.length, 22, "neue Spalten nur hinten anfügen");
 });
 
 test("CSV kann mit Komma und ohne BOM erzeugt werden", () => {
@@ -161,3 +162,222 @@ function splitRespectingQuotes(line, delim) {
   out.push(cur);
   return out;
 }
+
+/* ---------------------------------------------------------------------- */
+/* CSV: die eigene Datei kommt verlustfrei zurück                          */
+/* ---------------------------------------------------------------------- */
+
+const T = require("../assets/js/core/time.js");
+const I = require("../assets/js/ui/i18n.js");
+const S = require("../assets/js/data/store.js");
+
+const TYPE_KEYS = Object.keys(R.DAY_TYPES);
+function labelsIn(lang, prefix, keys) {
+  const out = {};
+  keys.forEach((k) => { out[k] = I.DICT[lang][prefix + k]; });
+  return out;
+}
+const ALL_TYPE_LABELS = I.LANGS.map((l) => labelsIn(l, "type.", TYPE_KEYS));
+const ALL_LOC_LABELS = I.LANGS.map((l) => labelsIn(l, "loc.", R.LOCATIONS));
+
+function importCSV(csv, existing, settings) {
+  const s = settings || Object.assign(R.defaultSettings(), { autoHolidays: true, holidayRegion: "CH-LU" });
+  const parsed = X.parseCSV(csv);
+  assert.equal(parsed.error, undefined, parsed.error);
+  return X.csvRowsToDays(parsed, {
+    getDay: (iso) => (existing && existing[iso]) || null,
+    autoType: (iso) => E.computeDay({ date: iso }, { settings: s }).type,
+    typeLabels: ALL_TYPE_LABELS,
+    locationLabels: ALL_LOC_LABELS,
+    breakLabel: "Mittag"
+  });
+}
+
+const ROUND = {
+  "2026-08-03": { date: "2026-08-03", start: "08:00", end: "17:00", location: "home",
+    breaks: [{ id: "a", start: "12:11", end: "12:46" }, { id: "b", start: "15:00", end: "15:10", paid: true }],
+    note: "Zeile 1\nZeile 2; mit \"Zitat\", Komma" },
+  "2026-08-04": { date: "2026-08-04", start: "08:00", end: "12:00", breaks: [{ id: "c", start: "10:00", end: "10:15" }], note: "=HYPERLINK(\"http://x\",\"klick\")" },
+  "2026-08-05": { date: "2026-08-05", type: "vacation", absenceFactor: 1 },
+  "2026-08-06": { date: "2026-08-06", type: "sick", absenceFactor: 0.5, start: "13:00", end: "17:30", breaks: [] },
+  "2026-08-07": { date: "2026-08-07", start: "22:00", end: "06:00", breaks: [{ id: "n", start: "02:00", end: "02:30" }], note: "'=schon mit Apostroph" },
+  "2026-08-10": { date: "2026-08-10", type: "training", absenceFactor: 1, note: "-Kurs" },
+  "2026-08-11": { date: "2026-08-11", type: "free", note: "" }
+};
+
+function rangeWith(days, settings) {
+  return E.computeRange("2026-07-31", "2026-08-12", (iso) => days[iso], settings);
+}
+
+test("Die eigene CSV lässt sich verlustfrei wieder einlesen", () => {
+  const settings = Object.assign(R.defaultSettings(), { autoHolidays: true, holidayRegion: "CH-LU" });
+  const before = rangeWith(ROUND, settings);
+  const csv = X.toCSV(before.days, { labels: I.typeLabels(), getRecord: (iso) => ROUND[iso] || null });
+  const res = importCSV(csv, null, settings);
+  const restored = {};
+  Object.keys(res.days).forEach((iso) => { restored[iso] = Object.assign({ date: iso }, res.days[iso]); });
+
+  assert.deepEqual(Object.keys(restored).sort(), Object.keys(ROUND).sort(), "genau die erfassten Tage, keine leeren Wochenenden");
+  const after = rangeWith(restored, settings);
+  assert.equal(after.totals.balance, before.totals.balance, "der Saldo bleibt derselbe");
+  before.days.forEach((d, i) => {
+    const a = after.days[i];
+    assert.equal(a.type, d.type, d.date + " Tagesart");
+    assert.equal(a.absenceFactor, d.absenceFactor, d.date + " Anteil");
+    assert.equal(a.net, d.net, d.date + " Netto");
+    assert.equal(a.location, d.location, d.date + " Ort");
+    assert.equal(a.note, d.note, d.date + " Notiz");
+  });
+  assert.equal(restored["2026-08-01"], undefined, "1. August (Feiertag, automatisch) legt keinen Eintrag an");
+  assert.deepEqual(restored["2026-08-03"].breaks.map((b) => b.start + "-" + b.end + (b.paid ? "*" : "")), ["12:11-12:46", "15:00-15:10*"]);
+  assert.equal(restored["2026-08-11"].type, "free", "ausdrücklich arbeitsfreier Werktag bleibt arbeitsfrei");
+});
+
+test("CSV aus einer anderen Sprache wird ebenso erkannt", () => {
+  const range = rangeWith(ROUND, R.defaultSettings());
+  const fr = labelsIn("fr", "type.", TYPE_KEYS);
+  const csv = X.toCSV(range.days, { labels: fr, locationLabels: labelsIn("fr", "loc.", R.LOCATIONS), getRecord: (iso) => ROUND[iso] || null });
+  const res = importCSV(csv);
+  assert.equal(res.days["2026-08-05"].type, "vacation", "« Vacances » → Ferien");
+  assert.equal(res.days["2026-08-03"].location, "home", "« Télétravail » → Homeoffice");
+  assert.equal(res.unknownTypes, 0);
+});
+
+test("CSV-Export schützt vor Formeln, das Einlesen stellt den Text wieder her", () => {
+  const range = rangeWith(ROUND, R.defaultSettings());
+  const csv = X.toCSV(range.days, {});
+  const line = csv.split("\r\n").filter((l) => l.startsWith("2026-08-04"))[0];
+  assert.ok(line.indexOf(";\"'=HYPERLINK(") >= 0, "Formel mit Apostroph entschärft: " + line);
+  assert.ok(!/;"?=HYPERLINK/.test(line));
+  assert.ok(line.indexOf(";-") < 0 || /;-\d/.test(line), "nur Text wird maskiert, keine Zahlen");
+  const rows = X.parseCSV(csv).rows;
+  const byDate = {};
+  rows.forEach((r) => { byDate[r.date] = r; });
+  assert.equal(byDate["2026-08-04"].note, "=HYPERLINK(\"http://x\",\"klick\")");
+  assert.equal(byDate["2026-08-07"].note, "'=schon mit Apostroph");
+  assert.equal(byDate["2026-08-10"].note, "-Kurs");
+});
+
+test("Mehrzeilige Notizen mit Trennzeichen und Anführungszeichen überstehen das Einlesen", () => {
+  const rows = X.parseCSV("Datum;Kommen;Notiz\r\n03.08.2026;08:00;\"Zeile 1\nZeile 2; mit \"\"Zitat\"\"\"\r\n04.08.2026;07:30;ok").rows;
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].note, "Zeile 1\nZeile 2; mit \"Zitat\"");
+  assert.equal(rows[1].start, "07:30");
+});
+
+test("Spaltenerkennung arbeitet mit ganzen Wörtern, nicht mit Wortteilen", () => {
+  const en = X.parseCSV("Date,Start,End,Break\n2026-08-03,08:00,17:00,30\n");
+  assert.equal(en.columns.type, -1, "„Start“ ist keine Tagesart-Spalte");
+  assert.equal(en.columns.start, 1);
+  assert.equal(en.rows[0].breakMinutes, 30);
+
+  const de = X.parseCSV("Wochentag;Datum;Kommen;Gehen\nMo;03.08.2026;08:00;17:00\n");
+  assert.equal(de.columns.date, 1, "„Datum“ statt „Wochentag“");
+  assert.equal(de.rows.length, 1);
+
+  const fr = X.parseCSV("Jour;Date;Arrivée;Départ;Pause;Remarque\nlu;03.08.2026;08:00;17:00;45;ok\n");
+  assert.equal(fr.columns.date, 1);
+  assert.equal(fr.rows[0].start, "08:00");
+  assert.equal(fr.rows[0].end, "17:00");
+  assert.equal(fr.rows[0].note, "ok");
+
+  const own = X.parseCSV(X.toCSV(rangeWith(ROUND, R.defaultSettings()).days, {}));
+  assert.equal(own.columns.brk, 8, "„Pausen (min)“, nicht „Pflichtpause (min)“");
+  assert.equal(own.columns.breakTimes, 21);
+  assert.equal(own.columns.type, 3);
+  assert.equal(own.columns.factor, 20);
+});
+
+test("Pausendauern in allen gängigen Schreibweisen", () => {
+  assert.equal(X.parseBreakMinutes("1:00"), 60);
+  assert.equal(X.parseBreakMinutes("0,5 h"), 30);
+  assert.equal(X.parseBreakMinutes("0.75"), 45);
+  assert.equal(X.parseBreakMinutes("45"), 45);
+  assert.equal(X.parseBreakMinutes("15"), 15, "kleine Zahlen sind Minuten, nicht Stunden");
+  assert.equal(X.parseBreakMinutes("45 min"), 45);
+  assert.equal(X.parseBreakMinutes("1", "h"), 60, "Spalte in Stunden");
+  assert.equal(X.parseBreakMinutes("abc"), null);
+  const rows = X.parseCSV("Datum;Kommen;Gehen;Pause (h)\n03.08.2026;08:00;17:00;1\n").rows;
+  assert.equal(rows[0].breakMinutes, 60);
+});
+
+test("Eine Pause aus der Dauer liegt mitten im Tag, nie ausserhalb", () => {
+  const res = importCSV("Datum;Kommen;Gehen;Pause\n03.08.2026;08:00;12:00;15\n");
+  const b = res.days["2026-08-03"].breaks[0];
+  assert.equal(b.start, "09:53");
+  assert.equal(b.end, "10:08");
+  const day = E.computeDay(Object.assign({ date: "2026-08-03" }, res.days["2026-08-03"]), { settings: R.defaultSettings(), holiday: null, isToday: false });
+  assert.equal(day.breakTotal, 15, "die Pause wird abgezogen");
+});
+
+test("Passt die gewohnte Mittagspause in den Tag, liegt die Pause dort", () => {
+  const parsed = X.parseCSV("Datum;Kommen;Gehen;Pause\n03.08.2026;08:00;17:00;30\n04.08.2026;13:00;17:00;15\n");
+  const res = X.csvRowsToDays(parsed, { lunch: { start: "12:00", end: "12:30" } });
+  assert.equal(res.days["2026-08-03"].breaks[0].start, "12:00");
+  assert.equal(res.days["2026-08-03"].breaks[0].end, "12:30");
+  assert.equal(res.days["2026-08-04"].breaks[0].start, "14:53", "Nachmittag: Mittagspause liegt ausserhalb, also mittig");
+});
+
+test("Fremde CSV ändert nur die Spalten, die sie hat", () => {
+  const existing = { "2026-08-03": { date: "2026-08-03", start: "07:00", end: "16:00", note: "meins", location: "home",
+    breaks: [{ id: "x", start: "11:50", end: "12:20" }] } };
+  const res = importCSV("Datum;Kommen;Gehen;Pause\n03.08.2026;07:00;16:30;30\n", existing);
+  const p = res.days["2026-08-03"];
+  assert.equal(p.end, "16:30");
+  assert.equal(p.note, undefined, "keine Notiz-Spalte, Notiz bleibt");
+  assert.equal(p.location, undefined);
+  assert.equal(p.breaks, undefined, "gleich lange echte Pause bleibt erhalten");
+  const same = importCSV("Datum;Kommen;Gehen\n03.08.2026;07:00;16:00\n", existing);
+  assert.equal(same.skipped, 1, "unveränderte Zeile wird übersprungen");
+  assert.deepEqual(same.days, {});
+});
+
+test("Leere Zeilen löschen keine erfassten Tage", () => {
+  const existing = { "2026-08-08": { date: "2026-08-08", start: "09:00", end: "12:00" } };
+  const res = importCSV("Datum;Art;Kommen;Gehen\n08.08.2026;Arbeitsfrei;;\n", existing);
+  assert.deepEqual(res.days, {});
+});
+
+/* ---------------------------------------------------------------------- */
+/* ICS                                                                      */
+/* ---------------------------------------------------------------------- */
+
+test("ICS faltet nach UTF-8-Oktetten und zerteilt keine Emoji", () => {
+  const days = { "2026-08-03": { date: "2026-08-03", start: "08:00", end: "17:00", breaks: [], note: "x".repeat(40) + "😀".repeat(30) + "äöü".repeat(20) } };
+  const ics = X.toICS(buildRange(days).days, { labels: LABELS });
+  ics.split("\r\n").forEach((line) => {
+    assert.ok(Buffer.byteLength(line, "utf8") <= 75, "Zeile hat " + Buffer.byteLength(line, "utf8") + " Oktette");
+    assert.ok(!/[\uD800-\uDBFF]$/.test(line) && !/^ ?[\uDC00-\uDFFF]/.test(line), "Emoji zerteilt");
+  });
+  const unfolded = ics.replace(/\r\n /g, "");
+  assert.ok(unfolded.indexOf("😀".repeat(30)) >= 0, "nach dem Entfalten ist der Text vollständig");
+});
+
+test("ICS-UID hängt nur am Datum, nicht am Exportzeitraum", () => {
+  const days = { "2026-08-03": { date: "2026-08-03", start: "08:00", end: "17:00", breaks: [] } };
+  const settings = Object.assign(R.defaultSettings(), { autoHolidays: false });
+  const a = X.toICS(E.computeRange("2026-08-03", "2026-08-03", (iso) => days[iso], settings).days).match(/UID:(.*)/)[1];
+  const b = X.toICS(E.computeRange("2026-07-01", "2026-08-31", (iso) => days[iso], settings).days).match(/UID:(.*)/)[1];
+  assert.equal(a, b);
+  assert.equal(a, "zk-2026-08-03@zeitkonto");
+});
+
+test("ICS-Zeiten bleiben an Tagen der Zeitumstellung korrekt", () => {
+  const days = {
+    "2026-03-28": { date: "2026-03-28", start: "22:00", end: "06:00", breaks: [] },
+    "2026-03-29": { date: "2026-03-29", start: "08:00", end: "12:00", breaks: [] }
+  };
+  const settings = Object.assign(R.defaultSettings(), { autoHolidays: false });
+  const ics = X.toICS(E.computeRange("2026-03-28", "2026-03-29", (iso) => days[iso], settings).days);
+  assert.ok(ics.indexOf("DTSTART:20260329T080000") >= 0);
+  assert.ok(ics.indexOf("DTEND:20260329T060000") >= 0, "Nachtschicht endet am Folgetag um 06:00");
+});
+
+test("Auch ohne Rohdaten (nur Berechnungsergebnis) bleibt der Saldo beim Wiedereinlesen gleich", () => {
+  const settings = Object.assign(R.defaultSettings(), { autoHolidays: true, holidayRegion: "CH-LU" });
+  const before = rangeWith(ROUND, settings);
+  const res = importCSV(X.toCSV(before.days, { labels: I.typeLabels() }), null, settings);
+  const restored = {};
+  Object.keys(res.days).forEach((iso) => { restored[iso] = Object.assign({ date: iso }, res.days[iso]); });
+  assert.equal(rangeWith(restored, settings).totals.balance, before.totals.balance);
+});

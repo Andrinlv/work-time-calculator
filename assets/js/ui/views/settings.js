@@ -428,35 +428,62 @@
     data.body.appendChild(drop);
     data.body.appendChild(fileInput);
 
+    /* Bezeichnungen aller vier Sprachen: eine CSV aus der französischen
+       App muss sich auch in der deutschen einlesen lassen. */
+    function labelsAllLangs(prefix, keys) {
+      return I.LANGS.map(function (lang) {
+        var dict = I.DICT[lang] || {};
+        var map = {};
+        keys.forEach(function (k) { if (dict[prefix + k]) map[k] = dict[prefix + k]; });
+        return map;
+      });
+    }
+
+    function importDone(result, count) {
+      var opts = { sub: I.t("set.importResult", result), tone: count ? "plus" : "warn" };
+      if (count) opts.action = { label: I.t("common.undo"), onClick: function () { App.undo(); } };
+      D.toast(I.t("toast.imported"), opts);
+    }
+
     function handleFile(file) {
+      fileInput.value = "";   // dieselbe Datei lässt sich erneut wählen
       D.readFile(file).then(function (content) {
-        if (/\.csv$/i.test(file.name) || content.indexOf("{") !== 0) {
-          var parsed = ZK.Exporters.parseCSV(content);
-          if (parsed.error) { D.toast(parsed.error, { tone: "minus" }); return; }
-          var patch = {};
-          parsed.rows.forEach(function (row) {
-            var rec = { date: row.date, start: row.start || "", end: row.end || "", note: row.note || "", breaks: [] };
-            if (row.breakMinutes && row.start) {
-              var startMin = T.parseHHMM(row.start) || 0;
-              var mid = startMin + 240;
-              rec.breaks = [{ id: "imp" + row.date, label: I.t("day.lunch"), start: T.formatHHMM(mid), end: T.formatHHMM(mid + row.breakMinutes), paid: false }];
-            }
-            patch[row.date] = rec;
+        var text = String(content || "").replace(/^﻿/, "");
+        if (/\.csv$/i.test(file.name) || !/^\s*[\[{]/.test(text)) {
+          var parsed = ZK.Exporters.parseCSV(text);
+          if (parsed.error) {
+            D.toast(I.t(parsed.code === "no-date" ? "imp.err.csvNoDate" : "imp.err.csvEmpty"), { tone: "minus", duration: 7000 });
+            return;
+          }
+          var res = ZK.Exporters.csvRowsToDays(parsed, {
+            getDay: function (iso) { return App.store.getDay(iso); },
+            autoType: function (iso) { return ZK.Engine.computeDay({ date: iso }, { settings: App.settings() }).type; },
+            typeLabels: labelsAllLangs("type.", Object.keys(R.DAY_TYPES)),
+            locationLabels: labelsAllLangs("loc.", R.LOCATIONS),
+            breakLabel: I.t("day.lunch"),
+            lunch: App.settings().defaultLunch
           });
-          App.store.setDays(patch, { label: "import-csv" });
-          App.afterChange();
-          D.toast(I.t("toast.imported"), { sub: parsed.rows.length + " " + I.t("common.days"), tone: "plus" });
+          var count = Object.keys(res.days).length;
+          if (count) {
+            App.store.setDays(res.days, { label: "import-csv" });
+            App.afterChange();
+          }
+          importDone(res, count);
           return;
         }
-        var json = JSON.parse(content);
+        var json = JSON.parse(text);
         var result = App.store.importState(json, modeSelect.value);
         App.applyTheme();
         App.applyDensity();
         App.applyLanguage();
         App.afterChange();
-        D.toast(I.t("toast.imported"), { sub: I.t("set.importResult", result), tone: "plus" });
+        importDone(result, result.added + result.updated);
       }).catch(function (err) {
-        D.toast(String(err && err.message ? err.message : err), { tone: "minus" });
+        var code = err && err.code;
+        var key = code === "no-days" ? "imp.err.noDays"
+          : code === "no-valid-days" ? "imp.err.noValid"
+            : (code === "invalid" || (err && err.name === "SyntaxError")) ? "imp.err.invalid" : null;
+        D.toast(key ? I.t(key) : String(err && err.message ? err.message : err), { tone: "minus", duration: 7000 });
       });
     }
 
