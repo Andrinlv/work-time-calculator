@@ -689,7 +689,7 @@
     "imp.err.noValid": "Kein Tag in der Datei ist lesbar — es wurde nichts übernommen.",
     "imp.err.csvEmpty": "Die CSV-Datei ist leer.",
     "imp.err.csvNoDate": "Keine Datumsspalte gefunden. Die erste Zeile braucht eine Überschrift wie „Datum“ oder „Date“.",
-    "cal.code.free": "AF"
+    "cal.code.free": "AF",
   };
 
   /* ==================================================================== */
@@ -1204,7 +1204,7 @@
     "imp.err.noValid": "None of the days in the file could be read — nothing was imported.",
     "imp.err.csvEmpty": "The CSV file is empty.",
     "imp.err.csvNoDate": "No date column found. The first row needs a heading such as “Date” or “Datum”.",
-    "cal.code.free": "NW"
+    "cal.code.free": "NW",
   };
 
   /* ==================================================================== */
@@ -1719,7 +1719,7 @@
     "imp.err.noValid": "Aucune journée du fichier n'est lisible — rien n'a été importé.",
     "imp.err.csvEmpty": "Le fichier CSV est vide.",
     "imp.err.csvNoDate": "Aucune colonne de date trouvée. La première ligne doit contenir un titre comme « Date ».",
-    "cal.code.free": "NT"
+    "cal.code.free": "NT",
   };
 
   /* ==================================================================== */
@@ -2234,7 +2234,7 @@
     "imp.err.noValid": "Nessun giorno del file è leggibile — non è stato importato nulla.",
     "imp.err.csvEmpty": "Il file CSV è vuoto.",
     "imp.err.csvNoDate": "Nessuna colonna data trovata. La prima riga deve contenere un titolo come «Data» o «Date».",
-    "cal.code.free": "NL"
+    "cal.code.free": "NL",
   };
 
   /* ==================================================================== */
