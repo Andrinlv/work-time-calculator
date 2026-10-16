@@ -37,7 +37,7 @@
         if (k === "html") node.innerHTML = v;
         else if (k === "text") node.textContent = v;
         else if (k === "class") node.className += (node.className ? " " : "") + v;
-        else if (k === "style" && typeof v === "object") Object.assign(node.style, v);
+        else if (k === "style" && typeof v === "object") setStyles(node, v);
         else if (k.indexOf("on") === 0 && typeof v === "function") node.addEventListener(k.slice(2).toLowerCase(), v);
         else if (k === "dataset") Object.assign(node.dataset, v);
         else node.setAttribute(k, v === true ? "" : v);
@@ -48,6 +48,18 @@
       node.appendChild(typeof c === "string" ? document.createTextNode(c) : c);
     });
     return node;
+  }
+
+  /* Eigene CSS-Variablen („--c“, „--p“) lassen sich nicht als normale
+     Eigenschaft zuweisen — Object.assign(style, …) verwirft sie still.
+     Darum jede Angabe einzeln, Variablen über setProperty(). */
+  function setStyles(node, styles) {
+    Object.keys(styles).forEach(function (k) {
+      var val = styles[k];
+      if (val === null || val === undefined || val === false) return;
+      if (k.slice(0, 2) === "--") node.style.setProperty(k, String(val));
+      else node.style[k] = val;
+    });
   }
 
   function on(node, type, handler, opts) {
