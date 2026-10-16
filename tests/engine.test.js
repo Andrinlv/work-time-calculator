@@ -291,10 +291,13 @@ test("accountBalance zählt Startsaldo und erfasste Tage", () => {
     "2026-08-03": { date: "2026-08-03", start: "08:00", end: "17:30", breaks: [{ id: "a", start: "12:00", end: "12:30" }] },
     "2026-08-04": { date: "2026-08-04", start: "08:00", end: "16:30", breaks: [{ id: "b", start: "12:00", end: "12:30" }] }
   };
-  // Tag 1: 570 min Anwesenheit → über 9 h, also 60 min Pflichtpause → 510 netto → +6
+  // Tag 1: 570 min Anwesenheit, 30 min Mittag → 540 min ARBEITSZEIT = genau 9 h.
+  //        Korrigiert: früher galt die Staffel für die Anwesenheit (> 9 h → 60 min,
+  //        510 netto, +6). ArG Art. 15 bezieht sich auf die Arbeitszeit; die ist
+  //        nicht über 9 h, also genügen 30 min → 540 netto → +36.
   // Tag 2: 510 min Anwesenheit → 30 min Pflichtpause → 480 netto → −24
   const bal = E.accountBalance(days, settings({ carryOverMinutes: 120 }), "2026-08-31");
-  assert.equal(bal.minutes, 120 + 6 - 24);
+  assert.equal(bal.minutes, 120 + 36 - 24);
   assert.equal(bal.days, 2);
 });
 
@@ -382,4 +385,312 @@ test("activeShiftDate folgt der laufenden Nachtschicht", () => {
   days["2026-10-16"] = { date: "2026-10-16", start: "05:50", end: "" };
   assert.equal(E.activeShiftDate(get, new Date(2026, 9, 16, 6, 5)), "2026-10-16", "heute schon eingestempelt hat Vorrang");
   assert.equal(E.activeShiftDate(() => null, new Date(2026, 9, 16, 6, 5)), "2026-10-16");
+});
+
+/* ====================================================================== */
+/* Pausenrecht: Staffeln gelten für die Arbeitszeit, nicht die Anwesenheit */
+/* ====================================================================== */
+
+test("SECO-Beispiel: 5 h 40 Anwesenheit verlangt nur 10 min Pause", () => {
+  // Mit 10 min Pause bleibt die Arbeitszeit bei 5 h 30 — die 15-min-Stufe greift nicht.
+  const res = E.computeDay({ date: DO, start: "08:00", end: "13:40", breaks: [] }, ctx());
+  assert.equal(res.requiredBreak, 10);
+  assert.equal(res.autoDeducted, 10);
+  assert.equal(res.net, 330);
+});
+
+test("Genau 9 h Arbeit mit 30 min Mittag: keine Stunde Pflichtpause", () => {
+  const res = E.computeDay({ date: DO, start: "07:30", end: "17:00", breaks: [{ id: "l", start: "12:00", end: "12:30" }] }, ctx());
+  assert.equal(res.presence, 570);
+  assert.equal(res.requiredBreak, 30, "540 min Arbeitszeit sind nicht mehr als 9 h");
+  assert.equal(res.autoDeducted, 0);
+  assert.equal(res.net, 540);
+  assert.equal(res.workingTime, 540);
+});
+
+test("Zwischen den Stufen wird das Netto auf der Schwelle gehalten", () => {
+  // 9 h 50 ohne Pause: 30 min Pause liessen 9 h 20 Arbeit (→ 60 nötig), 50 min lassen
+  // genau 9 h (→ 30 genügen). Kleinste konforme Pause: 50.
+  const res = E.computeDay({ date: DO, start: "08:00", end: "17:50", breaks: [] }, ctx());
+  assert.equal(res.requiredBreak, 50);
+  assert.equal(res.net, 540);
+});
+
+test("Bezahlte Pause zählt für die Pflichtpause, wird aber nicht abgezogen", () => {
+  const res = E.computeDay({
+    date: DO, start: "08:00", end: "14:00",
+    breaks: [{ id: "p", start: "10:00", end: "10:15", paid: true }]
+  }, ctx());
+  assert.equal(res.requiredBreak, 15);
+  assert.equal(res.legalBreak, 15);
+  assert.equal(res.paidBreakTotal, 15);
+  assert.equal(res.breakTotal, 0, "breakTotal bleibt der abgezogene, unbezahlte Teil");
+  assert.equal(res.autoDeducted, 0, "kein zweiter Abzug für dieselbe Viertelstunde");
+  assert.equal(res.net, 360);
+});
+
+test("Bezahlte und unbezahlte Pause überschneiden sich: Überschneidung gilt als unbezahlt", () => {
+  const res = E.computeDay({
+    date: DO, start: "08:00", end: "17:00",
+    breaks: [{ id: "a", start: "12:00", end: "12:30" }, { id: "b", start: "12:15", end: "12:45", paid: true }]
+  }, ctx());
+  assert.equal(res.breakTotal, 30);
+  assert.equal(res.paidBreakTotal, 15);
+  assert.equal(res.net, 510);
+  assert.ok(res.warnings.some((w) => w.code === "break-overlap"));
+});
+
+test("Nahtlos aneinanderliegende Pausen sind keine Überlappung", () => {
+  const res = E.computeDay({
+    date: DO, start: "08:00", end: "17:00",
+    breaks: [{ id: "a", start: "12:00", end: "12:30" }, { id: "b", start: "12:30", end: "12:45" }]
+  }, ctx());
+  assert.equal(res.breakTotal, 45);
+  assert.ok(!res.warnings.some((w) => w.code === "break-overlap"));
+});
+
+/* ====================================================================== */
+/* Laufender Tag: offene und geplante Pausen                               */
+/* ====================================================================== */
+
+const HEUTE = "2026-10-16";
+const live = (h, m) => ctx({ isToday: true, now: new Date(2026, 9, 16, h, m) });
+
+test("Laufende Pause: kein Fehler, Netto steht still, Gehen-Zeit rückt nach", () => {
+  const rec = { date: HEUTE, start: "08:00", end: "", breaks: [{ id: "b1", start: "12:05", end: "" }] };
+  const at1235 = E.computeDay(rec, live(12, 35));
+  assert.equal(at1235.running, true);
+  assert.equal(at1235.provisional, true);
+  assert.equal(at1235.hasError, false, "die laufende Pause ist keine unvollständige Zeile");
+  assert.deepEqual(
+    { start: at1235.openBreak.start, ref: at1235.openBreak.ref, minutes: at1235.openBreak.minutes },
+    { start: "12:05", ref: "b1", minutes: 30 }
+  );
+  assert.equal(at1235.netRaw, 245, "08:00–12:05 gearbeitet, seither Pause");
+  assert.equal(at1235.breakTotal, 30);
+  assert.equal(at1235.recommendedLeave, "16:54", "die 30 min decken die Pflichtpause");
+  assert.equal(at1235.recommendedBreak, 30);
+
+  const at1305 = E.computeDay(rec, live(13, 5));
+  assert.equal(at1305.netRaw, 245, "während der Pause wächst das Netto nicht");
+  assert.equal(at1305.remaining, at1235.remaining);
+  assert.equal(at1305.balance, at1235.balance);
+  assert.equal(at1305.recommendedLeave, "17:24", "60 min Pause → Gehen 30 min später");
+  assert.equal(at1305.recommendedBreak, 60);
+  const seg = at1305.segments.filter((x) => x.kind === "break");
+  assert.equal(seg.length, 1);
+  assert.equal(seg[0].open, true, "der Zeitstrahl kennt die laufende Pause");
+  assert.equal(seg[0].end, 13 * 60 + 5);
+});
+
+test("Offene Pausenzeile an einem vergangenen Tag bleibt ein Fehler", () => {
+  const res = E.computeDay({ date: DO, start: "08:00", end: "17:00", breaks: [{ id: "b1", start: "12:05", end: "" }] }, ctx());
+  assert.equal(res.openBreak, null);
+  assert.ok(res.warnings.some((w) => w.code === "invalid-break"));
+  assert.equal(res.hasError, true);
+});
+
+test("Nur eine Pause kann laufen; eine zweite offene Zeile ist ein Fehler", () => {
+  const res = E.computeDay({
+    date: HEUTE, start: "08:00", end: "",
+    breaks: [{ id: "a", start: "10:00", end: "" }, { id: "b", start: "11:00", end: "" }]
+  }, live(11, 30));
+  assert.equal(res.openBreak.ref, "a");
+  assert.ok(res.warnings.some((w) => w.code === "invalid-break" && w.count === 1));
+});
+
+test("Geplante Mittagspause am laufenden Tag: keine Warnung, aber in der Gehen-Zeit", () => {
+  const rec = { date: HEUTE, start: "08:00", end: "", breaks: [{ id: "l", start: "12:00", end: "13:00" }] };
+  const res = E.computeDay(rec, live(10, 0));
+  assert.ok(!res.warnings.some((w) => w.code === "break-outside"), "die Pause liegt nur noch in der Zukunft");
+  assert.equal(res.breakTotal, 0, "bis jetzt keine Pause");
+  assert.equal(res.netRaw, 120);
+  assert.equal(res.recommendedLeave, "17:24", "504 + 60 min geplanter Mittag");
+  assert.equal(res.recommendedBreak, 60);
+  assert.equal(res.openBreak, null);
+});
+
+test("Mitten in einer erfassten Pause zählt nur der vergangene Teil", () => {
+  const res = E.computeDay({ date: HEUTE, start: "08:00", end: "", breaks: [{ id: "l", start: "12:00", end: "12:30" }] }, live(12, 10));
+  assert.equal(res.breakTotal, 10);
+  assert.equal(res.netRaw, 240);
+  assert.equal(res.recommendedLeave, "16:54");
+});
+
+test("Eine vorgemerkte Pause ohne Ende wird erst ab ihrem Beginn zur laufenden Pause", () => {
+  const rec = { date: HEUTE, start: "08:00", end: "", breaks: [{ id: "l", start: "12:00", end: "" }] };
+  const before = E.computeDay(rec, live(10, 0));
+  assert.equal(before.openBreak, null);
+  assert.equal(before.hasError, false, "vorgemerkt ist kein Fehler");
+  assert.equal(before.netRaw, 120);
+  const after = E.computeDay(rec, live(12, 20));
+  assert.equal(after.openBreak.start, "12:00");
+  assert.equal(after.netRaw, 240);
+});
+
+test("recommendedBreak nennt die Pause in der Gehen-Zeit schon beim Einstempeln", () => {
+  const res = E.computeDay({ date: HEUTE, start: "07:42", end: "", breaks: [] }, live(7, 42));
+  assert.equal(res.recommendedLeave, "16:36");
+  assert.equal(res.recommendedBreak, 30, "„inkl. 30 min Pause“");
+  assert.equal(res.provisional, true);
+});
+
+test("Ein abgeschlossener Tag ist nicht vorläufig", () => {
+  const res = E.computeDay({ date: DO, start: "08:00", end: "17:00", breaks: [] }, ctx());
+  assert.equal(res.provisional, false);
+  assert.equal(res.openBreak, null);
+});
+
+test("Nachtschicht: laufende Pause nach Mitternacht", () => {
+  const res = E.computeDay(
+    { date: "2026-10-15", start: "22:00", end: "", breaks: [{ id: "n", start: "02:00", end: "" }] },
+    ctx({ now: new Date(2026, 9, 16, 3, 0) })
+  );
+  assert.equal(res.running, true);
+  assert.equal(res.openBreak.start, "02:00");
+  assert.equal(res.openBreak.minutes, 60);
+  assert.equal(res.netRaw, 240);
+  assert.equal(res.recommendedLeave, "07:24");
+  assert.equal(res.recommendedLeaveDayOffset, 1);
+});
+
+/* ====================================================================== */
+/* Gutschrift und Stempelzeit                                              */
+/* ====================================================================== */
+
+test("Kurstag mit Stempelzeit: Gutschrift füllt nur bis zum Soll auf", () => {
+  // Früher: Gutschrift 504 + Netto 510 − Soll 504 = +8 h 30.
+  const long = E.computeDay({ date: DO, type: "training", start: "08:00", end: "17:00", breaks: [{ id: "l", start: "12:00", end: "12:30" }] }, ctx());
+  assert.equal(long.credited, 0);
+  assert.equal(long.balance, 6, "8 h 30 Kurs an einem 8-h-24-Tag");
+  assert.ok(!long.warnings.some((w) => w.code === "absence-with-times"), "Stempeln am Kurstag ist normal");
+
+  const short = E.computeDay({ date: DO, type: "training", start: "08:00", end: "12:00", breaks: [] }, ctx());
+  assert.equal(short.credited, 264);
+  assert.equal(short.balance, 0, "ein kurzer Kurstag zählt als voller Tag");
+});
+
+test("Ganztägige Absenz mit Stempelzeit: Warnung statt doppelter Gutschrift", () => {
+  const vac = E.computeDay({ date: DO, type: "vacation", start: "08:00", end: "17:00", breaks: [{ id: "l", start: "12:00", end: "12:30" }] }, ctx());
+  const w = vac.warnings.filter((x) => x.code === "absence-with-times")[0];
+  assert.ok(w, "der Widerspruch wird gemeldet");
+  assert.equal(w.type, "vacation");
+  assert.equal(w.minutes, 510);
+  assert.equal(vac.balance, 6, "nicht +8 h 30");
+
+  const sick = E.computeDay({ date: DO, type: "sick", start: "08:00", end: "11:00", breaks: [] }, ctx());
+  assert.equal(sick.balance, 0, "nach drei Stunden krank heim: der Tag ist gedeckt");
+  assert.equal(sick.credited, 324);
+});
+
+test("Teilabsenz: Stempelzeit kommt auf die anteilige Gutschrift obendrauf", () => {
+  const res = E.computeDay({ date: DO, type: "vacation", absenceFactor: 0.5, start: "08:00", end: "13:00", breaks: [] }, ctx());
+  assert.equal(res.credited, 252);
+  assert.equal(res.balance, 48, "300 gearbeitet, 252 waren nötig");
+  assert.ok(!res.warnings.some((w) => w.code === "absence-with-times"));
+});
+
+/* ====================================================================== */
+/* Zeitraum, Konto, Kontingente                                            */
+/* ====================================================================== */
+
+const BAL_DAYS = {
+  "2026-10-15": { date: "2026-10-15", start: "08:00", end: "17:30", breaks: [{ id: "l", start: "12:00", end: "12:30" }] },
+  "2026-10-16": { date: "2026-10-16", start: "07:42", end: "", breaks: [{ id: "l", start: "12:05", end: "12:40" }] }
+};
+
+test("computeRange trennt abgerechneten Saldo und Zwischenstand", () => {
+  const now = new Date(2026, 9, 16, 9, 0);
+  const range = E.computeRange("2026-10-12", "2026-10-18", (iso) => BAL_DAYS[iso], settings(), now);
+  const today = range.days.filter((d) => d.date === "2026-10-16")[0];
+  assert.equal(today.running, true);
+  assert.equal(range.totals.runningDays, 1);
+  assert.equal(range.totals.balance, 36, "nur der abgeschlossene Donnerstag");
+  assert.equal(range.totals.provisionalBalance, 36 + today.balance);
+  assert.equal(range.totals.undertimeDays, 0, "der laufende Tag ist kein Minustag");
+});
+
+test("accountBalance zählt den laufenden Tag erst mit includeRunning", () => {
+  const s = settings();
+  const at0900 = E.accountBalance(BAL_DAYS, s, undefined, new Date(2026, 9, 16, 9, 0));
+  const at1423 = E.accountBalance(BAL_DAYS, s, undefined, new Date(2026, 9, 16, 14, 23));
+  assert.equal(at0900.minutes, 36, "das Konto fällt beim Einstempeln nicht um ein Tagessoll");
+  assert.equal(at1423.minutes, 36);
+  assert.equal(at0900.runningDays, 1);
+  assert.equal(at0900.days, 1);
+
+  const live0900 = E.accountBalance(BAL_DAYS, s, undefined, new Date(2026, 9, 16, 9, 0), { includeRunning: true });
+  assert.equal(live0900.minutes, 36 + (78 - 504), "07:42–09:00 = 78 min netto");
+  assert.equal(at0900.runningMinutes, 78 - 504);
+  assert.equal(at0900.provisionalMinutes, live0900.minutes);
+
+  // Positionsparameter wie bisher: ohne now/opts
+  assert.equal(typeof E.accountBalance(BAL_DAYS, s, "2026-10-15").minutes, "number");
+});
+
+test("accountBalance: eine laufende Nachtschicht von gestern ist ebenfalls offen", () => {
+  const days = { "2026-10-15": { date: "2026-10-15", start: "22:00", end: "", breaks: [] } };
+  const bal = E.accountBalance(days, settings(), undefined, new Date(2026, 9, 16, 2, 0));
+  assert.equal(bal.minutes, 0);
+  assert.equal(bal.runningDays, 1);
+});
+
+test("Lücken als Minus: Feiertage sind keine Lücken, leere Formulare schon", () => {
+  const full = (d) => ({ date: d, start: "08:00", end: "17:00", breaks: [{ id: "x", start: "12:00", end: "12:30" }] });
+  const days = {};
+  ["2026-03-30", "2026-03-31", "2026-04-01", "2026-04-02", "2026-04-07", "2026-04-08", "2026-04-09", "2026-04-10"]
+    .forEach((d) => { days[d] = full(d); });
+  const s = Object.assign(R.defaultSettings(), { holidayRegion: "CH-LU", autoHolidays: true, countMissingWorkdays: true });
+  const bal = E.accountBalance(days, s, "2026-04-10", new Date(2026, 3, 11, 12, 0));
+  assert.equal(bal.gapsCounted, 0, "Karfreitag und Ostermontag sind Feiertage");
+  assert.equal(bal.minutes, 8 * 6);
+
+  // Ein leer gespeicherter Tag ist eine Lücke — wie in computeRange.
+  days["2026-04-13"] = { date: "2026-04-13", start: "", end: "", breaks: [], note: "" };
+  const later = E.accountBalance(days, s, "2026-04-13", new Date(2026, 3, 14, 12, 0));
+  assert.equal(later.gapsCounted, 1);
+  assert.equal(later.minutes, 48 - 504);
+
+  // Unvollständig (Kommen ohne Gehen) meldet sich als Fehler und wird nicht zusätzlich bestraft.
+  days["2026-04-13"] = { date: "2026-04-13", start: "08:00", end: "", breaks: [] };
+  const inc = E.accountBalance(days, s, "2026-04-13", new Date(2026, 3, 14, 12, 0));
+  assert.equal(inc.gapsCounted, 0);
+});
+
+test("quotaUsage trennt bezogene und geplante Ferien", () => {
+  const days = {
+    "2026-08-03": { date: "2026-08-03", type: "vacation" },
+    "2026-10-16": { date: "2026-10-16", type: "vacation", absenceFactor: 0.5 },
+    "2026-12-28": { date: "2026-12-28", type: "vacation" },
+    "2026-12-29": { date: "2026-12-29", type: "vacation" }
+  };
+  const q = E.quotaUsage(days, 2026, settings(), new Date(2026, 9, 16, 9, 0));
+  assert.equal(q.vacationTaken, 1.5, "heute zählt als bezogen");
+  assert.equal(q.vacationPlanned, 2);
+  assert.equal(q.vacation, 3.5);
+  assert.equal(q.vacationLeft, 25 - 3.5);
+});
+
+test("quotaUsage: Ferien auf Feiertagen und Wochenenden kosten nichts", () => {
+  const s = Object.assign(R.defaultSettings(), { holidayRegion: "CH-ZH", autoHolidays: true });
+  const days = {};
+  T.rangeDays("2026-12-21", "2026-12-31").forEach((d) => { days[d] = { date: d, type: "vacation" }; });
+  const q = E.quotaUsage(days, 2026, s, new Date(2026, 9, 16));
+  // Mo 21. – Do 31.12.: 9 Werktage, davon Weihnachten (Fr 25.12.) Feiertag → 8
+  assert.equal(q.vacation, 8);
+  assert.equal(q.vacationPlanned, 8);
+});
+
+test("quotaUsage zählt Feiertage auf Arbeitstagen auch ohne Eintrag", () => {
+  const s = Object.assign(R.defaultSettings(), { holidayRegion: "CH-ZH", autoHolidays: true });
+  const q = E.quotaUsage({}, 2026, s, new Date(2026, 9, 16));
+  // ZH 2026 auf Werktagen: 1.1., 2.1., 3.4., 6.4., 1.5., 14.5., 25.5., 25.12. (1.8. und 26.12. sind Samstage)
+  assert.equal(q.holiday, 8);
+  const days = { "2026-04-06": { date: "2026-04-06", start: "08:00", end: "12:00", breaks: [] } };
+  assert.equal(E.quotaUsage(days, 2026, s, new Date(2026, 9, 16)).holiday, 8, "Arbeit am Feiertag ändert die Zahl nicht");
+});
+
+test("quotaUsage zählt unbezahlte Tage auf Arbeitstagen unter „other“", () => {
+  const q = E.quotaUsage({ "2026-08-03": { date: "2026-08-03", type: "unpaid" } }, 2026, settings());
+  assert.equal(q.other, 1);
 });

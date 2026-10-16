@@ -97,6 +97,21 @@ test("mergeIntervals fasst Überschneidungen zusammen", () => {
   assert.equal(T.totalOf(merged), 130, "doppelt erfasste Minuten zählen nur einmal");
 });
 
+test("mergeIntervals markiert nur echte Überschneidungen", () => {
+  const adjacent = T.mergeIntervals([{ start: 100, end: 130 }, { start: 130, end: 145 }]);
+  assert.equal(adjacent.length, 1, "nahtlose Pausen werden zusammengefasst");
+  assert.equal(T.totalOf(adjacent), 45);
+  assert.ok(!adjacent[0].merged, "aber nicht als Überlappung gemeldet");
+  const overlap = T.mergeIntervals([{ start: 100, end: 131 }, { start: 130, end: 145 }]);
+  assert.equal(overlap[0].merged, true);
+});
+
+test("dstAxis: ohne Zeitumstellung gibt es nichts umzurechnen", () => {
+  // Läuft in jeder Zeitzone: Anfang August stellt niemand die Uhr um.
+  assert.equal(T.dstAxis("2026-08-06"), null);
+  assert.equal(T.dstAxis("kein Datum"), null);
+});
+
 test("mergeIntervals verwirft leere und verkehrte Bereiche", () => {
   const merged = T.mergeIntervals([
     { start: 100, end: 100 },

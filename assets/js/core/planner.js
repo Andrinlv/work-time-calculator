@@ -253,7 +253,8 @@
   /**
    * Gehen-Zeit, um an einem einzelnen Tag einen gewünschten Tagessaldo zu
    * erreichen. Berücksichtigt die Pausenstaffel über denselben Fixpunkt wie
-   * die Engine.
+   * die Engine (R.presenceForNet); optional roundStep / roundMode wie in
+   * den Einstellungen, damit die Rundung das Ziel nicht unterläuft.
    */
   function leaveTimeForBalance(opts) {
     var startTod = T.parseHHMM(opts.start);
@@ -262,19 +263,14 @@
     var target = opts.target || 0;
     var credited = opts.credited || 0;
     var wanted = Math.max(0, target - credited + (opts.wantBalance || 0));
-    var breakTotal = opts.breakMinutes || 0;
-    var ruleset = opts.breakRuleset || "ch";
-    var tiers = opts.customBreakTiers;
-    var autoDeduct = opts.autoDeductBreak !== false;
-
-    var gross = wanted + breakTotal;
-    for (var i = 0; i < 6; i++) {
-      var required = R.requiredBreak(gross, ruleset, tiers);
-      var effective = autoDeduct ? Math.max(breakTotal, required) : breakTotal;
-      var next = wanted + effective;
-      if (next === gross) break;
-      gross = next;
-    }
+    // Derselbe Löser wie in der Engine: Staffel auf die Arbeitszeit, Rundung inklusive.
+    var gross = R.presenceForNet(wanted, {
+      breakRuleset: opts.breakRuleset || "ch",
+      customBreakTiers: opts.customBreakTiers,
+      autoDeductBreak: opts.autoDeductBreak !== false,
+      roundStep: opts.roundStep || 0,
+      roundMode: opts.roundMode
+    }, { unpaid: opts.breakMinutes || 0, paid: 0 }).gross;
     return { minutes: startTod + gross, text: T.formatHHMM(startTod + gross), dayOffset: T.dayOffsetOf(startTod + gross) };
   }
 

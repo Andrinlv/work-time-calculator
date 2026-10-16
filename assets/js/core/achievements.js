@@ -21,7 +21,43 @@
   function buildStats(records, settings, now) {
     var s = settings || R.defaultSettings();
     var today = T.todayISO(now);
-    var keys = Object.keys(records || {}).sort();
+    records = records || {};
+    // Geplantes (Ferien im Dezember) ist noch keine Leistung: nur bis heute.
+    var keys = Object.keys(records).filter(function (iso) { return iso <= today; }).sort();
+
+    /* Jeder Tag wird höchstens einmal gerechnet — Monate, Wochen und Serien
+       greifen auf denselben Zwischenspeicher zu. */
+    var memo = Object.create(null);
+    function day(iso) {
+      if (!memo[iso]) memo[iso] = E.computeDay(records[iso] || { date: iso }, { settings: s, now: now, isToday: iso === today });
+      return memo[iso];
+    }
+    /*
+       Status eines Tages für Serien, Monate und Wochen:
+         "skip"    zählt nicht und unterbricht nicht: arbeitsfrei, Zukunft,
+                   ein Feiertag ohne eigenen Eintrag, oder heute noch offen
+         "done"    erfasst
+         "missing" Arbeitstag ohne Erfassung — unterbricht
+    */
+    function status(iso) {
+      if (iso > today) return "skip";
+      var r = day(iso);
+      if (r.target <= 0) return "skip";
+      var rec = records[iso];
+      var own = !!rec && (r.complete || r.running || !!(rec.type && R.DAY_TYPES[rec.type]) || !!r.note ||
+        (rec.targetOverride !== null && rec.targetOverride !== undefined));
+      if (r.type === "holiday" && !own) return "skip";
+      if (rec && r.recorded) return "done";
+      return iso === today ? "skip" : "missing";
+    }
+    /** Arbeitstag, der noch kommt (oder heute noch offen ist): Woche/Monat sind dann nicht fertig. */
+    function pending(iso) {
+      if (iso < today) return false;
+      var r = day(iso);
+      if (r.target <= 0) return false;
+      if (iso > today) return !(r.type === "holiday" && !records[iso]);
+      return status(iso) === "skip" && r.type !== "holiday";
+    }
 
     var st = {
       recordedDays: 0,
@@ -48,16 +84,16 @@
       types: {}
     };
 
-    var byWeek = {};
+    var weeks = {};
     var byMonth = {};
 
     keys.forEach(function (iso) {
-      var r = E.computeDay(records[iso], { settings: s, now: now, isToday: iso === today });
+      var r = day(iso);
       if (!r.recorded) return;
 
       st.recordedDays++;
       st.totalNet += r.net;
-      st.totalBalance += r.balance;
+      if (!r.running) st.totalBalance += r.balance;   // abgerechnet, wie das Konto
       st.types[r.type] = (st.types[r.type] || 0) + 1;
 
       if (r.net > 0) st.workedDays++;
@@ -67,60 +103,66 @@
       if (r.note) st.notes++;
       if (r.location === "home") st.homeOffice++;
       if (r.type === "vacation") st.vacationDays += r.absenceFactor;
-      if (r.presence > 0 && r.breakTotal >= r.requiredBreak) st.breakCompliant++;
+      // Bezahlte Pausen zählen fürs Gesetz mit (legalBreak).
+      if (r.presence > 0 && (r.legalBreak !== undefined ? r.legalBreak : r.breakTotal) >= r.requiredBreak) st.breakCompliant++;
       if (r.autoDeducted === 0 && r.presence > 0) st.noAutoDeduct++;
       if (r.complete && r.recommendedLeaveTl !== null && Math.abs(r.endTl - r.recommendedLeaveTl) <= 15) st.onTimeLeaves++;
 
-      var wk = T.isoWeekYear(iso) + "-W" + T.pad2(T.isoWeek(iso));
-      (byWeek[wk] = byWeek[wk] || []).push(r);
-      var mk = T.monthKey(iso);
-      (byMonth[mk] = byMonth[mk] || []).push(r);
+      weeks[T.startOfWeek(iso, 1)] = true;
+      (byMonth[T.monthKey(iso)] = byMonth[T.monthKey(iso)] || []).push(r);
     });
 
     st.distinctMonths = Object.keys(byMonth).length;
 
-    /* Perfekte Woche: alle Arbeitstage der Woche erfasst und Saldo ≥ 0 */
-    Object.keys(byWeek).forEach(function (wk) {
-      var days = byWeek[wk];
-      var targetDays = days.filter(function (d) { return d.target > 0; });
-      if (!targetDays.length) return;
-      var allRecorded = targetDays.every(function (d) { return d.recorded; });
-      var weekBalance = days.reduce(function (a, d) { return a + d.balance; }, 0);
-      if (allRecorded && targetDays.length >= 4 && weekBalance >= 0) st.perfectWeeks++;
+    /* Perfekte Woche: jeder Arbeitstag der Woche (Mo–So) erfasst, kein
+       Arbeitstag steht mehr aus, mindestens vier Arbeitstage und
+       Wochensaldo ≥ 0. Feiertage ohne Eintrag zählen weder dafür noch
+       dagegen. */
+    Object.keys(weeks).forEach(function (monday) {
+      var days = T.rangeDays(monday, T.addDays(monday, 6));
+      if (days.some(pending)) return;              // Woche läuft noch
+      var done = 0, missing = 0, bal = 0;
+      days.forEach(function (iso) {
+        var stt = status(iso);
+        if (stt === "done") done++;
+        else if (stt === "missing") missing++;
+        if (day(iso).recorded) bal += day(iso).balance;
+      });
+      if (!missing && done >= 4 && bal >= 0) st.perfectWeeks++;
     });
 
-    /* Vollständiger Monat + „Zen“-Monat (Saldo nahe null) */
+    /* Vollständiger Monat + „Zen“-Monat (Saldo nahe null): kein
+       Arbeitstag steht mehr aus, und jeder ist erfasst. */
     Object.keys(byMonth).forEach(function (mk) {
       var days = byMonth[mk];
       var monthStart = mk + "-01";
       var all = T.rangeDays(monthStart, T.endOfMonth(monthStart));
+      if (all.some(pending)) return;
       var needed = 0, have = 0;
       all.forEach(function (iso) {
-        var r = E.computeDay(records[iso] || { date: iso }, { settings: s, now: now });
-        if (r.target > 0) {
-          needed++;
-          if (records[iso]) have++;
-        }
+        var stt = status(iso);
+        if (stt === "skip") return;
+        needed++;
+        if (stt === "done") have++;
       });
-      if (needed > 0 && have === needed) st.completeMonths++;
-      var bal = days.reduce(function (a, d) { return a + d.balance; }, 0);
-      if (needed > 0 && have === needed && Math.abs(bal) <= 60) st.zenMonths++;
+      if (needed > 0 && have === needed) {
+        st.completeMonths++;
+        var bal = days.reduce(function (a, d) { return a + d.balance; }, 0);
+        if (Math.abs(bal) <= 60) st.zenMonths++;
+      }
     });
 
-    /* Serie: aufeinanderfolgende Arbeitstage mit vollständiger Erfassung */
+    /* Serie: aufeinanderfolgende Arbeitstage mit Erfassung. Freie Tage und
+       Feiertage unterbrechen nicht, heute darf noch offen sein. */
     var streak = 0, best = 0;
     var cursor = today;
     var guard = 0;
-    // rückwärts laufen, freie Tage überspringen
     while (guard++ < 800) {
-      var rec = records[cursor];
-      var res = E.computeDay(rec || { date: cursor }, { settings: s, now: now, isToday: cursor === today });
-      if (res.target > 0) {
-        if (rec && res.recorded) streak++;
-        else if (cursor !== today) break;   // heute darf noch offen sein
-      }
+      var stc = status(cursor);
+      if (stc === "done") streak++;
+      else if (stc === "missing") break;
       cursor = T.addDays(cursor, -1);
-      if (st.firstDate && cursor < st.firstDate) break;
+      if (!st.firstDate || cursor < st.firstDate) break;
     }
     st.currentStreak = streak;
 
@@ -128,10 +170,9 @@
     if (st.firstDate) {
       var run = 0;
       T.rangeDays(st.firstDate, today).forEach(function (iso) {
-        var r = E.computeDay(records[iso] || { date: iso }, { settings: s, now: now, isToday: iso === today });
-        if (r.target <= 0) return;                 // freie Tage unterbrechen nicht
-        if (records[iso] && r.recorded) { run++; if (run > best) best = run; }
-        else if (iso !== today) run = 0;
+        var stt = status(iso);
+        if (stt === "done") { run++; if (run > best) best = run; }
+        else if (stt === "missing") run = 0;
       });
     }
     st.bestStreak = Math.max(best, st.currentStreak);

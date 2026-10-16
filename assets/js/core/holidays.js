@@ -116,8 +116,9 @@
     { id: "empfaengnis",  de: "Mariä Empfängnis", fr: "Immaculée Conception", it: "Immacolata", en: "Immaculate Conception", fixed: [12, 8],
       cantons: ["LU", "UR", "SZ", "OW", "NW", "ZG", "FR", "AI", "AG", "TI", "VS", "GR"] },
     { id: "weihnachten",  de: "Weihnachten", fr: "Noël", it: "Natale", en: "Christmas Day", fixed: [12, 25], cantons: null },
+    // Waadt kennt den 26.12. nicht (9 Feiertage, Lundi du Jeûne statt Stephanstag).
     { id: "stephan",      de: "Stephanstag", fr: "Saint-Étienne", it: "Santo Stefano", en: "St Stephen's Day", fixed: [12, 26],
-      cantons: except(["GE", "VS", "JU", "NE"]) },
+      cantons: except(["GE", "VS", "JU", "NE", "VD"]) },
     { id: "ge_restauration", de: "Wiederherstellung der Republik", fr: "Restauration de la République", it: "Restaurazione", en: "Restoration Day", fixed: [12, 31], cantons: ["GE"] }
   ];
 
@@ -180,7 +181,14 @@
   /* Berechnung                                                          */
   /* ------------------------------------------------------------------ */
   var CALCS = {
-    naefels: function (year) { return nthWeekday(year, 3, 4, 1); },          // 1. Donnerstag im April
+    /* Näfelser Fahrt: 1. Donnerstag im April — fällt er in die Karwoche
+       (Hoher Donnerstag), wird die Fahrt eine Woche später begangen
+       (so 2015, 2021, 2023, 2026). */
+    naefels: function (year) {
+      var d = nthWeekday(year, 3, 4, 1);
+      if (iso(d) === iso(shift(easterOf(year), -3))) d = shift(d, 7);
+      return d;
+    },
     jeuneGE: function (year) {                                               // Do nach 1. Sonntag im September
       return nextWeekday(nthWeekday(year, 8, 0, 1), 4);
     },

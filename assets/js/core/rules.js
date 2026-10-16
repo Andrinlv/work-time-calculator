@@ -50,7 +50,11 @@
   /* PAUSENREGELN                                                          */
   /* ==================================================================== */
   /*
-     Staffeln beziehen sich auf die Brutto-Anwesenheit eines Tages.
+     Staffeln beziehen sich auf die ARBEITSZEIT ohne Pausen — so steht es in
+     ArG Art. 15, ArbZG §4 und AZG §11. Wer 5 h 40 anwesend ist, braucht
+     deshalb nur 10 min Pause (Arbeitszeit dann 5 h 30, Beispiel aus der
+     SECO-Wegleitung), nicht 15. Die Umrechnung auf die Anwesenheit macht
+     minBreakFor(); die Engine rechnet nur noch damit.
      `over` in Minuten, `require` = Mindestpause in Minuten.
      Quelle CH: ArG Art. 15 · DE: ArbZG §4 · AT: AZG §11
      Ohne Gewähr — die Regeln lassen sich in den Einstellungen frei anpassen.
@@ -92,30 +96,127 @@
     }
   };
 
-  /**
-   * Gesetzlich erforderliche Pause für eine Brutto-Anwesenheit.
-   * `custom` erlaubt eigene Staffeln (Array wie in BREAK_RULESETS).
-   */
-  function requiredBreak(grossMinutes, rulesetKey, customTiers) {
-    var tiers = rulesetKey === "custom"
+  /** Staffeln eines Regelwerks; eigene Staffeln werden auf Zahlen geprüft. */
+  function tiersOf(rulesetKey, customTiers) {
+    var raw = rulesetKey === "custom"
       ? (customTiers || [])
       : ((BREAK_RULESETS[rulesetKey] || BREAK_RULESETS.ch).tiers);
+    return raw.filter(function (t) {
+      return t && isFinite(t.over) && isFinite(t.require) && +t.over >= 0 && +t.require > 0;
+    }).map(function (t) { return { over: +t.over, require: +t.require }; });
+  }
+
+  /**
+   * Gesetzlich erforderliche Pause für eine ARBEITSZEIT (ohne Pausen).
+   * `custom` erlaubt eigene Staffeln (Array wie in BREAK_RULESETS).
+   */
+  function requiredBreak(workMinutes, rulesetKey, customTiers) {
+    var tiers = tiersOf(rulesetKey, customTiers);
     var required = 0;
     for (var i = 0; i < tiers.length; i++) {
-      if (grossMinutes > tiers[i].over) required = Math.max(required, tiers[i].require);
+      if (workMinutes > tiers[i].over) required = Math.max(required, tiers[i].require);
     }
     return required;
   }
 
-  /** Nächste Pausenstufe (für den Hinweis „ab 07:15 brauchst du 30 min“). */
-  function nextBreakTier(grossMinutes, rulesetKey, customTiers) {
-    var tiers = (rulesetKey === "custom" ? (customTiers || []) : ((BREAK_RULESETS[rulesetKey] || BREAK_RULESETS.ch).tiers))
-      .slice()
-      .sort(function (a, b) { return a.over - b.over; });
+  /**
+   * Kleinste Pause, die bei dieser Anwesenheit (Arbeit + Pausen) genügt:
+   * die kleinste Pause P mit P >= requiredBreak(anwesenheit - P).
+   * Weil die Anforderung mit wachsender Pause nur sinken kann, liegt das
+   * Minimum immer auf einem der Kandidaten „0“, „Stufenpause“ oder
+   * „Pause, mit der die Arbeitszeit genau auf einer Schwelle landet“ —
+   * also kein Iterieren und kein Pendeln zwischen zwei Stufen.
+   * 5 h 40 anwesend → 10 min · 9 h 40 → 40 min (Arbeitszeit bleibt 9 h).
+   */
+  function minBreakFor(presenceMinutes, rulesetKey, customTiers) {
+    var p = +presenceMinutes;
+    if (!(p > 0)) return 0;
+    var tiers = tiersOf(rulesetKey, customTiers);
+    var cands = [0];
+    tiers.forEach(function (t) { cands.push(t.require, p - t.over); });
+    cands = cands.filter(function (c) { return c >= 0; }).sort(function (a, b) { return a - b; });
+    for (var i = 0; i < cands.length; i++) {
+      if (cands[i] >= requiredBreak(p - cands[i], rulesetKey, customTiers)) return Math.min(cands[i], p);
+    }
+    return 0;
+  }
+
+  /** Nächste Pausenstufe (für den Hinweis „ab 07:15 brauchst du 30 min“). Erwartet die Arbeitszeit. */
+  function nextBreakTier(workMinutes, rulesetKey, customTiers) {
+    var tiers = tiersOf(rulesetKey, customTiers).sort(function (a, b) { return a.over - b.over; });
     for (var i = 0; i < tiers.length; i++) {
-      if (grossMinutes <= tiers[i].over) return tiers[i];
+      if (workMinutes <= tiers[i].over) return tiers[i];
     }
     return null;
+  }
+
+  function roundBy(minutes, step, mode) {
+    if (!step || step <= 1) return Math.round(minutes);
+    var q = minutes / step;
+    if (mode === "up") return Math.ceil(q) * step;
+    if (mode === "down") return Math.floor(q) * step;
+    return Math.round(q) * step;
+  }
+
+  /**
+   * Netto einer Anwesenheit nach Pausenrecht.
+   * @param {Number} presence  Anwesenheit in Minuten
+   * @param {Object} br        { unpaid, paid } erfasste Pausenminuten innerhalb der Anwesenheit
+   * @param {Object} s         { breakRuleset, customBreakTiers, autoDeductBreak }
+   * Bezahlte Pausen bleiben Arbeitszeit fürs Konto, zählen aber für die
+   * Pflichtpause mit — eine Pause ist eine Pause, egal wer sie bezahlt.
+   * Abgezogen wird nur der unbezahlte Teil plus ein allfälliges Manko.
+   */
+  function netOf(presence, br, s) {
+    s = s || {};
+    var p = Math.max(0, presence || 0);
+    var unpaid = Math.max(0, (br && br.unpaid) || 0);
+    var paid = Math.max(0, (br && br.paid) || 0);
+    var required = p > 0 ? minBreakFor(p, s.breakRuleset, s.customBreakTiers) : 0;
+    var shortfall = Math.max(0, required - unpaid - paid);
+    var auto = s.autoDeductBreak !== false ? shortfall : 0;
+    return {
+      net: Math.max(0, p - unpaid - auto),
+      required: required,
+      shortfall: shortfall,
+      autoDeducted: auto,
+      deducted: unpaid + auto
+    };
+  }
+
+  /**
+   * Kleinste Anwesenheit, nach der (gerundet) mindestens `needNet` Netto
+   * bleiben. Grundlage für „Gehen um …“ in Engine und Planer.
+   * @param {Number} needNet
+   * @param {Object} s        wie netOf, dazu roundStep / roundMode
+   * @param {Object|Function} breaksAt  { unpaid, paid } fest — oder
+   *        function(g) -> { unpaid, paid } innerhalb der ersten g Minuten
+   *        (für Pausen, die erst später am Tag liegen).
+   * @returns {{ gross, net, deducted }}
+   */
+  function presenceForNet(needNet, s, breaksAt) {
+    s = s || {};
+    var need = Math.max(0, Math.round(needNet || 0));
+    var at = typeof breaksAt === "function" ? breaksAt : function () { return breaksAt || {}; };
+    // Kleinstes Roh-Netto, das nach der Rundung reicht.
+    var raw = need;
+    if (s.roundStep > 1) {
+      raw = Math.max(0, need - s.roundStep);
+      while (roundBy(raw, s.roundStep, s.roundMode) < need) raw++;
+    }
+    /* Netto wächst mit der Anwesenheit monoton, pro Minute höchstens um 1
+       (bei bezahlten Pausen um 2: die Minute zählt als Arbeit UND deckt die
+       Pflichtpause). Wer um das Manko geteilt durch diese Steigung
+       vorrückt, schiesst nie über das Minimum hinaus. */
+    var g = raw, r = null, guard = 0;
+    while (guard++ < 3000) {
+      var b = at(g) || {};
+      r = netOf(g, b, s);
+      var gap = raw - r.net;
+      if (gap <= 0) break;
+      g += (b.paid > 0 || b.hasPaid) ? Math.ceil(gap / 2) : gap;
+    }
+    return { gross: g, net: r ? r.net : 0, deducted: r ? r.deducted : 0 };
   }
 
   /* ==================================================================== */
@@ -229,7 +330,9 @@
   function weeklyTargetMinutes(settings) {
     var s = settings || defaultSettings();
     var sum = (s.weeklyTargets || []).reduce(function (a, b) { return a + (b || 0); }, 0);
-    return Math.round(sum * ((s.workloadPercent || 100) / 100));
+    // 0 % heisst 0 — gleiche Lesart wie baseTargetFor (früher galt 0 als 100 %).
+    var pct = (s.workloadPercent === null || s.workloadPercent === undefined) ? 100 : s.workloadPercent;
+    return Math.round(sum * (pct / 100));
   }
 
   return {
@@ -240,6 +343,9 @@
     MODEL_PRESETS: MODEL_PRESETS,
     dayType: dayType,
     requiredBreak: requiredBreak,
+    minBreakFor: minBreakFor,
+    netOf: netOf,
+    presenceForNet: presenceForNet,
     nextBreakTier: nextBreakTier,
     weeklyPreset: weeklyPreset,
     defaultSettings: defaultSettings,
