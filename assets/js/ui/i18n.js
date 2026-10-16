@@ -3092,30 +3092,48 @@
 
   function locale() { return LOCALES[current] || "de-CH"; }
 
+  /* Ein Intl.DateTimeFormat zu bauen kostet rund 50-mal mehr als damit zu
+     formatieren. Statistik und Rapport formatieren hunderte Daten pro
+     Aufbau — darum je Sprache und Optionen genau einmal anlegen. */
+  var DATE_DEFAULT = { day: "2-digit", month: "long", year: "numeric" };
+  var dtfCache = {};
+  var nameCache = {};
+
+  function dateFormatter(opts) {
+    var key = current + "|" + JSON.stringify(opts);
+    var f = dtfCache[key];
+    if (!f) f = dtfCache[key] = new Intl.DateTimeFormat(locale(), opts);
+    return f;
+  }
+
   function formatDate(isoOrDate, opts) {
     var d = typeof isoOrDate === "string"
       ? new Date(+isoOrDate.slice(0, 4), +isoOrDate.slice(5, 7) - 1, +isoOrDate.slice(8, 10))
       : isoOrDate;
     if (!d || isNaN(d.getTime())) return String(isoOrDate || "");
     try {
-      return new Intl.DateTimeFormat(locale(), opts || { day: "2-digit", month: "long", year: "numeric" }).format(d);
+      return dateFormatter(opts || DATE_DEFAULT).format(d);
     } catch (e) {
       return d.toISOString().slice(0, 10);
     }
   }
 
   function weekdayName(index, style) {
+    var key = current + "|wd|" + (style || "short") + "|" + index;
+    if (nameCache[key] !== undefined) return nameCache[key];
     try {
       var base = new Date(2024, 0, 7 + index); // 7.1.2024 war ein Sonntag
-      return new Intl.DateTimeFormat(locale(), { weekday: style || "short" }).format(base);
+      return (nameCache[key] = dateFormatter({ weekday: style || "short" }).format(base));
     } catch (e) {
       return ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"][index] || "";
     }
   }
 
   function monthName(index, style) {
+    var key = current + "|m|" + (style || "long") + "|" + index;
+    if (nameCache[key] !== undefined) return nameCache[key];
     try {
-      return new Intl.DateTimeFormat(locale(), { month: style || "long" }).format(new Date(2024, index, 1));
+      return (nameCache[key] = dateFormatter({ month: style || "long" }).format(new Date(2024, index, 1)));
     } catch (e) {
       return String(index + 1);
     }

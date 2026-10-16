@@ -888,10 +888,22 @@
     achTimer = setTimeout(App.checkAchievements, 500);
   }
 
+  /* Die Kennzahlen laufen über alle Tage. Je Datenstand (und Minute, wegen
+     des laufenden Tages) nur einmal rechnen — die Ansicht „Erfolge“ und die
+     Prüfung nach dem Speichern teilen sich das Ergebnis. */
+  var achRev = 0;
+  var achMemo = null;
+  store.subscribe(function (evt) { if (!evt || evt.type !== "achievements") achRev++; });
+
   App.buildAchievements = function () {
-    var stats = ZK.Achievements.buildStats(store.allDays(), App.settings());
+    var key = achRev + "|" + T.todayISO() + "|" + Math.floor(Date.now() / 60000);
+    if (!achMemo || achMemo.key !== key) {
+      achMemo = { key: key, stats: ZK.Achievements.buildStats(store.allDays(), App.settings()) };
+    }
     var saved = store.getAchievements();
-    return ZK.Achievements.evaluate(stats, saved.earned, { exports: saved.exports || 0 });
+    var result = ZK.Achievements.evaluate(achMemo.stats, saved.earned, { exports: saved.exports || 0 });
+    result.stats = achMemo.stats;
+    return result;
   };
 
   App.checkAchievements = function () {
