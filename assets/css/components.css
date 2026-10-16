@@ -515,6 +515,42 @@ table.data tfoot td {
   flex-wrap: wrap;
 }
 .modal-foot .left { margin-right: auto; }
+/* Fällt der Fokus mangels Feld auf den Dialog selbst, braucht es keinen Ring */
+.modal:focus { outline: none; }
+
+/* Tastenkürzel-Übersicht */
+.kbd-list { display: flex; flex-direction: column; gap: 2px; }
+.kbd-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 20px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--line-faint);
+}
+.kbd-row:last-child { border-bottom: 0; }
+.kbd-row span { font-size: var(--fs-sm); font-weight: 650; }
+.kbd-row small { display: block; font-size: var(--fs-2xs); font-weight: 550; color: var(--ink-3); }
+.kbd-row kbd {
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  padding: 3px 7px;
+  border-radius: var(--r-xs);
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  color: var(--ink-2);
+  white-space: nowrap;
+  flex: none;
+}
+
+/* Handy quer: wenig Höhe — Kopf und Fuss des Dialogs werden schmaler */
+@media (max-height: 500px) and (orientation: landscape) {
+  .modal-scrim { padding: var(--gap-2); }
+  .modal { max-height: calc(100vh - 16px); max-height: calc(100dvh - 16px); border-radius: var(--r-lg); }
+  .modal-head { padding: var(--gap-3) var(--gap-4) var(--gap-2); }
+  .modal-body { padding: var(--gap-3) var(--gap-4); }
+  .modal-foot { padding: var(--gap-2) var(--gap-4); }
+}
 
 /* ---- Toasts ----------------------------------------------------------- */
 .toasts {
@@ -528,7 +564,16 @@ table.data tfoot td {
   max-width: min(380px, calc(100vw - 32px));
   pointer-events: none;
 }
-@media (max-width: 1000px) { .toasts { bottom: calc(72px + env(safe-area-inset-bottom, 0px)); } }
+/* Mobil sitzen Meldungen über der Tableiste; die genaue Höhe misst
+   dom.js (placeToasts), das hier ist nur der Startwert. Bei offenem Dialog
+   wandern sie nach oben, damit sie nicht dessen Knöpfe verdecken. */
+@media (max-width: 1000px) {
+  .toasts { left: var(--gap-4); right: var(--gap-4); max-width: none; align-items: stretch; bottom: calc(72px + env(safe-area-inset-bottom, 0px)); }
+  .toast { width: 100%; max-width: 440px; margin-left: auto; }
+  body.has-modal .toasts { top: calc(var(--gap-3) + env(safe-area-inset-top, 0px)); bottom: auto !important; }
+}
+/* Unten läge der Stapel über der Stempelleiste — dann unter der Kopfzeile */
+.toasts.top { top: calc(var(--header-h) + var(--gap-3) + env(safe-area-inset-top, 0px)); bottom: auto !important; }
 .toast {
   pointer-events: auto;
   display: flex;
@@ -561,6 +606,8 @@ table.data tfoot td {
   flex: none;
 }
 [data-theme="dark"] .toast .act { background: rgba(0, 0, 0, .12); }
+.toast .act.close { display: inline-grid; place-items: center; padding: 4px; }
+.toast .act.close .ic { width: 14px; height: 14px; margin: 0; }
 .toast .act:hover { background: rgba(255, 255, 255, .28); }
 .toast.plus  { background: var(--plus-solid);  color: var(--on-tone) }
 .toast.minus { background: var(--minus-solid); color: var(--on-tone) }
@@ -689,31 +736,49 @@ table.data tfoot td {
 }
 
 /* ---- Tooltip ---------------------------------------------------------- */
+/* Eine einzige, fest positionierte Ebene (dom.js setupTips). Früher ein
+   ::after am Element: das wurde in overflow-Containern abgeschnitten,
+   öffnete sich in der Kopfzeile über den Bildschirmrand und machte die
+   Seite breiter, obwohl es unsichtbar war. position:relative bleibt, weil
+   sich Inhalte darauf verlassen könnten. */
 [data-tip] { position: relative; }
-[data-tip]::after {
-  content: attr(data-tip);
-  position: absolute;
-  bottom: calc(100% + 8px);
-  left: 50%;
-  transform: translateX(-50%) translateY(4px);
-  background: var(--surface-invert);
-  color: var(--ink-invert);
-  font-size: var(--fs-2xs);
-  font-weight: 650;
+.tip-layer {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 170;
+  max-width: min(280px, calc(100vw - 16px));
   padding: 6px 9px;
   border-radius: var(--r-xs);
-  white-space: nowrap;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity var(--t-fast), transform var(--t-fast);
-  z-index: 60;
+  background: var(--surface-invert);
+  color: var(--ink-invert);
+  font-family: var(--font-sans);
+  font-size: var(--fs-2xs);
+  font-weight: 650;
+  line-height: 1.4;
+  letter-spacing: 0;
+  text-transform: none;
+  text-align: left;
+  white-space: normal;
+  overflow-wrap: anywhere;
   box-shadow: var(--shadow-md);
-  max-width: 260px;
+  pointer-events: none;
+  visibility: hidden;
+  opacity: 0;
+  transition: opacity var(--t-fast), visibility 0s linear .14s;
 }
-[data-tip]:hover::after, [data-tip]:focus-visible::after {
-  opacity: 1;
-  transform: translateX(-50%);
+.tip-layer.on { visibility: visible; opacity: 1; transition: opacity var(--t-fast); }
+.tip-layer .tip-arrow {
+  position: absolute;
+  top: 100%;
+  left: var(--tip-ax, 50%);
+  width: 8px;
+  height: 8px;
+  margin: -4px 0 0 -4px;
+  background: inherit;
+  transform: rotate(45deg);
 }
+.tip-layer.below .tip-arrow { top: auto; bottom: 100%; margin: 0 0 -4px -4px; }
 
 /* ---- Ladeplatzhalter -------------------------------------------------- */
 .skeleton {

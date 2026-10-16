@@ -79,8 +79,61 @@
     return E.computeRange(from, to, function (iso) { return store.getDay(iso); }, App.settings());
   };
 
-  App.accountBalance = function (upto) {
-    return E.accountBalance(store.allDays(), App.settings(), upto);
+  /* ---- Kontostand, je Datenstand nur einmal gerechnet ----------------
+     accountBalance() geht über alle erfassten Tage; Kopfzeile, Statistik
+     und Berichte fragen ihn bei jedem Zeichnen ab. Der Zwischenspeicher
+     gilt, bis der Store eine Änderung meldet, der Tag wechselt oder eine
+     Minute vergeht (ein laufender Tag ändert sich minütlich). */
+  var dataRev = 0;
+  var balanceCache = { stamp: null, values: {} };
+
+  store.subscribe(function (evt) {
+    if (evt && (evt.type === "error" || evt.type === "achievements")) return;
+    dataRev++;
+  });
+
+  /** Zähler, der bei jeder Daten- oder Einstellungsänderung steigt —
+      der des Stores (zählt auch Übernahmen aus anderen Fenstern) plus ein
+      eigener für Laden und ältere Store-Stände ohne rev(). */
+  App.dataRevision = function () {
+    return (typeof store.rev === "function" ? store.rev() : 0) + "/" + dataRev;
+  };
+
+  /**
+   * @param {String} [upto]  einschliesslich, Standard heute
+   * @param {Object} [opts]  wird an E.accountBalance weitergereicht
+   *                         (z. B. { includeRunning: true })
+   */
+  App.accountBalance = function (upto, opts) {
+    var now = new Date();
+    var stamp = App.dataRevision() + "|" + T.todayISO(now) + "|" + now.getHours() + ":" + now.getMinutes();
+    if (balanceCache.stamp !== stamp) balanceCache = { stamp: stamp, values: {} };
+    var key = (upto || "") + "|" + (opts && opts.includeRunning ? "run" : "");
+    if (!balanceCache.values[key]) {
+      balanceCache.values[key] = E.accountBalance(store.allDays(), App.settings(), upto, undefined, opts);
+    }
+    return Object.assign({}, balanceCache.values[key]);
+  };
+
+  /**
+   * Zeitkonto für die Kopfzeile: nur abgeschlossene Tage. Ein laufender
+   * Tag steht im Saldo mit „bisher gearbeitet minus volles Soll“ — beim
+   * Einstempeln fiele das Konto sonst um das ganze Tagessoll. Der laufende
+   * Tag kommt deshalb getrennt als `live` zurück. Gerechnet wird bis zum
+   * Vortag des laufenden Tags; das stimmt mit und ohne die neuere
+   * Engine-Option (laufenden Tag ausschliessen) überein.
+   * → { minutes, live: Minuten | null, liveDate: ISO | null, overnight }
+   */
+  App.settledBalance = function () {
+    var active = App.activeStampDate();
+    var res = App.day(active);
+    if (!res.running) return { minutes: App.accountBalance().minutes, live: null, liveDate: null, overnight: false };
+    return {
+      minutes: App.accountBalance(T.addDays(active, -1)).minutes,
+      live: res.balance,
+      liveDate: active,
+      overnight: !!res.overnight
+    };
   };
 
   App.saveDay = function (iso, patch, opts) {
@@ -138,16 +191,18 @@
 
   App.go = function (view, opts) {
     if (!ZK.Views[view]) view = "today";
-    var changed = App.view !== view;
+    var fromDrawer = navIsOpen();
     App.view = view;
     if (opts && opts.date) App.date = opts.date;
     writeHash();
     closeNav();
     App.renderChrome();
-    App.renderView();
-    if (changed) {
-      var main = D.qs(".main");
-      if (main) main.scrollTop = 0;
+    App.renderView();   // springt bei einem Ansichtswechsel selbst nach oben
+    // Aus der Schublade gewählt: der Fokus gehört jetzt dem Inhalt, nicht
+    // einem Knopf in der gerade zugeklappten Schublade
+    if (fromDrawer) {
+      var host = D.qs("#viewHost");
+      if (host) { try { host.focus({ preventScroll: true }); } catch (e) { host.focus(); } }
     }
   };
 
@@ -168,15 +223,24 @@
     if (location.hash !== next) history.replaceState(null, "", next);
   }
 
+  /** → true, wenn die Adresse den angezeigten Tag (App.date) festlegt */
   function readHash() {
     var m = /^#\/([a-z]+)(?:\/(\d{4}-\d{2}-\d{2}))?/.exec(location.hash || "");
-    if (!m) return;
+    if (!m) return false;
     if (ZK.Views[m[1]]) App.view = m[1];
-    if (m[2] && T.isValidISO(m[2])) {
+    if (!m[2] || !T.isValidISO(m[2])) return false;
+    /* Kalender und Woche schreiben ihre Blätterposition in die Adresse.
+       Die gilt nur für sie — sonst öffnete „Heute“ nach dem Neuladen auf
+       dem zuletzt angesehenen Monat. Nur #/today/<Datum> setzt den Tag. */
+    if (m[1] === "calendar") App.calendarMonth = T.monthKey(m[2]);
+    else if (m[1] === "week") App.weekAnchor = m[2];
+    else {
       App.date = m[2];
       App.calendarMonth = T.monthKey(m[2]);
       App.weekAnchor = m[2];
+      return true;
     }
+    return false;
   }
 
   /* ================================================================== */
@@ -219,15 +283,35 @@
   /* ================================================================== */
 
   App.renderChrome = function () {
+    /* Kopfzeile und Navigation werden komplett neu aufgebaut. Wer gerade
+       einen ihrer Knöpfe bedient (Tastatur), behält trotzdem den Fokus. */
+    var memos = ["#header", "#nav", "#tabbar"].map(function (sel) { return memoFocus(D.qs(sel)); });
     renderNav();
     renderHeader();
+    memos.forEach(restoreFocusMemo);
   };
+
+  /* Die Speicherdiagnose liest den ganzen localStorage-Text — nur einmal
+     je Datenstand, nicht bei jedem Zeichnen der Navigation. */
+  var diagCache = { rev: -1, value: null };
+  function diagnostics() {
+    var rev = App.dataRevision();
+    if (diagCache.rev !== rev || !diagCache.value) diagCache = { rev: rev, value: store.diagnostics() };
+    return diagCache.value;
+  }
+
+  /* Die Tableiste hat Platz für vier Ansichten plus „Mehr“. Alles andere
+     (Berichte, Erfolge, Werkzeuge, Einstellungen) liegt in der Schublade;
+     „Mehr“ öffnet sie und ist aktiv, solange eine dieser Ansichten offen ist. */
+  var TAB_VIEWS = ["today", "calendar", "week", "stats"];
+  var IS_MAC = /Mac|iPhone|iPad|iPod/.test((navigator.platform || "") + " " + (navigator.userAgent || ""));
 
   function renderNav() {
     var nav = D.qs("#nav");
     var tabbar = D.qs("#tabbar");
     if (!nav) return;
     D.clear(nav);
+    nav.setAttribute("aria-label", I.t("nav.main"));
 
     var groups = [
       { key: "time", label: I.t("nav.section.time") },
@@ -240,35 +324,58 @@
       VIEW_ORDER.filter(function (v) { return v.group === g.key; }).forEach(function (v) {
         var btn = D.el("button.nav-item", {
           type: "button",
+          "data-key": "nav-" + v.key,
           "aria-current": App.view === v.key ? "page" : null,
           html: D.icon(v.icon) + "<span>" + D.esc(I.t("nav." + v.key)) + "</span>" +
-            '<kbd>' + D.esc(v.kbd) + "</kbd>"
+            '<kbd aria-hidden="true">' + D.esc(v.kbd) + "</kbd>"
         });
         btn.addEventListener("click", function () { App.go(v.key); });
         nav.appendChild(btn);
       });
     });
 
-    var diag = store.diagnostics();
+    // Auf sehr schmalen Handys fehlt der Knopf in der Kopfzeile — dann hier
+    var themeItem = D.el("button.nav-item.nav-theme", {
+      type: "button", "data-key": "nav-theme",
+      html: D.icon(App.effectiveTheme === "dark" ? "sun" : "moon") + "<span>" + D.esc(I.t("kbd.theme")) + "</span>"
+    });
+    themeItem.addEventListener("click", App.toggleTheme);
+    nav.appendChild(themeItem);
+
+    var diag = diagnostics();
     nav.appendChild(D.el("div.nav-foot", {
       html: "<b>" + D.esc(I.t("app.name")) + "</b> " + APP_VERSION + "<br>" +
-        D.esc(diag.days) + " " + D.esc(I.t("common.days")) + " · " +
-        (diag.volatile ? "⚠ nur im Speicher" : Math.round(diag.bytes / 1024) + " KB") +
-        "<br><span style='opacity:.8'>" + D.esc(I.t("set.dataHint").split(".")[0]) + ".</span>"
+        D.esc(I.tn("nav.daysStored", diag.days)) + " · " +
+        (diag.volatile ? "⚠ " + D.esc(I.t("nav.volatile")) : Math.round(diag.bytes / 1024) + " KB") +
+        "<br><span>" + D.esc(I.t("nav.privacy")) + "</span>"
     }));
 
     if (tabbar) {
       D.clear(tabbar);
-      ["today", "calendar", "week", "stats", "settings"].forEach(function (key) {
+      tabbar.setAttribute("aria-label", I.t("nav.views"));
+      TAB_VIEWS.forEach(function (key) {
         var v = VIEW_ORDER.filter(function (x) { return x.key === key; })[0];
         var btn = D.el("button.tab", {
           type: "button",
+          "data-key": "tab-" + key,
           "aria-current": App.view === key ? "page" : null,
           html: D.icon(v.icon) + "<span>" + D.esc(I.t("nav." + key)) + "</span>"
         });
         btn.addEventListener("click", function () { App.go(key); });
         tabbar.appendChild(btn);
       });
+      var inMore = TAB_VIEWS.indexOf(App.view) < 0;
+      var more = D.el("button.tab.tab-more", {
+        type: "button",
+        "data-key": "tab-more",
+        "aria-current": inMore ? "page" : null,
+        "aria-controls": "nav",
+        "aria-expanded": navIsOpen() ? "true" : "false",
+        "aria-label": inMore ? I.t("nav.more") + ": " + I.t("nav." + App.view) : I.t("nav.more"),
+        html: D.icon("grid") + "<span>" + D.esc(I.t("nav.more")) + "</span>"
+      });
+      more.addEventListener("click", function () { openNav(); });
+      tabbar.appendChild(more);
     }
   }
 
@@ -279,14 +386,22 @@
 
     // Menü (nur mobil sichtbar)
     var menuBtn = D.el("button.btn.ghost.icon.only-mobile", {
-      type: "button", "aria-label": I.t("nav.menu"), html: D.icon("menu")
+      type: "button", "data-key": "hdr-menu", "aria-label": I.t("nav.menu"),
+      "aria-controls": "nav", "aria-expanded": navIsOpen() ? "true" : "false",
+      html: D.icon("menu")
     });
-    menuBtn.addEventListener("click", openNav);
+    menuBtn.addEventListener("click", function () { openNav(); });
     header.appendChild(menuBtn);
 
-    var title = D.el("div.header-title", {
-      html: '<span class="s">' + D.esc(I.t("nav." + App.view)) + "</span>" +
-        '<span class="h">' + D.esc(headerHeadline()) + "</span>"
+    /* Wo der Titel nur den Namen der Ansicht wiederholt (Statistik,
+       Einstellungen …), steht darüber der Bereich statt zweimal dasselbe;
+       mobil zeigt die Kopfzeile dann den Titel. */
+    var eyebrow = headerEyebrow(), headline = headerHeadline();
+    var dup = eyebrow.toLocaleLowerCase() === headline.toLocaleLowerCase();
+    if (dup) eyebrow = sectionLabel(App.view) || eyebrow;
+    var title = D.el("div.header-title" + (dup ? ".dup" : ""), {
+      html: '<span class="s">' + D.esc(eyebrow) + "</span>" +
+        '<span class="h">' + D.esc(headline) + "</span>"
     });
     header.appendChild(title);
     header.appendChild(D.el("div.spacer"));
@@ -295,27 +410,22 @@
     var clock = D.el("span.clock-pill.mono#liveClock", { "aria-label": I.t("common.now") });
     header.appendChild(clock);
 
-    // Saldo
-    var bal = App.accountBalance();
-    var pill = D.el("button.saldo-pill" + (bal.minutes ? "." + App.toneOf(bal.minutes) : ""), {
-      type: "button",
-      "data-tip": I.t("set.account"),
-      html: '<span class="lbl">' + D.esc(I.t("day.balance").split(" ")[0]) + "</span>" +
-        '<span class="val mono">' + D.esc(App.fmtSigned(bal.minutes)) + "</span>"
-    });
+    // Zeitkonto
+    var pill = D.el("button.saldo-pill", { type: "button", "data-key": "hdr-saldo" });
+    fillSaldoPill(pill, App.settledBalance());
     pill.addEventListener("click", function () { App.go("stats"); });
     header.appendChild(pill);
 
     // Aktionen
     var search = D.el("button.btn.ghost.icon", {
-      type: "button", "aria-label": I.t("cmd.placeholder"),
-      "data-tip": I.t("kbd.palette") + " · Ctrl+K", html: D.icon("search")
+      type: "button", "data-key": "hdr-search", "aria-label": I.t("cmd.placeholder"),
+      "data-tip": I.t("kbd.palette") + (IS_MAC ? " · ⌘K" : " · Ctrl+K"), html: D.icon("search")
     });
     search.addEventListener("click", openPalette);
     header.appendChild(search);
 
-    var themeBtn = D.el("button.btn.ghost.icon", {
-      type: "button", "aria-label": I.t("set.theme"),
+    var themeBtn = D.el("button.btn.ghost.icon.hdr-theme", {
+      type: "button", "data-key": "hdr-theme", "aria-label": I.t("set.theme"),
       "data-tip": I.t("kbd.theme"),
       html: D.icon(App.effectiveTheme === "dark" ? "sun" : "moon")
     });
@@ -325,13 +435,62 @@
     startClock();
   }
 
+  /** Beschriftung, Wert und Erklärung der Saldo-Pille — auch für das minütliche Nachführen. */
+  function fillSaldoPill(pill, bal) {
+    var value = App.fmtSigned(bal.minutes);
+    var live = bal.live === null ? "" : App.fmtSigned(bal.live);
+    var liveText = live ? I.t(bal.overnight ? "balance.liveShift" : "balance.live", { v: live }) : "";
+    pill.className = "saldo-pill" + (bal.minutes ? " " + App.toneOf(bal.minutes) : "");
+    pill.setAttribute("data-sig", bal.minutes + "|" + live + "|" + I.getLang());
+    pill.setAttribute("data-tip", I.t("balance.account") + ": " + I.t("balance.tipSettled") +
+      (live ? " · " + I.t("balance.tipLive", { v: live }) : ""));
+    pill.setAttribute("aria-label", I.t("balance.account") + " " + value + (liveText ? ", " + liveText : ""));
+    pill.innerHTML =
+      '<span class="lbl"><span class="l-full">' + D.esc(I.t("balance.account")) + "</span>" +
+      '<span class="l-short">' + D.esc(I.t("balance.accountShort")) + "</span></span>" +
+      '<span class="val mono">' + D.esc(value) + "</span>" +
+      (liveText ? '<span class="live">' + D.esc(liveText) + "</span>" : "");
+  }
+
+  /** Läuft ein Tag, ändert sich der Live-Teil minütlich — ohne die Kopfzeile neu zu bauen. */
+  function refreshSaldoPill() {
+    var pill = D.qs('#header [data-key="hdr-saldo"]');
+    if (!pill) return;
+    var bal = App.settledBalance();
+    var sig = bal.minutes + "|" + (bal.live === null ? "" : App.fmtSigned(bal.live)) + "|" + I.getLang();
+    if (pill.getAttribute("data-sig") !== sig) fillSaldoPill(pill, bal);
+  }
+
+  /* Über dem Titel: der Name der Ansicht. In „Heute“ nur, wenn auch heute
+     angezeigt wird — sonst stünde „Heute“ über einem anderen Datum. */
+  function headerEyebrow() {
+    if (App.view !== "today") return I.t("nav." + App.view);
+    var today = T.todayISO();
+    if (App.date === today) return I.t("nav.today");
+    if (App.date === T.addDays(today, -1)) return I.t("common.yesterday");
+    if (App.date === T.addDays(today, 1)) return I.t("common.tomorrow");
+    return I.t("hdr.day");
+  }
+
+  function sectionLabel(view) {
+    var v = VIEW_ORDER.filter(function (x) { return x.key === view; })[0];
+    return v ? I.t("nav.section." + v.group) : "";
+  }
+
+  /* Französisch und Italienisch schreiben Wochentage klein — als Titel
+     beginnt die Zeile trotzdem gross. */
+  function capFirst(text) {
+    var s = String(text || "");
+    return s ? s.charAt(0).toLocaleUpperCase(I.locale()) + s.slice(1) : s;
+  }
+
   function headerHeadline() {
     if (App.view === "today") {
-      return I.formatDate(App.date, { weekday: "long", day: "numeric", month: "long" });
+      return capFirst(I.formatDate(App.date, { weekday: "long", day: "numeric", month: "long" }));
     }
     if (App.view === "calendar") {
       var d = T.fromISO(App.calendarMonth + "-01");
-      return d ? I.monthName(d.getMonth()) + " " + d.getFullYear() : "";
+      return d ? capFirst(I.monthName(d.getMonth())) + " " + d.getFullYear() : "";
     }
     if (App.view === "week") {
       return I.t("week.kw", { n: T.isoWeek(App.weekAnchor) }) + " · " + T.isoWeekYear(App.weekAnchor);
@@ -348,20 +507,64 @@
     return I.t(TITLES[App.view] || ("nav." + App.view));
   }
 
-  function openNav() {
+  /* ---- Schublade (mobil) ------------------------------------------- */
+  var navReturnFocus = null;
+
+  function navIsOpen() {
     var nav = D.qs("#nav");
-    if (!nav) return;
-    nav.classList.add("open");
-    var scrim = D.el("div.nav-scrim");
-    scrim.addEventListener("click", closeNav);
-    document.body.appendChild(scrim);
+    return !!(nav && nav.classList.contains("open"));
   }
 
-  function closeNav() {
+  function setNavExpanded(open) {
+    D.qsa('[aria-controls="nav"]').forEach(function (b) { b.setAttribute("aria-expanded", open ? "true" : "false"); });
+  }
+
+  function openNav() {
     var nav = D.qs("#nav");
+    if (!nav || navIsOpen()) return;
+    D.hideTip();
+    navReturnFocus = document.activeElement;
+    nav.classList.add("open");
+    document.body.classList.add("nav-open");
+    /* Der Schleier gehört in denselben Stapelkontext wie die Schublade
+       (.app hat z-index) — am Ende von <body> lag er über ihr. */
+    var scrim = D.el("div.nav-scrim", { "aria-hidden": "true" });
+    scrim.addEventListener("click", function () { closeNav(true); });
+    nav.parentNode.insertBefore(scrim, nav);
+    setNavExpanded(true);
+    var target = D.qs('.nav-item[aria-current="page"]', nav) || D.qs(".nav-item", nav);
+    if (target) {
+      try { target.focus({ preventScroll: true }); } catch (e) { target.focus(); }
+    }
+  }
+
+  /** @param {Boolean} restoreFocus  zurück zum auslösenden Knopf (Escape, Schleier) */
+  function closeNav(restoreFocus) {
+    var nav = D.qs("#nav");
+    var wasOpen = navIsOpen();
     if (nav) nav.classList.remove("open");
-    var scrim = D.qs(".nav-scrim");
-    if (scrim && scrim.parentNode) scrim.parentNode.removeChild(scrim);
+    document.body.classList.remove("nav-open");
+    D.qsa(".nav-scrim").forEach(function (s) { if (s.parentNode) s.parentNode.removeChild(s); });
+    setNavExpanded(false);
+    if (wasOpen && restoreFocus === true) {
+      var back = navReturnFocus && document.contains(navReturnFocus) && navReturnFocus !== document.body
+        ? navReturnFocus : D.qs('#header [data-key="hdr-menu"]');
+      if (back) { try { back.focus({ preventScroll: true }); } catch (e) { back.focus(); } }
+    }
+    if (wasOpen) navReturnFocus = null;
+  }
+
+  /** Tab bleibt in der offenen Schublade. */
+  function trapNavFocus(e) {
+    var nav = D.qs("#nav");
+    var items = D.qsa("button, [href], input, select, [tabindex]:not([tabindex='-1'])", nav)
+      .filter(function (n) { return !n.disabled && n.getClientRects().length > 0; });
+    if (!items.length) return;
+    var first = items[0], last = items[items.length - 1];
+    var active = document.activeElement;
+    if (!nav.contains(active)) { e.preventDefault(); (e.shiftKey ? last : first).focus(); }
+    else if (e.shiftKey && active === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && active === last) { e.preventDefault(); first.focus(); }
   }
 
   /* ---- Uhr ---------------------------------------------------------- */
@@ -386,7 +589,10 @@
     App.tickers.forEach(function (fn) { try { fn(); } catch (e) { /* Ticker isolieren */ } });
     updateTitle();
     checkBreakDue();
+    var minute = Math.floor(Date.now() / 60000);
+    if (minute !== saldoMinute) { saldoMinute = minute; refreshSaldoPill(); }
   }
+  var saldoMinute = null;
 
   /* ---- Feierabend im Browser-Tab ----------------------------------- */
   /* Der Grundtitel wird jedes Mal neu gebildet statt gespeichert — sonst
@@ -424,11 +630,15 @@
     var res = App.day(iso);
     if (!res.running) { breakWarnedAt = null; return; }
 
-    var tier = R.nextBreakTier(res.presence, s.breakRuleset, s.customBreakTiers);
+    if (res.openBreak) return;                         // gerade in der Pause
+    /* Die Staffeln gelten für die Arbeitszeit (ohne Pausen), und jede
+       Pause zählt mit, auch eine bezahlte (legalBreak). */
+    var worked = res.workingTime !== undefined ? res.workingTime : res.presence;
+    var tier = R.nextBreakTier(worked, s.breakRuleset, s.customBreakTiers);
     if (!tier) return;
-    if (res.breakTotal >= tier.require) return;      // Pause ist schon erfasst
+    if ((res.legalBreak !== undefined ? res.legalBreak : res.breakTotal) >= tier.require) return;   // Pause ist schon erfasst
 
-    var minutesToTier = tier.over - res.presence;
+    var minutesToTier = tier.over - worked;
     if (minutesToTier > 10 || minutesToTier < 0) return;
     if (breakWarnedAt === tier.over) return;         // je Stufe nur einmal
     breakWarnedAt = tier.over;
@@ -456,24 +666,245 @@
   /* Ansicht zeichnen                                                    */
   /* ================================================================== */
 
+  /* Jede Speicherung zeichnet die ganze Ansicht neu. Damit das nicht
+     auffällt, gilt für ein Neuzeichnen DERSELBEN Ansicht: keine
+     Einflug-Animation, Scrollposition, Fokus (samt Cursor), offene
+     <details> und innere Scrollbereiche bleiben. Nur ein echter
+     Ansichtswechsel animiert und springt nach oben.
+     App.renderMode verrät den Ansichten, welcher Fall gerade vorliegt
+     („enter“ | „refresh“), etwa um Zahlen nicht erneut hochzuzählen. */
+  var renderedView = null;
+  var KEEP_SCROLL = ".table-wrap, [data-keep-scroll]";
+  var FOCUS_SEL = "a[href], button, input, select, textarea, summary, [tabindex]";
+
+  App.renderMode = "enter";
+
+  var flushingView = false;
+
   App.renderView = function () {
     var host = D.qs("#viewHost");
-    if (!host) return;
+    if (!host || flushingView) return;
+    /* Angefangene Eingaben der alten Ansicht (Notiz, Pausenbezeichnung)
+       zuerst sichern — vor dem Abriss, auch beim Wechsel der Ansicht.
+       Löst das Sichern selbst ein Neuzeichnen aus, übernimmt das dieser
+       Aufruf hier. */
+    var leaving = renderedView && ZK.Views[renderedView];
+    if (leaving && typeof leaving.flush === "function") {
+      flushingView = true;
+      try { leaving.flush(); } catch (e) { if (root.console) console.error(e); }
+      finally { flushingView = false; }
+    }
+    var key = ZK.Views[App.view] ? App.view : "today";
+    var refresh = renderedView === key && !!host.firstChild;
+    var firstEver = renderedView === null;
+    renderedView = key;
+
+    var keep = null;
+    if (refresh) {
+      keep = {
+        y: window.pageYOffset || document.documentElement.scrollTop || 0,
+        focus: memoFocus(host),
+        intent: focusIntent && Date.now() - focusIntent.at < 600 ? focusIntent : null,
+        details: memoDetails(host),
+        scrollers: D.qsa(KEEP_SCROLL, host).map(function (n) { return [n.scrollLeft, n.scrollTop]; })
+      };
+    }
+
     App.clearTickers();
     ZK.Charts.hideTip();
+    D.hideTip();
     D.clear(host);
-    var view = ZK.Views[App.view] || ZK.Views.today;
-    var node = D.el("div.view.anim-rise");
+    var node = D.el("div.view" + (refresh ? ".is-refresh" : ".anim-rise"));
     host.appendChild(node);
+    App.renderMode = refresh ? "refresh" : "enter";
     try {
-      view.render(node, App);
+      ZK.Views[key].render(node, App);
     } catch (err) {
       node.innerHTML = '<div class="notice minus">' + D.icon("alert") +
-        "<div><strong>Diese Ansicht konnte nicht gezeichnet werden.</strong>" +
+        "<div><strong>" + D.esc(I.t("app.viewError")) + "</strong>" +
         "<div class='sub'>" + D.esc(err && err.message ? err.message : String(err)) + "</div></div></div>";
       if (root.console) console.error(err);
     }
+    App.renderMode = "enter";
+
+    if (keep) {
+      restoreDetails(host, keep.details);
+      D.qsa(KEEP_SCROLL, host).forEach(function (n, i) {
+        var s = keep.scrollers[i];
+        if (s) { n.scrollLeft = s[0]; n.scrollTop = s[1]; }
+      });
+      // Diagramme messen beim Aufbau — dabei kann der Browser kurz nach oben springen
+      if (Math.abs((window.pageYOffset || 0) - keep.y) > 1) scrollToY(keep.y);
+      if (keep.focus) restoreFocusMemo(keep.focus);
+      else if (keep.intent) followFocusIntent(keep.intent, host);
+    } else if (!firstEver) {
+      scrollToY(0);
+    }
   };
+
+  /** Sofort scrollen — html hat scroll-behavior:smooth, das soll hier nicht greifen. */
+  function scrollToY(y) {
+    try {
+      window.scrollTo({ top: y, left: 0, behavior: "instant" });
+    } catch (e) {
+      // Ältere Browser ohne Optionsobjekt: Glätten kurz abschalten
+      var html = document.documentElement;
+      var before = html.style.scrollBehavior;
+      html.style.scrollBehavior = "auto";
+      void html.offsetHeight;
+      window.scrollTo(0, y);
+      html.style.scrollBehavior = before;
+    }
+  }
+
+  /* ---- Fokus über ein Neuzeichnen retten -----------------------------
+     Gesucht wird das „gleiche“ Element: zuerst über id, data-key oder
+     name, sonst über die Position unter gleichartigen Elementen — bei
+     Knöpfen nur, wenn auch die Beschriftung passt. */
+  function labelOf(n) {
+    return String(n.getAttribute("aria-label") || n.textContent || "").replace(/\s+/g, " ").trim().slice(0, 80);
+  }
+
+  /** Erste Klasse des Elternelements — Zusatzklassen wie „single“ wechseln */
+  function groupOf(n, scope) {
+    var p = n.parentElement;
+    if (!p || p === scope) return "";
+    return String(p.className || "").split(/\s+/)[0] || "";
+  }
+
+  function memoFocus(scope, el) {
+    var a = el || document.activeElement;
+    if (!scope || !a || a === scope || !scope.contains(a)) return null;
+    var same = D.qsa(FOCUS_SEL, scope).filter(function (n) { return n.tagName === a.tagName; });
+    var memo = {
+      scope: scope, tag: a.tagName, id: a.id || "", key: a.getAttribute("data-key") || "",
+      name: a.getAttribute("name") || "", type: a.type || "", label: labelOf(a),
+      index: same.indexOf(a), sel: null,
+      group: groupOf(a, scope)
+    };
+    try {
+      if (typeof a.selectionStart === "number" && a.selectionStart !== null) memo.sel = [a.selectionStart, a.selectionEnd];
+    } catch (e) { /* Feldtyp ohne Cursor */ }
+    return memo;
+  }
+
+  /* Ein Feld meldet seine Änderung erst beim Verlassen (change) — also
+     genau dann, wenn Tab oder ein Klick den Fokus schon weiterreicht. Wird
+     dabei neu gezeichnet, ist das Ziel weg und der Fokus landet auf <body>.
+     Deshalb merken wir uns die Absicht (Tab vorwärts/rückwärts, Klick auf
+     ein Element) und führen sie im neu gezeichneten Inhalt aus. */
+  var focusIntent = null;
+
+  document.addEventListener("keydown", function (e) {
+    if (e.key !== "Tab") { focusIntent = null; return; }
+    var host = D.qs("#viewHost");
+    var from = memoFocus(host);
+    focusIntent = from ? { at: Date.now(), from: from, step: e.shiftKey ? -1 : 1 } : null;
+  }, true);
+
+  document.addEventListener("pointerdown", function (e) {
+    var host = D.qs("#viewHost");
+    var t = e.target && e.target.closest ? e.target.closest(FOCUS_SEL) : null;
+    var to = t ? memoFocus(host, t) : null;
+    focusIntent = to ? { at: Date.now(), to: to } : null;
+  }, true);
+
+  function tabbables(scope) {
+    return D.qsa(FOCUS_SEL, scope).filter(function (n) {
+      return n.tabIndex >= 0 && !n.disabled && n.getClientRects().length > 0;
+    });
+  }
+
+  function followFocusIntent(intent, host) {
+    var target = null;
+    if (intent.to) target = findFocus(intent.to);
+    else if (intent.from) {
+      var origin = findFocus(intent.from);
+      var list = tabbables(host);
+      var i = origin ? list.indexOf(origin) : -1;
+      if (i >= 0) target = list[i + intent.step] || null;
+    }
+    focusIntent = null;
+    if (!target) return;
+    var apply = function () {
+      var a = document.activeElement;
+      if (a && a !== document.body && a !== document.documentElement && document.contains(a)) return;
+      if (!document.contains(target)) return;
+      try { target.focus({ preventScroll: true }); } catch (e) { target.focus(); }
+    };
+    apply();
+    // Der Browser setzt seinen eigenen (verschwundenen) Fokus erst danach um
+    setTimeout(apply, 0);
+  }
+
+  function cssValue(v) {
+    return root.CSS && CSS.escape ? CSS.escape(v) : String(v).replace(/["\\#.:\[\]]/g, "\\$&");
+  }
+
+  function findFocus(memo) {
+    var scope = memo.scope, n = null;
+    function q(sel) { try { return scope.querySelector(sel); } catch (e) { return null; } }
+    if (memo.id) n = q("#" + cssValue(memo.id));
+    if (!n && memo.key) n = q('[data-key="' + cssValue(memo.key) + '"]');
+    if (!n && memo.name) n = q(memo.tag.toLowerCase() + '[name="' + cssValue(memo.name) + '"]');
+    if (n) return n;
+    var same = D.qsa(FOCUS_SEL, scope).filter(function (x) { return x.tagName === memo.tag; });
+    var field = /^(INPUT|SELECT|TEXTAREA)$/.test(memo.tag);
+    var cand = same[memo.index];
+    if (cand && (field ? (cand.type || "") === memo.type : labelOf(cand) === memo.label)) return cand;
+    if (field) return null;
+    var best = null, dist = Infinity;
+    if (memo.label) {
+      same.forEach(function (x, i) {
+        if (labelOf(x) === memo.label && Math.abs(i - memo.index) < dist) { best = x; dist = Math.abs(i - memo.index); }
+      });
+    }
+    /* Der Knopf heisst jetzt anders (aus „Gehen“ wurde „Weiterarbeiten“):
+       dann wenigstens in derselben Gruppe bleiben, statt den Fokus zu verlieren. */
+    if (!best && memo.group) {
+      same.forEach(function (x, i) {
+        if (x.disabled || groupOf(x, scope) !== memo.group) return;
+        if (Math.abs(i - memo.index) < dist) { best = x; dist = Math.abs(i - memo.index); }
+      });
+    }
+    return best;
+  }
+
+  function restoreFocusMemo(memo) {
+    if (!memo) return;
+    var a = document.activeElement;
+    // Hat schon jemand anderes den Fokus gesetzt (Dialog, Ansicht), bleibt er dort
+    if (a && a !== document.body && a !== document.documentElement && document.contains(a)) return;
+    var n = findFocus(memo);
+    if (!n || n.disabled || !n.getClientRects().length) return;
+    try { n.focus({ preventScroll: true }); } catch (e) { n.focus(); }
+    if (memo.sel && n.setSelectionRange && /^(INPUT|TEXTAREA)$/.test(n.tagName)) {
+      try { n.setSelectionRange(memo.sel[0], memo.sel[1]); } catch (e) { /* Feldtyp ohne Cursor */ }
+    }
+  }
+
+  function memoDetails(scope) {
+    return D.qsa("details", scope).map(function (d) {
+      var s = d.querySelector("summary");
+      return { label: s ? labelOf(s) : "", open: d.open };
+    });
+  }
+
+  function restoreDetails(scope, list) {
+    if (!list.length) return;
+    var used = {};
+    D.qsa("details", scope).forEach(function (d) {
+      var s = d.querySelector("summary");
+      var label = s ? labelOf(s) : "";
+      for (var i = 0; i < list.length; i++) {
+        if (used[i] || list[i].label !== label) continue;
+        used[i] = true;
+        if (d.open !== list[i].open) d.open = list[i].open;
+        return;
+      }
+    });
+  }
+
 
   /* ================================================================== */
   /* Befehlspalette                                                      */
@@ -853,6 +1284,10 @@
   App.redo = function () {
     if (!store.canRedo()) return;
     store.redo();
+    // Wie beim Rückgängigmachen: Einstellungen wirken erst, wenn sie angewendet sind
+    App.applyTheme();
+    App.applyDensity();
+    App.applyLanguage();
     App.afterChange();
     D.toast(I.t("toast.redone"));
   };
@@ -915,19 +1350,28 @@
     saved.xp = result.xp;
     store.saveAchievements(saved);
 
-    result.fresh.forEach(function (b, i) {
-      setTimeout(function () {
-        var meta = I.badge(b.id);
-        D.toast(I.t("ach.newBadge") + " " + b.emoji + " " + meta.name, {
-          sub: meta.desc + " · +" + b.xp + " XP",
-          tone: "plus",
-          icon: "trophy",
-          duration: 5200,
-          action: { label: I.t("nav.achievements"), onClick: function () { App.go("achievements"); } }
+    /* Mehrere Abzeichen auf einmal (alte Daten, Import, Schnellerfassung):
+       eine Sammelmeldung und ein Konfetti — nicht ein Dutzend Meldungen im
+       Sekundentakt, die das Handy minutenlang zudecken. */
+    var fresh = result.fresh;
+    if (fresh.length) {
+      var openBadges = { label: I.t("nav.achievements"), onClick: function () { App.go("achievements"); } };
+      if (fresh.length === 1) {
+        var meta = I.badge(fresh[0].id);
+        D.toast(I.t("ach.newBadge") + " " + fresh[0].emoji + " " + meta.name, {
+          sub: meta.desc + " · +" + fresh[0].xp + " XP",
+          tone: "plus", icon: "trophy", duration: 5200, action: openBadges
         });
-        if (App.settings().confetti !== false) D.confetti({ count: 70 });
-      }, i * 900);
-    });
+      } else {
+        var xp = fresh.reduce(function (sum, b) { return sum + (b.xp || 0); }, 0);
+        var emojis = fresh.slice(0, 5).map(function (b) { return b.emoji; }).join(" ");
+        D.toast(I.t("ach.newBadges", { n: fresh.length }), {
+          sub: emojis + (fresh.length > 5 ? " …" : "") + " · +" + xp + " XP",
+          tone: "plus", icon: "trophy", duration: 6500, action: openBadges
+        });
+      }
+      if (App.settings().confetti !== false) D.confetti({ count: fresh.length > 1 ? 90 : 70 });
+    }
     return result;
   };
 
@@ -948,7 +1392,8 @@
     var res = App.day(iso);
     if (!res.running || res.recommendedLeaveTl === null) return;
 
-    var lead = s.reminderLeadMinutes || 10;
+    // 0 heisst „genau zur Zeit“, nur ein fehlender Wert fällt auf 10 zurück
+    var lead = s.reminderLeadMinutes == null ? 10 : s.reminderLeadMinutes;
     var fireAt = res.recommendedLeaveTl - lead;
     var nowMin = T.nowMinutesFloat() + (res.overnight ? T.DAY : 0);
     var deltaMin = fireAt - nowMin;
@@ -999,7 +1444,8 @@
    */
   App.checkBackupReminder = function () {
     var s = App.settings();
-    var afterDays = s.backupReminderDays || 45;
+    // 0 heisst „nie erinnern“, nur ein fehlender Wert fällt auf 45 zurück
+    var afterDays = s.backupReminderDays == null ? 45 : s.backupReminderDays;
     if (!afterDays) return;
     if (store.dayCount() < 15) return;
 
@@ -1026,30 +1472,74 @@
   /* Tastatur                                                            */
   /* ================================================================== */
 
+  /**
+   * Steht der Cursor in einem Feld, in dem Tasten Text bedeuten? Ohne
+   * Ereignis zählt das fokussierte Element (auch für den Abgleich mit
+   * anderen Fenstern, der dann nicht neu zeichnet). Häkchen und Knöpfe
+   * zählen nicht, Schieberegler schon (Pfeiltasten).
+   */
   function isTyping(e) {
-    var n = e.target;
-    return n && (n.tagName === "INPUT" || n.tagName === "TEXTAREA" || n.tagName === "SELECT" || n.isContentEditable);
+    var n = e && e.target && e.target.nodeType === 1 ? e.target : document.activeElement;
+    if (!n) return false;
+    if (n.isContentEditable || n.tagName === "TEXTAREA" || n.tagName === "SELECT") return true;
+    if (n.tagName !== "INPUT") return false;
+    return !/^(checkbox|radio|button|submit|reset|color|file|image)$/i.test(n.type || "text");
+  }
+
+  /** Dialog oder Befehlspalette offen? Dann gehören die Tasten ihnen. */
+  function overlayOpen() {
+    return !!D.qs(".modal-scrim, .palette-scrim");
+  }
+
+  /* Die Leertaste stempelt nur, wenn nichts Bedienbares den Fokus hat —
+     auf einem Knopf, Chip oder Link muss sie diesen auslösen dürfen. */
+  function spaceIsFree(e) {
+    var t = e.target;
+    return !t || t === document.body || t === document.documentElement || t.id === "viewHost";
+  }
+
+  /* Pfeiltasten blättern Tage — ausser in Bedienelementen, die sie selbst
+     brauchen (Auswahlgruppen, Listen, Raster, waagrecht scrollende Tabellen). */
+  function arrowsAreFree(e) {
+    var t = e.target;
+    if (!t || !t.closest) return true;
+    return !t.closest('[role="radiogroup"], [role="tablist"], [role="listbox"], [role="menu"], [role="slider"], [role="grid"], .table-wrap');
   }
 
   function onKeydown(e) {
     var mod = e.metaKey || e.ctrlKey;
+    var key = String(e.key || "").toLowerCase();
+    var typing = isTyping(e);
 
-    if (mod && e.key.toLowerCase() === "k") { e.preventDefault(); openPalette(); return; }
-    if (mod && e.key.toLowerCase() === "z" && !e.shiftKey) { e.preventDefault(); App.undo(); return; }
-    if (mod && (e.key.toLowerCase() === "y" || (e.key.toLowerCase() === "z" && e.shiftKey))) { e.preventDefault(); App.redo(); return; }
-    if (mod && e.key.toLowerCase() === "s") { e.preventDefault(); store.flush(); D.toast(I.t("toast.saved")); return; }
-    if (mod && e.key.toLowerCase() === "p") return; // Drucken dem Browser überlassen
+    if (navIsOpen()) {
+      if (e.key === "Escape") { e.preventDefault(); closeNav(true); return; }
+      if (e.key === "Tab") { trapNavFocus(e); return; }
+    }
 
-    if (isTyping(e) || mod || e.altKey) return;
+    if (mod && key === "s") { e.preventDefault(); store.flush(); D.toast(I.t("toast.saved")); return; }
+    if (mod && key === "p") return; // Drucken dem Browser überlassen
+    if (e.defaultPrevented || e.isComposing || overlayOpen() || navIsOpen()) return;
+
+    if (mod && key === "k") { e.preventDefault(); openPalette(); return; }
+    // In Textfeldern gehört Ctrl+Z dem Feld selbst (Tippfehler zurücknehmen)
+    if (mod && key === "z" && !e.shiftKey) { if (typing) return; e.preventDefault(); App.undo(); return; }
+    if (mod && (key === "y" || (key === "z" && e.shiftKey))) { if (typing) return; e.preventDefault(); App.redo(); return; }
+
+    if (typing || mod || e.altKey) return;
 
     switch (e.key) {
       case "?": e.preventDefault(); showShortcuts(); break;
-      case "t": case "T": e.preventDefault(); App.toggleTheme(); break;
+      case "t": case "T": if (!e.repeat) { e.preventDefault(); App.toggleTheme(); } break;
       case "h": case "H": e.preventDefault(); App.setDate(T.todayISO(), { view: "today" }); break;
-      case "ArrowLeft": if (App.view === "today") { e.preventDefault(); App.shiftDate(-1); } break;
-      case "ArrowRight": if (App.view === "today") { e.preventDefault(); App.shiftDate(1); } break;
-      case " ": if (App.view === "today") { e.preventDefault(); App.stamp(App.day(App.activeStampDate()).running ? "out" : "in"); } break;
-      case "b": case "B": e.preventDefault(); App.stamp("break"); break;
+      case "ArrowLeft": if (App.view === "today" && arrowsAreFree(e)) { e.preventDefault(); App.shiftDate(-1); } break;
+      case "ArrowRight": if (App.view === "today" && arrowsAreFree(e)) { e.preventDefault(); App.shiftDate(1); } break;
+      case " ":
+        if (App.view === "today" && spaceIsFree(e)) {
+          e.preventDefault();
+          if (!e.repeat) App.stamp(App.day(App.activeStampDate()).running ? "out" : "in");
+        }
+        break;
+      case "b": case "B": if (!e.repeat) { e.preventDefault(); App.stamp("break"); } break;
       case ",": e.preventDefault(); App.go("settings"); break;
       case "1": App.go("today"); break;
       case "2": App.go("calendar"); break;
@@ -1062,31 +1552,33 @@
   }
 
   function showShortcuts() {
+    var inToday = I.t("kbd.inToday");
     var rows = [
       ["Ctrl / ⌘ + K", I.t("kbd.palette")],
-      ["Space", I.t("kbd.stamp")],
+      [I.t("kbd.space"), I.t("kbd.stamp"), inToday],
       ["B", I.t("day.startBreak") + " / " + I.t("day.endBreak")],
-      ["←  →", I.t("kbd.prevDay") + " / " + I.t("kbd.nextDay")],
+      ["←  →", I.t("kbd.prevDay") + " / " + I.t("kbd.nextDay"), inToday],
       ["H", I.t("kbd.today")],
       ["T", I.t("kbd.theme")],
-      ["1 – 6", I.t("cmd.group.nav")],
+      ["1 – 7", I.t("cmd.group.nav")],
       [",", I.t("nav.settings")],
       ["Ctrl / ⌘ + Z", I.t("common.undo")],
+      ["Ctrl + Y · ⇧ ⌘ Z", I.t("common.redo")],
       ["Ctrl / ⌘ + S", I.t("kbd.save")],
+      ["Esc", I.t("kbd.close")],
       ["?", I.t("kbd.help")]
     ];
-    var body = D.el("div", { style: { display: "flex", flexDirection: "column", gap: "2px" } });
+    var body = D.el("div.kbd-list");
     rows.forEach(function (r) {
-      body.appendChild(D.el("div", {
-        style: { display: "flex", justifyContent: "space-between", gap: "20px", padding: "9px 0", borderBottom: "1px solid var(--line-faint)" },
-        html: '<span style="font-size:13px;font-weight:650">' + D.esc(r[1]) + "</span>" +
-          '<kbd style="font-family:var(--font-mono);font-size:11px;padding:3px 7px;border-radius:6px;border:1px solid var(--line);background:var(--surface-2);color:var(--ink-2);white-space:nowrap">' +
-          D.esc(r[0]) + "</kbd>"
+      body.appendChild(D.el("div.kbd-row", {
+        html: "<span>" + D.esc(r[1]) + (r[2] ? "<small>" + D.esc(r[2]) + "</small>" : "") + "</span>" +
+          "<kbd>" + D.esc(r[0]) + "</kbd>"
       }));
     });
     D.modal({ title: I.t("kbd.title"), body: body, size: "slim" });
   }
   App.showShortcuts = showShortcuts;
+
 
   /* ================================================================== */
   /* Installation & Serviceworker                                        */
@@ -1128,11 +1620,8 @@
      nicht neu gezeichnet (das würde Fokus und Cursor stehlen) — das holt
      der nächste Fokuswechsel nach. */
   var externalPending = false;
-
-  function isTyping() {
-    var el = document.activeElement;
-    return !!(el && /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) && el.type !== "checkbox" && el.type !== "radio");
-  }
+  /* isTyping() steht oben bei der Tastatur — ohne Ereignis prüft es das
+     fokussierte Element. */
 
   function onExternalChange(evt) {
     if (evt.newer) warnNewerVersion();
@@ -1241,26 +1730,57 @@
     if (restore) restore.addEventListener("click", function () { m.close(); App.restoreBackup(which); });
   }
 
+  /* ---- Speicher voll ------------------------------------------------
+     Solange der Browser nichts mehr annimmt, gehen neue Eingaben beim
+     Schliessen verloren. Das darf nicht nach ein paar Sekunden
+     verschwinden: die Warnung bleibt stehen, bis wieder Platz ist oder
+     man sie wegklickt, und bietet direkt den Export an. */
+  var storageFullDismiss = null;
+
+  function showStorageFull() {
+    if (storageFullDismiss) return;
+    storageFullDismiss = D.toast(I.t("toast.storageFull"), {
+      sub: I.t("toast.storageFullSub"),
+      tone: "minus", icon: "alert", sticky: true,
+      action: { label: I.t("set.exportAll"), onClick: function () { App.exportJSON(); } },
+      onDismiss: function () { storageFullDismiss = null; }
+    });
+  }
+
   function setupServiceWorker() {
     if (!("serviceWorker" in navigator)) return;
     if (location.protocol === "file:") return;   // lokal geöffnete Datei braucht keinen SW
     if (root.ZK_SINGLE_FILE) return;             // die Einzeldatei trägt alles schon in sich
-    navigator.serviceWorker.register("sw.js").then(function (reg) {
-      reg.addEventListener("updatefound", function () {
-        var sw = reg.installing;
-        if (!sw) return;
-        sw.addEventListener("statechange", function () {
-          if (sw.state === "installed" && navigator.serviceWorker.controller) {
-            // Wird die App das nächste Mal verlassen, lädt sie still die neue Version
-            App.updateReady = true;
-            D.toast(I.t("toast.updateReady"), {
-              icon: "refresh",
-              duration: 12000,
-              action: { label: I.t("toast.reload"), onClick: function () { location.reload(); } }
-            });
-          }
-        });
+    /* Eine neue Version kann auf drei Wegen auftauchen: während register()
+       noch läuft (der neue Worker ist dann schon installiert oder hat dank
+       skipWaiting bereits übernommen), später über updatefound, oder als
+       Wechsel des steuernden Workers. Wer zuerst kommt, meldet — einmal.
+       Beim allerersten Besuch gab es keinen alten Worker, also nichts zu melden. */
+    var hadController = !!navigator.serviceWorker.controller;
+    var announced = false;
+    function announceUpdate() {
+      if (announced || !hadController) return;
+      announced = true;
+      // Wird die App das nächste Mal verlassen, lädt sie still die neue Version
+      App.updateReady = true;
+      D.toast(I.t("toast.updateReady"), {
+        icon: "refresh",
+        duration: 12000,
+        action: { label: I.t("toast.reload"), onClick: function () { store.flush(); location.reload(); } }
       });
+    }
+    function watchWorker(sw) {
+      if (!sw) return;
+      if (sw.state === "installed" || sw.state === "activating" || sw.state === "activated") { announceUpdate(); return; }
+      sw.addEventListener("statechange", function () {
+        if (sw.state === "installed" || sw.state === "activated") announceUpdate();
+      });
+    }
+    navigator.serviceWorker.addEventListener("controllerchange", announceUpdate);
+    navigator.serviceWorker.register("sw.js").then(function (reg) {
+      if (reg.waiting) announceUpdate();
+      else if (reg.installing) watchWorker(reg.installing);
+      reg.addEventListener("updatefound", function () { watchWorker(reg.installing); });
     }).catch(function () { /* ohne Serviceworker läuft die App trotzdem */ });
   }
 
@@ -1286,9 +1806,18 @@
 
   App.boot = function () {
     store.load();
+    dataRev++;
 
+    /* Erster Start: Die Standardeinstellungen tragen schon „de“, ohne dass
+       das jemand gewählt hat. Solange weder die Einrichtung durchlaufen
+       noch ein Tag erfasst ist, gilt deshalb die Sprache des Browsers —
+       auch für die Einrichtung selbst. */
     var s = store.getSettings();
-    if (!s.lang) store.updateSettings({ lang: I.detect() });
+    var firstRun = !store.getMeta().onboarded && store.dayCount() === 0;
+    if (!s.lang || firstRun) {
+      var detected = I.detect();
+      if (detected !== s.lang) store.updateSettings({ lang: detected });
+    }
 
     App.applyLanguage(store.getSettings().lang);
     App.applyTheme();
@@ -1304,9 +1833,9 @@
     }
 
     var linkAction = takeLinkAction();
-    readHash();
+    var dateFromHash = readHash();
     // Läuft eine Nachtschicht vom Vortag, zeigt „Heute“ diese Schicht
-    if (!/\d{4}-\d{2}-\d{2}/.test(location.hash || "") && App.activeStampDate() !== App.date) App.date = App.activeStampDate();
+    if (!dateFromHash && App.activeStampDate() !== App.date) App.date = App.activeStampDate();
 
     if (mediaDark && mediaDark.addEventListener) {
       mediaDark.addEventListener("change", function () {
@@ -1335,16 +1864,32 @@
       else { App.renderChrome(); if (App.view === "today") App.renderView(); }
     });
 
-    window.addEventListener("online", function () { D.toast(I.t("common.ok"), { tone: "plus", sub: "Online" }); });
+    window.addEventListener("online", function () { D.toast(I.t("toast.online"), { tone: "plus", icon: "check" }); });
     window.addEventListener("offline", function () { D.toast(I.t("toast.offline"), { tone: "warn" }); });
 
     store.subscribe(function (evt) {
-      if (evt.type === "error") D.toast(I.t("toast.storageFull"), { tone: "minus", duration: 9000 });
+      if (evt.type === "error") {
+        if (evt.quota || (store.isFull && store.isFull())) showStorageFull();
+        else D.toast(I.t("toast.storageFull"), { tone: "minus", duration: 9000 });
+      } else if (storageFullDismiss && store.isFull && !store.isFull()) {
+        // Wieder Platz: die Warnung hat sich erledigt
+        storageFullDismiss();
+        storageFullDismiss = null;
+      }
       if (evt.type === "external") onExternalChange(evt);
     });
     if (store.isNewerSchema()) warnNewerVersion();
+    if (store.isFull && store.isFull()) setTimeout(showStorageFull, 400);
 
+    /* Diagramme skalieren über viewBox von selbst. Neu gezeichnet wird nur,
+       wenn sich die Breite ändert — nicht, wenn auf dem Handy die
+       Adressleiste ein- und ausfährt oder die Tastatur aufgeht. */
+    var lastWidth = window.innerWidth;
     var resizeRedraw = D.debounce(function () {
+      var w = window.innerWidth;
+      if (w === lastWidth) return;
+      lastWidth = w;
+      if (w > 1000 && navIsOpen()) closeNav(false);
       if (["stats", "week", "reports"].indexOf(App.view) >= 0) App.renderView();
     }, 260);
     window.addEventListener("resize", resizeRedraw);

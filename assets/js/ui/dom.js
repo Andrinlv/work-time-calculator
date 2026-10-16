@@ -164,6 +164,9 @@
   /* Toasts                                                              */
   /* ------------------------------------------------------------------ */
   var toastHost = null;
+  /* Mehr als drei Meldungen liest niemand — und auf dem Handy decken sie
+     sonst die halbe Ansicht zu. Die neueste verdrängt die älteste. */
+  var TOAST_MAX = 3;
 
   function ensureToastHost() {
     if (!toastHost) {
@@ -174,12 +177,64 @@
   }
 
   /**
-   * toast("Titel", { sub, tone: "plus"|"minus"|"warn", icon, action:{label,onClick}, duration })
+   * Meldungen dürfen weder die Tableiste noch die wichtigsten Knöpfe
+   * verdecken. Unten fest klebende Leisten (Tableiste, alles mit
+   * [data-toast-avoid]) schieben den Stapel nach oben. Liegt eine
+   * Stempelleiste oder ein anderes [data-toast-avoid]-Element gerade dort,
+   * wo der Stapel hinkäme, wandert er an den oberen Rand unter die
+   * Kopfzeile. Lage und Höhe ändern sich mit Scrollen, Ausrichtung und
+   * Dichte — deshalb wird bei jeder Meldung neu gemessen.
+   */
+  var PROTECTED = ".tabbar, .stamp-bar, [data-toast-avoid]";
+
+  function placeToasts(host, incoming) {
+    var vh = window.innerHeight;
+    var limit = vh;
+    var protect = qsa(PROTECTED).filter(function (n) {
+      var cs = getComputedStyle(n);
+      return cs.display !== "none" && cs.visibility !== "hidden" && n.getClientRects().length > 0;
+    });
+    protect.forEach(function (n) {
+      var cs = getComputedStyle(n);
+      if (cs.position !== "fixed" && cs.position !== "sticky") return;
+      var r = n.getBoundingClientRect();
+      if (!r.height || r.top >= vh || r.bottom < vh - 4) return;   // klebt nicht am unteren Rand
+      limit = Math.min(limit, r.top);
+    });
+    var bottom = limit < vh ? vh - limit + 10 : 16;
+    var zoneTop = vh - bottom - host.offsetHeight - (incoming || 72);
+    var covers = protect.some(function (n) {
+      var r = n.getBoundingClientRect();
+      return r.height > 0 && r.top < vh - bottom && r.bottom > zoneTop && r.top < limit;
+    });
+    host.classList.toggle("top", covers);
+    host.style.bottom = covers || limit >= vh ? "" : Math.round(bottom) + "px";
+  }
+
+  /**
+   * toast("Titel", { sub, tone: "plus"|"minus"|"warn", icon, action:{label,onClick}, duration,
+   *                  sticky: bleibt bis zum Wegklicken (mit X), onDismiss })
    */
   function toast(title, opts) {
     opts = opts || {};
     var host = ensureToastHost();
-    var node = el("div.toast" + (opts.tone ? "." + opts.tone : ""));
+
+    /* Gleiche Meldung nicht doppelt stapeln, und höchstens TOAST_MAX zeigen.
+       Stehende Warnungen (sticky) werden nie verdrängt — nur die übrigen. */
+    var live = qsa(".toast:not(.out)", host);
+    live.forEach(function (t) { if (t._title === title && t._dismiss) t._dismiss(true); });
+    live = qsa(".toast:not(.out)", host);
+    var movable = live.filter(function (t) { return !t._sticky; });
+    while (live.length >= TOAST_MAX && movable.length) {
+      var oldest = movable.shift();
+      live.splice(live.indexOf(oldest), 1);
+      if (oldest._dismiss) oldest._dismiss(true);
+    }
+    placeToasts(host);
+
+    var node = el("div.toast" + (opts.tone ? "." + opts.tone : "") + (opts.sticky ? ".sticky" : ""), opts.sticky ? { role: "alert" } : null);
+    node._title = title;
+    node._sticky = !!opts.sticky;
     node.innerHTML =
       icon(opts.icon || (opts.tone === "minus" ? "alert" : opts.tone === "warn" ? "alert" : "check")) +
       '<div class="body"><b>' + esc(title) + "</b>" +
@@ -188,21 +243,35 @@
     if (opts.action) {
       var btn = el("button.act", { type: "button", text: opts.action.label });
       btn.addEventListener("click", function () {
-        try { opts.action.onClick(); } finally { dismiss(); }
+        // Eine stehende Warnung bleibt, bis ihr Grund behoben ist
+        try { opts.action.onClick(); } finally { if (!opts.sticky) dismiss(true); }
       });
       node.appendChild(btn);
     }
+    if (opts.sticky) {
+      var x = el("button.act.close", {
+        type: "button", html: icon("x"),
+        "aria-label": ZK.I18n ? ZK.I18n.t("common.close") : "×"
+      });
+      x.addEventListener("click", function () { dismiss(); });
+      node.appendChild(x);
+    }
 
     host.appendChild(node);
-    var timer = setTimeout(dismiss, opts.duration || (opts.action ? 8000 : 3600));
+    var timer = opts.sticky ? null : setTimeout(dismiss, opts.duration || (opts.action ? 8000 : 3600));
 
-    function dismiss() {
+    /* Verdrängte Meldungen verschwinden sofort; ihr Ausblenden würde die
+       neue sonst noch einen Moment lang verschieben. */
+    function dismiss(now) {
       clearTimeout(timer);
       if (!node.parentNode) return;
+      if (opts.onDismiss) { try { opts.onDismiss(); } catch (e) { /* egal */ } }
+      if (now === true) { node.parentNode.removeChild(node); return; }
       node.classList.add("out");
       setTimeout(function () { if (node.parentNode) node.parentNode.removeChild(node); }, 220);
     }
-    node.addEventListener("click", function (e) { if (e.target === node) dismiss(); });
+    node._dismiss = dismiss;
+    node.addEventListener("click", function (e) { if (e.target === node && !opts.sticky) dismiss(); });
     return dismiss;
   }
 
@@ -210,18 +279,57 @@
   /* Modal                                                               */
   /* ------------------------------------------------------------------ */
   var openModals = [];
+  var modalSeq = 0;
+  var FOCUSABLE = 'button, [href], input, select, textarea, summary, [tabindex]:not([tabindex="-1"])';
+
+  function usable(n) {
+    return !!n && !n.disabled && n.offsetParent !== null && n.getAttribute("aria-hidden") !== "true";
+  }
 
   /**
-   * modal({ title, sub, body: Node|string, footer: [Node], size, onClose, closeOnScrim })
+   * Wohin der Fokus beim Öffnen springt. Nie auf das Schliessen-X: das
+   * erste Feld im Inhalt, sonst die Hauptaktion unten, sonst der Dialog
+   * selbst. Auf Touch-Geräten kein Textfeld — sonst schiebt sich sofort
+   * die Bildschirmtastatur über den Dialog.
+   */
+  function initialFocus(box, body, foot, wanted) {
+    if (wanted) {
+      var w = typeof wanted === "string" ? box.querySelector(wanted) : wanted;
+      if (usable(w)) return w;
+    }
+    var coarse = window.matchMedia && window.matchMedia("(pointer: coarse)").matches;
+    if (!coarse) {
+      var field = qsa("input, select, textarea", body).filter(function (n) {
+        return usable(n) && !n.readOnly && !/^(hidden|checkbox|radio|file|range|color)$/i.test(n.type || "");
+      })[0];
+      if (field) return field;
+    }
+    if (foot) {
+      var primary = qs(".btn.primary", foot);
+      if (usable(primary)) return primary;
+    }
+    var inBody = qsa(FOCUSABLE, body).filter(usable)[0];
+    if (inBody && !(coarse && /^(INPUT|TEXTAREA|SELECT)$/.test(inBody.tagName))) return inBody;
+    if (foot) {
+      var btns = qsa("button", foot).filter(usable);
+      if (btns.length) return btns[btns.length - 1];
+    }
+    return box;
+  }
+
+  /**
+   * modal({ title, sub, body: Node|string, footer: [Node], size, onClose, closeOnScrim,
+   *         focus: Selektor|Element — was beim Öffnen den Fokus bekommt })
    */
   function modal(opts) {
     opts = opts || {};
-    var scrim = el("div.modal-scrim", { role: "dialog", "aria-modal": "true" });
-    var box = el("div.modal" + (opts.size === "wide" ? ".wide" : opts.size === "slim" ? ".slim" : ""));
+    var titleId = "zkModalTitle" + (++modalSeq);
+    var scrim = el("div.modal-scrim", { role: "dialog", "aria-modal": "true", "aria-labelledby": titleId });
+    var box = el("div.modal" + (opts.size === "wide" ? ".wide" : opts.size === "slim" ? ".slim" : ""), { tabindex: "-1" });
 
     var head = el("div.modal-head");
     head.innerHTML =
-      '<div><h2>' + esc(opts.title || "") + "</h2>" +
+      '<div><h2 id="' + titleId + '">' + esc(opts.title || "") + "</h2>" +
       (opts.sub ? '<div class="sub">' + esc(opts.sub) + "</div>" : "") + "</div>";
     var closeBtn = el("button.btn.ghost.icon.sm.close", { type: "button", "aria-label": ZK.I18n ? ZK.I18n.t("common.close") : "×", html: icon("x") });
     closeBtn.addEventListener("click", function () { close(); });
@@ -234,21 +342,30 @@
     box.appendChild(head);
     box.appendChild(body);
 
+    var foot = null;
     if (opts.footer && opts.footer.length) {
-      var foot = el("div.modal-foot");
+      foot = el("div.modal-foot");
       opts.footer.forEach(function (f) { if (f) foot.appendChild(f); });
       box.appendChild(foot);
     }
 
+    hideTip();
     scrim.appendChild(box);
     document.body.appendChild(scrim);
     document.body.style.overflow = "hidden";
+    document.body.classList.add("has-modal");
 
     var previousFocus = document.activeElement;
-    var focusables = box.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
-    if (focusables.length) setTimeout(function () { (opts.focus ? box.querySelector(opts.focus) : focusables[0]).focus(); }, 40);
+    setTimeout(function () {
+      if (!scrim.parentNode) return;
+      var target = initialFocus(box, body, foot, opts.focus);
+      // preventScroll: sonst springt auf dem Handy die Seite hinter dem Dialog
+      try { target.focus({ preventScroll: true }); } catch (e) { target.focus(); }
+    }, 40);
 
     function onKey(e) {
+      // Nur der oberste Dialog reagiert — Escape schliesst nicht alle auf einmal
+      if (openModals[openModals.length - 1] !== entry) return;
       if (e.key === "Escape") { e.stopPropagation(); close(); }
       if (e.key === "Tab") trapFocus(e, box);
     }
@@ -265,9 +382,15 @@
       document.removeEventListener("keydown", onKey, true);
       var i = openModals.indexOf(entry);
       if (i >= 0) openModals.splice(i, 1);
-      if (!openModals.length) document.body.style.overflow = "";
+      if (!openModals.length) {
+        document.body.style.overflow = "";
+        document.body.classList.remove("has-modal");
+      }
       if (scrim.parentNode) scrim.parentNode.removeChild(scrim);
-      if (previousFocus && previousFocus.focus) previousFocus.focus();
+      hideTip();
+      if (previousFocus && previousFocus.focus && document.contains(previousFocus)) {
+        try { previousFocus.focus({ preventScroll: true }); } catch (e) { previousFocus.focus(); }
+      }
       if (opts.onClose) opts.onClose(result);
     }
 
@@ -275,14 +398,16 @@
   }
 
   function trapFocus(e, container) {
-    var items = Array.prototype.filter.call(
-      container.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'),
-      function (n) { return n.offsetParent !== null && !n.disabled; }
-    );
-    if (!items.length) return;
+    var items = qsa(FOCUSABLE, container).filter(usable);
+    if (!items.length) { e.preventDefault(); return; }
     var first = items[0], last = items[items.length - 1];
-    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
-    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    var active = document.activeElement;
+    if (!container.contains(active) || active === container) {
+      e.preventDefault();
+      (e.shiftKey ? last : first).focus();
+    }
+    else if (e.shiftKey && active === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && active === last) { e.preventDefault(); first.focus(); }
   }
 
   /** Bestätigungsdialog, gibt ein Promise<boolean> zurück. */
@@ -297,12 +422,163 @@
         size: "slim",
         body: el("p", { text: opts.message || "", style: { fontSize: "14px", lineHeight: "1.6", color: "var(--ink-2)" } }),
         footer: [cancel, ok],
+        // Bei Gefahr steht der Fokus auf der sicheren Wahl
+        focus: opts.danger ? cancel : ok,
         onClose: function () { if (!decided) resolve(false); }
       });
       cancel.addEventListener("click", function () { decided = true; m.close(); resolve(false); });
       ok.addEventListener("click", function () { decided = true; m.close(); resolve(true); });
     });
   }
+
+  /* ------------------------------------------------------------------ */
+  /* Tooltips — eine einzige Ebene für alle [data-tip]                   */
+  /* ------------------------------------------------------------------ */
+  /* Früher hing an jedem Element ein ::after. Das wurde in Containern mit
+     overflow:hidden abgeschnitten, öffnete sich in der Kopfzeile über den
+     Bildschirmrand hinaus und machte die Seite auf dem Handy breiter —
+     auch unsichtbar. Jetzt gibt es genau ein fest positioniertes Element
+     am Ende von <body>, das in den sichtbaren Bereich geklemmt wird.
+     Maus: beim Überfahren. Tastatur: beim Fokus. Touch: Antippen von
+     Elementen, die selbst nichts tun (Notizpunkt, Abzeichen …), oder
+     langes Drücken. Scrollen, Escape oder Tippen daneben schliesst. */
+  var tipNode = null, tipAnchor = null, tipTimer = null, tipWatch = null, tipHiddenAt = 0;
+  var lastPointer = "mouse";
+  var TIP_GAP = 8, TIP_EDGE = 8;
+  var INTERACTIVE = 'button, a[href], input, select, textarea, label, summary, [role="button"], [role="link"], [contenteditable="true"]';
+
+  function tipLayer() {
+    if (!tipNode) {
+      tipNode = el("div.tip-layer#zkTip", { role: "tooltip" });
+      tipNode.appendChild(el("span.tip-text"));
+      tipNode.appendChild(el("i.tip-arrow", { "aria-hidden": "true" }));
+      document.body.appendChild(tipNode);
+    }
+    return tipNode;
+  }
+
+  /**
+   * Lage des Tooltips zum Element `r` (getBoundingClientRect). Lieber
+   * oben; reicht der Platz nicht (Kopfzeile), darunter. Immer mit Abstand
+   * TIP_EDGE in den sichtbaren Bereich geklemmt, der Pfeil zeigt trotzdem
+   * auf die Mitte des Elements.
+   * → { left, top, below, arrow }  (Pixel, ganzzahlig)
+   */
+  function tipPlacement(r, w, h, vw, vh) {
+    var below = r.top - TIP_GAP - h < TIP_EDGE;
+    if (below && r.bottom + TIP_GAP + h > vh - TIP_EDGE && r.top > vh - r.bottom) below = false;
+    var top = below ? r.bottom + TIP_GAP : r.top - TIP_GAP - h;
+    top = Math.max(TIP_EDGE, Math.min(vh - TIP_EDGE - h, top));
+    var cx = r.left + r.width / 2;
+    var left = Math.max(TIP_EDGE, Math.min(vw - TIP_EDGE - w, cx - w / 2));
+    return {
+      left: Math.round(left),
+      top: Math.round(top),
+      below: below,
+      arrow: Math.round(Math.max(10, Math.min(w - 10, cx - left)))
+    };
+  }
+
+  function showTip(anchor) {
+    clearTimeout(tipTimer);
+    var text = anchor && anchor.getAttribute("data-tip");
+    if (!text || !document.contains(anchor)) { hideTip(); return; }
+    var node = tipLayer();
+    if (tipAnchor && tipAnchor !== anchor) unlinkTip(tipAnchor);
+    tipAnchor = anchor;
+    node.firstChild.textContent = text;
+    node.classList.remove("below");
+    node.style.transform = "translate(0px, 0px)";
+
+    var pos = tipPlacement(anchor.getBoundingClientRect(), node.offsetWidth, node.offsetHeight,
+      document.documentElement.clientWidth || window.innerWidth, window.innerHeight);
+    node.style.transform = "translate(" + pos.left + "px, " + pos.top + "px)";
+    node.style.setProperty("--tip-ax", pos.arrow + "px");
+    node.classList.toggle("below", pos.below);
+    node.classList.add("on");
+
+    var described = anchor.getAttribute("aria-describedby") || "";
+    if (!/\bzkTip\b/.test(described)) anchor.setAttribute("aria-describedby", (described + " zkTip").trim());
+
+    // Wird das Element neu gezeichnet, verschwindet der Tooltip mit ihm
+    clearInterval(tipWatch);
+    tipWatch = setInterval(function () { if (!tipAnchor || !document.contains(tipAnchor)) hideTip(); }, 400);
+  }
+
+  function unlinkTip(anchor) {
+    var d = (anchor.getAttribute("aria-describedby") || "").replace(/\s*\bzkTip\b/, "").trim();
+    if (d) anchor.setAttribute("aria-describedby", d);
+    else anchor.removeAttribute("aria-describedby");
+  }
+
+  function hideTip() {
+    clearTimeout(tipTimer);
+    clearInterval(tipWatch);
+    if (tipAnchor) { unlinkTip(tipAnchor); tipHiddenAt = Date.now(); }
+    tipAnchor = null;
+    if (tipNode) tipNode.classList.remove("on");
+  }
+
+  function scheduleTip(anchor, delay) {
+    clearTimeout(tipTimer);
+    // Wer von einem Tooltip zum nächsten fährt, wartet nicht erneut
+    if (Date.now() - tipHiddenAt < 400 || tipAnchor) delay = 0;
+    tipTimer = setTimeout(function () { showTip(anchor); }, delay);
+  }
+
+  function tipTarget(node) {
+    return node && node.nodeType === 1 && node.closest ? node.closest("[data-tip]") : null;
+  }
+
+  function setupTips() {
+    if (typeof document === "undefined" || !document.addEventListener) return;
+    document.addEventListener("pointerdown", function (e) {
+      lastPointer = e.pointerType || "mouse";
+      if (tipAnchor && !tipAnchor.contains(e.target)) hideTip();
+    }, true);
+    document.addEventListener("pointerover", function (e) {
+      if (e.pointerType === "touch" || e.pointerType === "pen") return;
+      var a = tipTarget(e.target);
+      if (!a || a === tipAnchor) return;
+      scheduleTip(a, 300);
+    });
+    document.addEventListener("pointerout", function (e) {
+      if (e.pointerType === "touch" || e.pointerType === "pen") return;
+      var a = tipTarget(e.target);
+      if (!a) return;
+      if (e.relatedTarget && a.contains(e.relatedTarget)) return;
+      clearTimeout(tipTimer);
+      if (a === tipAnchor) hideTip();
+    });
+    document.addEventListener("focusin", function (e) {
+      var t = e.target;
+      if (!t || !t.hasAttribute || !t.hasAttribute("data-tip")) return;
+      var keyboard = true;
+      try { keyboard = t.matches(":focus-visible"); } catch (x) { keyboard = lastPointer !== "touch"; }
+      if (keyboard) scheduleTip(t, 0);
+    });
+    document.addEventListener("focusout", function (e) {
+      if (e.target === tipAnchor) hideTip();
+    });
+    document.addEventListener("click", function (e) {
+      if (lastPointer !== "touch") return;
+      var a = tipTarget(e.target);
+      if (!a) return;
+      if (a.closest(INTERACTIVE)) return;            // Knöpfe tun, was sie tun
+      if (a === tipAnchor) hideTip(); else showTip(a);
+    });
+    document.addEventListener("contextmenu", function (e) {
+      if (lastPointer !== "touch") return;
+      var a = tipTarget(e.target);
+      if (!a) return;
+      e.preventDefault();                             // langes Drücken zeigt den Text
+      showTip(a);
+    });
+    document.addEventListener("keydown", function (e) { if (e.key === "Escape" && tipAnchor) hideTip(); }, true);
+    window.addEventListener("scroll", function () { if (tipAnchor) hideTip(); }, { capture: true, passive: true });
+    window.addEventListener("resize", function () { if (tipAnchor) hideTip(); });
+  }
+  setupTips();
 
   /* ------------------------------------------------------------------ */
   /* Konfetti — die zwei Ringe des Logos, in Einzelteile zerlegt         */
@@ -388,7 +664,7 @@
     return new Promise(function (resolve, reject) {
       var reader = new FileReader();
       reader.onload = function () { resolve(String(reader.result || "")); };
-      reader.onerror = function () { reject(reader.error || new Error("Datei konnte nicht gelesen werden")); };
+      reader.onerror = function () { reject(reader.error || new Error(ZK.I18n ? ZK.I18n.t("common.fileUnreadable") : "File unreadable")); };
       reader.readAsText(file);
     });
   }
@@ -512,6 +788,7 @@
     debounce: debounce, throttle: throttle,
     icon: icon, ICONS: ICONS,
     toast: toast, modal: modal, confirmDialog: confirmDialog, confetti: confetti,
+    showTip: showTip, hideTip: hideTip, tipPlacement: tipPlacement,
     download: download, readFile: readFile, copyText: copyText,
     attachTimeInput: attachTimeInput, animateValue: animateValue
   };
