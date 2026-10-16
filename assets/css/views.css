@@ -782,6 +782,10 @@
   color: var(--ink-2);
 }
 
+.link-row { display: flex; gap: var(--gap-2); align-items: center; }
+.link-row .input { flex: 1; min-width: 0; font-size: var(--fs-xs); }
+.link-row .btn { flex: none; }
+
 .safety { display: grid; gap: var(--gap-2); }
 .safety-row {
   display: flex;

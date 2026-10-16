@@ -373,6 +373,24 @@
         "<div><strong>Safari / iOS</strong><div class='sub'>" + D.esc(I.t("set.installHowto")) + "</div></div>";
       inst.body.appendChild(hint);
     }
+    /* Stempel-Link für NFC-Tag, QR-Code oder Verknüpfung */
+    if (location.protocol !== "file:") {
+      inst.body.appendChild(D.el("div.section-title.mt-4", { text: I.t("set.stampLink") }));
+      inst.body.appendChild(D.el("p.muted", { text: I.t("set.stampLinkHint"), style: { fontSize: "13px", lineHeight: "1.5", marginBottom: "10px" } }));
+      var linkRow = D.el("div.link-row");
+      var linkInput = D.el("input.input.mono", { type: "text", readonly: true, value: App.stampLink(), "aria-label": I.t("set.stampLink") });
+      linkInput.addEventListener("focus", function () { linkInput.select(); });
+      var copyBtn = D.el("button.btn.sm", { type: "button", html: D.icon("copy") + "<span>" + D.esc(I.t("common.copy")) + "</span>" });
+      copyBtn.addEventListener("click", function () {
+        D.copyText(linkInput.value).then(function () { D.toast(I.t("toast.linkCopied"), { icon: "check" }); });
+      });
+      linkRow.appendChild(linkInput);
+      linkRow.appendChild(copyBtn);
+      inst.body.appendChild(linkRow);
+      if (/iP(hone|ad|od)/.test(navigator.userAgent || "")) {
+        inst.body.appendChild(D.el("p.safety-hint.mt-2", { text: I.t("set.stampLinkIos") }));
+      }
+    }
     grid.appendChild(inst.node);
 
     /* ================================================================ */

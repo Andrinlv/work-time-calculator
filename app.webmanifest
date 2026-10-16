@@ -6,13 +6,21 @@
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
-  "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
+  "display_override": [
+    "window-controls-overlay",
+    "standalone",
+    "minimal-ui"
+  ],
   "orientation": "any",
   "background_color": "#F4F2EF",
   "theme_color": "#F4F2EF",
   "lang": "de",
   "dir": "ltr",
-  "categories": ["productivity", "business", "utilities"],
+  "categories": [
+    "productivity",
+    "business",
+    "utilities"
+  ],
   "prefer_related_applications": false,
   "icons": [
     {
@@ -42,25 +50,52 @@
   ],
   "shortcuts": [
     {
-      "name": "Heute erfassen",
-      "short_name": "Heute",
-      "description": "Direkt zur Tageserfassung springen",
-      "url": "./index.html#/today",
-      "icons": [{ "src": "assets/icons/icon-192.png", "sizes": "192x192" }]
+      "name": "Kommen / Gehen stempeln",
+      "short_name": "Stempeln",
+      "description": "Stempelt Kommen — oder Gehen, wenn der Tag schon läuft",
+      "url": "./index.html#/stamp",
+      "icons": [
+        {
+          "src": "assets/icons/icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
+    },
+    {
+      "name": "Pause starten / beenden",
+      "short_name": "Pause",
+      "description": "Pause stempeln",
+      "url": "./index.html#/stamp/break",
+      "icons": [
+        {
+          "src": "assets/icons/icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
     },
     {
       "name": "Kalender",
       "short_name": "Kalender",
       "description": "Monatsübersicht mit Plus- und Minusstunden",
       "url": "./index.html#/calendar",
-      "icons": [{ "src": "assets/icons/icon-192.png", "sizes": "192x192" }]
+      "icons": [
+        {
+          "src": "assets/icons/icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
     },
     {
       "name": "Statistik",
       "short_name": "Statistik",
       "description": "Saldo-Verlauf und Auswertungen",
       "url": "./index.html#/stats",
-      "icons": [{ "src": "assets/icons/icon-192.png", "sizes": "192x192" }]
+      "icons": [
+        {
+          "src": "assets/icons/icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
     }
   ]
 }

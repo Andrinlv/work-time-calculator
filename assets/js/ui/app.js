@@ -698,6 +698,20 @@
     var nowStr = T.formatHHMM(T.nowMinutes());
 
     if (kind === "in") {
+      if (rec.start && rec.end) {
+        /* Schon gegangen und wieder da: die Lücke wird zur Pause, der Tag läuft weiter */
+        var anchor = T.parseHHMM(rec.start);
+        var gap = T.intervalMinutes(T.parseHHMM(rec.end), T.nowMinutes(), anchor);
+        if (gap > 0 && gap < 12 * 60) {
+          var withGap = (rec.breaks || []).concat([{ id: "b" + Date.now(), label: I.t("day.break"), start: rec.end, end: nowStr, paid: false }]);
+          App.saveDay(iso, { end: "", breaks: withGap }, { label: "resume" });
+          D.toast(I.t("toast.resumed", { time: nowStr, v: App.fmt(gap) }), {
+            icon: "play",
+            action: { label: I.t("common.undo"), onClick: function () { App.undo(); } }
+          });
+          return;
+        }
+      }
       if (rec.start) { D.toast(App.t("day.clockIn") + ": " + rec.start, { tone: "warn" }); return; }
       App.saveDay(iso, { start: nowStr });
       D.toast(I.t("toast.stampedIn", { time: nowStr }), { icon: "play" });
@@ -734,6 +748,47 @@
         D.toast(I.t("toast.breakStarted"), { icon: "coffee", tone: "warn" });
       }
     }
+  };
+
+  /** Ein Knopf für alles: Kommen → (Pause beenden) → Gehen → wieder Kommen. */
+  App.stampSmart = function () {
+    var iso = App.activeStampDate();
+    var rec = store.getDayOrEmpty(iso);
+    if (!rec.start || rec.end) return App.stamp("in");
+    var onBreak = (rec.breaks || []).some(function (b) { return b.start && !b.end; });
+    return App.stamp(onBreak ? "break" : "out");
+  };
+
+  /* ---- Direktlinks: #/stamp, #/stamp/in|out|break ---------------------
+     Für Home-Bildschirm-Verknüpfungen, NFC-Tags am Arbeitsplatz oder
+     Kurzbefehle. Der Link verschwindet nach dem Ausführen aus der Adresse,
+     damit ein Neuladen nicht ein zweites Mal stempelt; NFC-Leser, die
+     doppelt auslösen, fängt eine kurze Sperre ab. */
+  var LINK_LOCK_KEY = "zeitkonto:link-lock";
+
+  function takeLinkAction() {
+    var m = /^#\/stamp(?:\/(in|out|break|toggle))?\/?$/.exec(location.hash || "");
+    if (!m) return null;
+    try { history.replaceState(null, "", location.pathname + location.search + "#/today"); }
+    catch (e) { location.hash = "#/today"; }
+    App.view = "today";
+    return m[1] || "toggle";
+  }
+
+  App.runLinkAction = function (kind) {
+    var now = Date.now(), last = 0;
+    try { last = +localStorage.getItem(LINK_LOCK_KEY) || 0; } catch (e) { last = 0; }
+    if (now - last < 15000 && now >= last) return false;
+    try { localStorage.setItem(LINK_LOCK_KEY, String(now)); } catch (e) { /* ohne Sperre weiter */ }
+    App.setDate(App.activeStampDate(), { view: "today" });
+    if (kind === "toggle") App.stampSmart();
+    else App.stamp(kind);
+    if (navigator.vibrate) { try { navigator.vibrate(40); } catch (e) { /* egal */ } }
+    return true;
+  };
+
+  App.stampLink = function (kind) {
+    return location.href.split("#")[0] + "#/stamp" + (kind && kind !== "toggle" ? "/" + kind : "");
   };
 
   App.copyPreviousDay = function () {
@@ -1226,6 +1281,7 @@
       if (ZK.MsAuth.hasRedirect()) authFlow = ZK.MsAuth.handleRedirect();
     }
 
+    var linkAction = takeLinkAction();
     readHash();
     // Läuft eine Nachtschicht vom Vortag, zeigt „Heute“ diese Schicht
     if (!/\d{4}-\d{2}-\d{2}/.test(location.hash || "") && App.activeStampDate() !== App.date) App.date = App.activeStampDate();
@@ -1237,9 +1293,11 @@
     }
 
     window.addEventListener("hashchange", function () {
-      readHash();
+      var action = takeLinkAction();
+      if (!action) readHash();
       App.renderChrome();
       App.renderView();
+      if (action) App.runLinkAction(action);
     });
 
     document.addEventListener("keydown", onKeydown);
@@ -1296,6 +1354,8 @@
         D.toast(String(err && err.message ? err.message : err), { tone: "minus", duration: 9000 });
       });
     }
+
+    if (linkAction) setTimeout(function () { App.runLinkAction(linkAction); }, 60);
 
     setTimeout(function () {
       if (store.dayCount() > 0) App.requestPersistence(false);
