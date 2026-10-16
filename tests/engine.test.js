@@ -340,3 +340,46 @@ test("quotaUsage zählt Ferien, Absenzen und Kompensation", () => {
   assert.equal(q.comp, 1);
   assert.equal(q.vacationLeft, 23.5);
 });
+
+/* ---------------------------------------------------------------------- */
+/* Nachtschicht über Mitternacht                                           */
+/* ---------------------------------------------------------------------- */
+
+test("Eine Nachtschicht läuft nach Mitternacht weiter", () => {
+  const s = Object.assign(R.defaultSettings(), { autoHolidays: false });
+  const now = new Date(2026, 9, 16, 2, 0);                 // Fr 16.10. 02:00
+  const res = E.computeDay({ date: "2026-10-15", start: "22:00", end: "", breaks: [] }, { settings: s, now: now, isToday: false });
+  assert.equal(res.running, true, "gestern 22:00 begonnen, jetzt 02:00 → läuft");
+  assert.equal(res.overnight, true);
+  assert.equal(res.presence, 240, "vier Stunden seit Schichtbeginn");
+  assert.ok(!res.warnings.some((w) => w.code === "missing-end"), "keine Fehlermeldung, solange die Schicht läuft");
+});
+
+test("Nach 16 Stunden gilt die Schicht als vergessen statt laufend", () => {
+  const s = Object.assign(R.defaultSettings(), { autoHolidays: false });
+  const now = new Date(2026, 9, 16, 14, 30);               // 16.5 h nach 22:00
+  const res = E.computeDay({ date: "2026-10-15", start: "22:00", end: "", breaks: [] }, { settings: s, now: now, isToday: false });
+  assert.equal(res.running, false);
+  assert.ok(res.warnings.some((w) => w.code === "missing-end"));
+  assert.equal(res.balance, 0, "ein unvollständiger Tag bewegt das Konto nicht");
+});
+
+test("Eine Tagschicht von gestern wird nach Mitternacht nicht wiederbelebt", () => {
+  const s = Object.assign(R.defaultSettings(), { autoHolidays: false });
+  const now = new Date(2026, 9, 16, 9, 0);
+  const res = E.computeDay({ date: "2026-10-15", start: "08:00", end: "", breaks: [] }, { settings: s, now: now, isToday: false });
+  assert.equal(res.running, false, "08:00 gestern + 25 h → kein Lauf");
+});
+
+test("activeShiftDate folgt der laufenden Nachtschicht", () => {
+  const days = { "2026-10-15": { date: "2026-10-15", start: "22:00", end: "" } };
+  const get = (iso) => days[iso] || null;
+  assert.equal(E.activeShiftDate(get, new Date(2026, 9, 16, 5, 30)), "2026-10-15", "05:30 → Schicht von gestern");
+  assert.equal(E.activeShiftDate(get, new Date(2026, 9, 15, 23, 0)), "2026-10-15", "vor Mitternacht ist es ohnehin heute");
+  days["2026-10-15"].end = "06:00";
+  assert.equal(E.activeShiftDate(get, new Date(2026, 9, 16, 6, 5)), "2026-10-16", "ausgestempelt → wieder heute");
+  days["2026-10-15"].end = "";
+  days["2026-10-16"] = { date: "2026-10-16", start: "05:50", end: "" };
+  assert.equal(E.activeShiftDate(get, new Date(2026, 9, 16, 6, 5)), "2026-10-16", "heute schon eingestempelt hat Vorrang");
+  assert.equal(E.activeShiftDate(() => null, new Date(2026, 9, 16, 6, 5)), "2026-10-16");
+});

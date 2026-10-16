@@ -19,6 +19,10 @@
 })(typeof self !== "undefined" ? self : globalThis, function (T, R, H) {
   "use strict";
 
+  /* Wie lange eine über Mitternacht laufende Schicht als „läuft noch“ gilt.
+     Danach ist sie schlicht unvollständig (Gehen vergessen). */
+  var OVERNIGHT_WINDOW = 16 * 60;
+
   /* ------------------------------------------------------------------ */
   /* Hilfen                                                              */
   /* ------------------------------------------------------------------ */
@@ -86,7 +90,13 @@
 
     var now = ctx.now || new Date();
     var isToday = ctx.isToday !== undefined ? ctx.isToday : (date === T.todayISO(now));
-    var running = startTod !== null && endTod === null && isToday;
+    var nowTod = T.nowMinutes(now);
+    /* Nachtschicht: gestern begonnen, Mitternacht ist vorbei, noch nicht
+       ausgestempelt — der Tag läuft weiter, statt als unvollständig zu gelten. */
+    var overnight = startTod !== null && endTod === null && !isToday &&
+      date === T.addDays(T.todayISO(now), -1) && nowTod < startTod &&
+      (nowTod + T.DAY - startTod) <= OVERNIGHT_WINDOW;
+    var running = startTod !== null && endTod === null && (isToday || overnight);
 
     var startTl = startTod;
     var endTl = null;
@@ -95,7 +105,7 @@
         endTl = T.onTimeline(endTod, startTod);
         if (endTl === startTl) endTl = startTl; // 0-Minuten-Tag ist erlaubt
       } else if (running) {
-        endTl = Math.max(startTod, T.nowMinutes(now));
+        endTl = overnight ? nowTod + T.DAY : Math.max(startTod, nowTod);
       }
     }
 
@@ -281,6 +291,7 @@
       recorded: recorded,
       incomplete: incomplete,
       running: running,
+      overnight: overnight,
       empty: !complete && !recorded && startTod === null,
       segments: segments,
       warnings: warnings,
@@ -444,7 +455,30 @@
     return used;
   }
 
+  /**
+   * Welcher Tag gerade „läuft“: normalerweise heute — während einer
+   * Nachtschicht nach Mitternacht aber der Vortag, solange heute noch
+   * nicht eingestempelt wurde. Stempeltasten und Countdown arbeiten
+   * mit diesem Datum.
+   * @param {Function} getRecord  iso -> Rohdatensatz | null
+   */
+  function activeShiftDate(getRecord, now) {
+    now = now || new Date();
+    var today = T.todayISO(now);
+    var rt = getRecord(today);
+    if (rt && T.parseHHMM(rt.start) !== null) return today;
+    var y = T.addDays(today, -1);
+    var ry = getRecord(y);
+    if (!ry || (ry.type && R.DAY_TYPES[ry.type] && R.DAY_TYPES[ry.type].stampable === false)) return today;
+    var st = T.parseHHMM(ry.start), en = T.parseHHMM(ry.end);
+    var nowTod = T.nowMinutes(now);
+    if (st !== null && en === null && nowTod < st && (nowTod + T.DAY - st) <= OVERNIGHT_WINDOW) return y;
+    return today;
+  }
+
   return {
+    OVERNIGHT_WINDOW: OVERNIGHT_WINDOW,
+    activeShiftDate: activeShiftDate,
     emptyRecord: emptyRecord,
     deriveType: deriveType,
     computeDay: computeDay,

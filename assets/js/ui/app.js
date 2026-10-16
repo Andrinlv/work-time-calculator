@@ -70,6 +70,11 @@
     });
   };
 
+  /** Tag, auf den Stempeltasten wirken (Nachtschicht: ggf. der Vortag). */
+  App.activeStampDate = function () {
+    return E.activeShiftDate(function (iso) { return store.getDay(iso); });
+  };
+
   App.range = function (from, to) {
     return E.computeRange(from, to, function (iso) { return store.getDay(iso); }, App.settings());
   };
@@ -393,12 +398,12 @@
       if (document.title !== baseTitle) document.title = baseTitle;
       return;
     }
-    var res = App.day(T.todayISO());
+    var res = App.day(App.activeStampDate());
     if (!res.running || res.recommendedLeaveTl === null) {
       if (document.title !== baseTitle) document.title = baseTitle;
       return;
     }
-    var left = res.recommendedLeaveTl - T.nowMinutes();
+    var left = res.recommendedLeaveTl - (T.nowMinutes() + (res.overnight ? T.DAY : 0));
     var text = left > 0
       ? res.recommendedLeave + " · " + T.formatDuration(left, "clock")
       : "✓ " + T.formatSigned(-left, "clock");
@@ -412,7 +417,7 @@
     var s = App.settings();
     if (s.breakReminder === false) return;
 
-    var iso = T.todayISO();
+    var iso = App.activeStampDate();
     var res = App.day(iso);
     if (!res.running) { breakWarnedAt = null; return; }
 
@@ -687,7 +692,7 @@
   /* ================================================================== */
 
   App.stamp = function (kind) {
-    var iso = T.todayISO();
+    var iso = App.activeStampDate();
     if (App.date !== iso) App.setDate(iso);
     var rec = store.getDayOrEmpty(iso);
     var nowStr = T.formatHHMM(T.nowMinutes());
@@ -862,13 +867,13 @@
     if (!s.reminderEnabled) return;
     if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
 
-    var iso = T.todayISO();
+    var iso = App.activeStampDate();
     var res = App.day(iso);
     if (!res.running || res.recommendedLeaveTl === null) return;
 
     var lead = s.reminderLeadMinutes || 10;
     var fireAt = res.recommendedLeaveTl - lead;
-    var nowMin = T.nowMinutesFloat();
+    var nowMin = T.nowMinutesFloat() + (res.overnight ? T.DAY : 0);
     var deltaMin = fireAt - nowMin;
     if (deltaMin <= 0 || deltaMin > 16 * 60) return;
     if (reminderFiredFor === iso) return;
@@ -966,7 +971,7 @@
       case "h": case "H": e.preventDefault(); App.setDate(T.todayISO(), { view: "today" }); break;
       case "ArrowLeft": if (App.view === "today") { e.preventDefault(); App.shiftDate(-1); } break;
       case "ArrowRight": if (App.view === "today") { e.preventDefault(); App.shiftDate(1); } break;
-      case " ": if (App.view === "today") { e.preventDefault(); App.stamp(App.day(T.todayISO()).running ? "out" : "in"); } break;
+      case " ": if (App.view === "today") { e.preventDefault(); App.stamp(App.day(App.activeStampDate()).running ? "out" : "in"); } break;
       case "b": case "B": e.preventDefault(); App.stamp("break"); break;
       case ",": e.preventDefault(); App.go("settings"); break;
       case "1": App.go("today"); break;
@@ -1222,6 +1227,8 @@
     }
 
     readHash();
+    // Läuft eine Nachtschicht vom Vortag, zeigt „Heute“ diese Schicht
+    if (!/\d{4}-\d{2}-\d{2}/.test(location.hash || "") && App.activeStampDate() !== App.date) App.date = App.activeStampDate();
 
     if (mediaDark && mediaDark.addEventListener) {
       mediaDark.addEventListener("change", function () {

@@ -523,7 +523,7 @@
       }
 
       /* --- Stempeltasten --- */
-      var stampable = isToday && res.typeMeta.stampable !== false;
+      var stampable = (isToday || res.running) && res.typeMeta.stampable !== false;
       refs.stampIn.disabled = !stampable || !!res.startTod;
       refs.stampOut.disabled = !stampable || !res.startTod || !!res.endTod;
       refs.stampBreak.disabled = !stampable || !res.startTod || !!res.endTod;
