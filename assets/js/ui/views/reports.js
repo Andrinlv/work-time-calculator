@@ -383,6 +383,11 @@
     left.appendChild(D.el("h1", { text: I.t("report.title") }));
     left.appendChild(D.el("p.lede", { text: I.t("report.lede") }));
     head.appendChild(left);
+    if (ZK.Ext) {
+      var extActions = D.el("div.row.tight");
+      ZK.Ext.render("reports.actions", extActions, { App: App, from: state.from, to: state.to, kind: kind });
+      if (extActions.children.length) head.appendChild(extActions);
+    }
     host.appendChild(head);
 
     /* ---- Steuerung ---- */
@@ -648,6 +653,7 @@
     });
     sheet.appendChild(sign);
 
+    if (ZK.Ext) ZK.Ext.render("reports.top", host, { App: App, from: state.from, to: state.to, kind: kind, sheet: sheet });
     host.appendChild(sheet);
   }
 

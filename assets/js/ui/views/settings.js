@@ -815,6 +815,8 @@
     about.body.appendChild(kbdBtn);
     grid.appendChild(about.node);
 
+    if (ZK.Ext) ZK.Ext.render("settings.sections", grid, { App: App, section: section });
+
     flowColumns(grid);
     watchColumns(grid);
   }

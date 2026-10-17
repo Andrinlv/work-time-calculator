@@ -568,6 +568,12 @@
     hero.appendChild(heroMain);
     host.appendChild(hero);
 
+    /* Erweiterungen (Lückenhilfe, Zeitschieber …) zwischen Kopf und Eingaben */
+    var extHost = D.el("div.ext-stack");
+    host.appendChild(extHost);
+    var ext = ZK.Ext ? ZK.Ext.render("today.cards", extHost, { App: App, iso: iso }) : null;
+    if (!extHost.children.length) extHost.hidden = true;
+
     /* ---------------------------------------------------------------- */
     /* Zwei Spalten                                                      */
     /* ---------------------------------------------------------------- */
@@ -1089,6 +1095,7 @@
       updateWarnings(c);
       refreshBreakDurations();
       updateInputs(c);
+      if (ext) ext.update({ App: App, iso: iso, res: res, rec: rec2, nowTl: nowTl, phase: c.ph, leave: c.lv });
     }
 
     function updateChips(res) {

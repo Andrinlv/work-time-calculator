@@ -678,7 +678,7 @@
       ta.value = text;
       document.body.appendChild(ta);
       ta.select();
-      try { document.execCommand("copy"); resolve(); }
+      try { if (document.execCommand("copy")) resolve(); else reject(new Error("copy")); }
       catch (e) { reject(e); }
       finally { document.body.removeChild(ta); }
     });

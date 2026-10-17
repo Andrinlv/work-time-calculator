@@ -533,6 +533,7 @@
       totals.gapDays ? I.tn("stats.nGaps", totals.gapDays) : I.t("stats.noGaps"),
       totals.gapDays ? "warn" : "");
     host.appendChild(kpis);
+    if (ZK.Ext) ZK.Ext.render("stats.top", host, { App: App, period: period, days: days, totals: totals });
 
     /* ================================================================ */
     /* 1 · Saldo-Verlauf                                                 */
@@ -826,6 +827,7 @@
     }
     bottom.appendChild(gapCard.node);
     host.appendChild(bottom);
+    if (ZK.Ext) ZK.Ext.render("stats.bottom", host, { App: App, period: period, days: days, totals: totals });
   }
 
   /* -------------------------------------------------------------------- */

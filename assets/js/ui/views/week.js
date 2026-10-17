@@ -263,6 +263,7 @@
       row.addEventListener("keydown", function (e) {
         if (e.key === "Enter" || e.key === " " || e.key === "Spacebar") { e.preventDefault(); open(); }
       });
+      if (ZK.Ext) ZK.Ext.decorate("week.row", row, { App: App, iso: res.date, res: res });
       return row;
     }
 

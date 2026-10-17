@@ -584,6 +584,8 @@
       host.appendChild(note);
     }
 
+    if (ZK.Ext) ZK.Ext.render("calendar.top", host, { App: App, month: monthKey, from: first, to: last });
+
     /* ---- Raster ---- */
     var cal = D.el("div.cal.mb-3");
     var dow = D.el("div.cal-dow", { "aria-hidden": "true" });
@@ -747,6 +749,7 @@
 
       cell.setAttribute("aria-label", aria.join(", "));
       cell.addEventListener("click", function () { openDay(iso, st === "incomplete"); });
+      if (ZK.Ext) ZK.Ext.decorate("calendar.cell", cell, { App: App, iso: iso, res: res });
       return cell;
     }
 

@@ -417,6 +417,8 @@
     header.appendChild(pill);
 
     // Aktionen
+    if (ZK.Ext) ZK.Ext.render("header.actions", header, { App: App });
+
     var search = D.el("button.btn.ghost.icon", {
       type: "button", "data-key": "hdr-search", "aria-label": I.t("cmd.placeholder"),
       "data-tip": I.t("kbd.palette") + (IS_MAC ? " · ⌘K" : " · Ctrl+K"), html: D.icon("search")
@@ -1102,6 +1104,7 @@
       if (!q) { filtered = all; index = 0; draw(); return; }
       var dates = dateCommands(input.value);
       var smart = smartCommands(input.value);
+      if (ZK.Ext) smart = smart.concat(ZK.Ext.collect("palette.commands", input.value, { App: App }));
       var scored = all.map(function (c) { return { c: c, s: score(c, q) }; })
         .filter(function (x) { return x.s !== null; })
         .sort(function (a, b) { return a.s - b.s; })

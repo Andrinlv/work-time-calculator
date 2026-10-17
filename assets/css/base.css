@@ -580,3 +580,7 @@ h1, h2, h3, h4 {
   text-transform: uppercase;
   color: var(--ink-3);
 }
+
+/* Erweiterungen: Karten, die Zusatzfunktionen unter dem Heute-Kopf einhängen */
+.ext-stack { display: grid; gap: var(--gap-4, 16px); margin-bottom: var(--gap-4, 16px); }
+.ext-stack:empty { display: none; }

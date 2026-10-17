@@ -47,6 +47,7 @@ const SHELL = [
   "./assets/js/data/calendarsync.js",
   "./assets/js/ui/i18n.js",
   "./assets/js/ui/dom.js",
+  "./assets/js/ui/ext.js",
   "./assets/js/ui/charts.js",
   "./assets/js/ui/onboarding.js",
   "./assets/js/ui/outlooksync.js",
