@@ -59,6 +59,7 @@ const SHELL = [
   "./assets/js/ui/views/achievements.js",
   "./assets/js/ui/views/tools.js",
   "./assets/js/ui/views/settings.js",
+  "./assets/js/ui/features/miniclock.js",
   "./assets/js/ui/app.js",
 
   "./assets/icons/icon.svg",
