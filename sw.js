@@ -42,6 +42,7 @@ const SHELL = [
   "./assets/js/core/planner.js",
   "./assets/js/core/assist.js",
   "./assets/js/core/insights.js",
+  "./assets/js/core/whatif.js",
   "./assets/js/data/store.js",
   "./assets/js/data/exporters.js",
   "./assets/js/data/msauth.js",
@@ -64,6 +65,7 @@ const SHELL = [
   "./assets/js/ui/features/miniclock.js",
   "./assets/js/ui/features/assist.js",
   "./assets/js/ui/features/insights.js",
+  "./assets/js/ui/features/whatif.js",
   "./assets/js/ui/app.js",
 
   "./assets/icons/icon.svg",
