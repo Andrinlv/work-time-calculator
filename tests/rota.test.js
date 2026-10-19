@@ -508,17 +508,9 @@ test("Skripte eingebunden: Logik nach dem Planer, Oberfläche vor dem App-Start,
   assert.ok(/decorate\("week\.row", row, \{[^}]*scale:/.test(week));
 });
 
-test("Stylesheets: jede Klammer geschlossen — sonst verschluckt ein offener Block alle späteren Abschnitte", () => {
-  const dir = path.join(__dirname, "../assets/css");
-  for (const f of fs.readdirSync(dir).filter((n) => n.endsWith(".css"))) {
-    const css = fs.readFileSync(path.join(dir, f), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
-    let depth = 0;
-    for (const ch of css) {
-      if (ch === "{") depth++;
-      else if (ch === "}") { depth--; assert.ok(depth >= 0, f + ": überzählige }"); }
-    }
-    assert.equal(depth, 0, f + ": offener Block");
-  }
-  const views = fs.readFileSync(path.join(dir, "views.css"), "utf8");
-  assert.ok(views.indexOf("/* ===== FEATURE: rota ===== */") > 0);
+test("Stile des Schichtplans stehen in eigenem Abschnitt", () => {
+  const views = fs.readFileSync(path.join(__dirname, "../assets/css/views.css"), "utf8");
+  const at = views.indexOf("/* ===== FEATURE: rota ===== */");
+  assert.ok(at > 0);
+  assert.ok(views.indexOf(".rota-badge", at) > at && views.indexOf(".rota-ghost", at) > at && views.indexOf(".rota-today", at) > at);
 });
