@@ -382,6 +382,35 @@
     });
 
     refs.range.addEventListener("input", function () { select(+refs.range.value, true); });
+
+    /* Finger und Stift: Antippen setzt den Griff an die Stelle, Ziehen
+       führt ihn mit. Ein natives Schieberegler-Element tut das nicht
+       überall (iOS will den Griff genau getroffen haben). Senkrechtes
+       Wischen bleibt Scrollen (touch-action: pan-y bricht den Zug ab). */
+    var touchId = null;
+    function fromX(x) {
+      if (!sc) return;
+      var r = refs.range.getBoundingClientRect();
+      var half = 13;                     // halbe Griffbreite (--wf-thumb in views.css)
+      var span = r.width - 2 * half;
+      if (!(span > 0)) return;
+      var f = Math.max(0, Math.min(1, (x - r.left - half) / span));
+      select(f * (sc.positions.length - 1), true);
+    }
+    refs.range.addEventListener("pointerdown", function (e) {
+      if (e.pointerType === "mouse") return;
+      touchId = e.pointerId;
+      try { refs.range.setPointerCapture(e.pointerId); } catch (err) { /* ohne Fang weiter */ }
+      try { refs.range.focus({ preventScroll: true }); } catch (err2) { /* ältere Browser */ }
+      fromX(e.clientX);
+    });
+    refs.range.addEventListener("pointermove", function (e) {
+      if (touchId === null || e.pointerId !== touchId) return;
+      fromX(e.clientX);
+    });
+    function endTouch(e) { if (e.pointerId === touchId) touchId = null; }
+    refs.range.addEventListener("pointerup", endTouch);
+    refs.range.addEventListener("pointercancel", endTouch);
     refs.range.addEventListener("keydown", function (e) {
       if (e.key !== "PageUp" && e.key !== "PageDown") return;
       e.preventDefault();
