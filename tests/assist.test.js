@@ -520,6 +520,193 @@ test("Erfassungsbeginn wie im Kalender (ZK.CalWeek.trackingStart)", () => {
 });
 
 /* ---------------------------------------------------------------------- */
+/* Schichtplan: die geplante Schicht ist das Übliche                       */
+/* ---------------------------------------------------------------------- */
+
+const Rota = require("../assets/js/core/rota.js");
+
+/* 3-Schicht ab Mo 12.01.2026: KW 42 (12.–16.10.) früh, KW 43 spät, KW 44 nacht.
+   Die Vorbilder folgen dem Plan — ihr Median je Wochentag ist ein Gemisch
+   aus allen drei Schichten (montags gewinnt die Nacht). */
+const SHIFTS = { early: ["06:00", "14:30", "09:00", "09:30"], late: ["14:00", "22:30", "18:00", "18:30"], night: ["22:00", "06:00", "02:00", "02:30"] };
+const ROTA3 = { enabled: true, anchor: "2026-01-12", cycle: Rota.preset("three-shift").cycle, name: "3-Schicht" };
+function shiftHistory(until) {
+  const days = {};
+  T.rangeDays("2026-08-03", until || "2026-10-15").forEach((iso) => {
+    const wd = T.weekdayOf(iso);
+    if (wd === 0 || wd === 6) return;
+    const sh = SHIFTS[["early", "late", "night"][Math.floor(T.diffDays("2026-01-12", iso) / 7) % 3]];
+    days[iso] = { date: iso, start: sh[0], end: sh[1], breaks: [{ id: "b" + iso, label: "Pause", start: sh[2], end: sh[3], paid: false }], note: "", location: "office", absenceFactor: 1 };
+  });
+  return days;
+}
+const rotaSettings = (patch) => settings(Object.assign({ rota: ROTA3 }, patch || {}));
+const fillOf = (p) => [p.date, p.kind, p.start, p.end, (p.breaks || []).map((b) => b.start + "–" + b.end + (b.paid ? " bezahlt" : "")).join(" ")];
+
+test("Schichtplan: Frühwoche füllt Lücken mit der Frühschicht, Gehen laut Plan", () => {
+  const days = shiftHistory();
+  delete days["2026-10-12"]; delete days["2026-10-13"];
+  days["2026-10-14"].end = "";
+  const dates = ["2026-10-12", "2026-10-13", "2026-10-14"];
+  const now = at(9, 30);
+  // Ohne Plan: der Median schlägt montags eine Nacht vor und am Mittwoch 14:00
+  const plain = A.planFill(days, settings(), dates, { now });
+  assert.deepEqual(plain.map((p) => p.start + "–" + p.end), ["22:00–06:00", "22:00–06:00", "06:00–14:00"]);
+  const plan = A.planFill(days, rotaSettings(), dates, { now });
+  assert.deepEqual(plan.map(fillOf), [
+    ["2026-10-12", "day", "06:00", "14:30", "09:00–09:30"],
+    ["2026-10-13", "day", "06:00", "14:30", "09:00–09:30"],
+    ["2026-10-14", "end", "06:00", "14:30", "09:00–09:30"]
+  ]);
+  plan.forEach((p) => {
+    assert.equal(p.typical.source, "plan");
+    assert.equal(p.typical.template.id, "early");
+    assert.deepEqual(p.issues, [], p.date);
+    assert.equal(p.net, 480);
+  });
+  // Ausgeschaltet: wieder die Gewohnheit
+  const off = A.planFill(days, rotaSettings({ rota: Object.assign({}, ROTA3, { enabled: false }) }), dates, { now });
+  assert.deepEqual(off.map((p) => p.start + "–" + p.end), plain.map((p) => p.start + "–" + p.end));
+});
+
+test("Schichtplan: Spätwoche und Nachtwoche — die Nacht über Mitternacht", () => {
+  const days = shiftHistory("2026-11-06");
+  delete days["2026-10-20"]; delete days["2026-10-27"];
+  const s = rotaSettings();
+  const late = A.planFill(days, s, ["2026-10-20"], { now: at(9, 0, "2026-10-22") });
+  assert.deepEqual(late.map(fillOf), [["2026-10-20", "day", "14:00", "22:30", "18:00–18:30"]]);
+  const night = A.planFill(days, s, ["2026-10-27"], { now: at(9, 0, "2026-10-29") });
+  assert.deepEqual(night.map(fillOf), [["2026-10-27", "day", "22:00", "06:00", "02:00–02:30"]]);
+  assert.deepEqual(night[0].issues, []);
+  assert.equal(night[0].typical.night, true);
+  const res = E.computeDay(Object.assign({ date: "2026-10-27" }, night[0].patch), { settings: s, now: at(9, 0, "2026-10-29") });
+  assert.equal(res.net, 450);
+  assert.equal(res.endTl, 1800, "Gehen am Folgetag um 06:00");
+});
+
+test("Schichtplan: die Nacht von gestern läuft noch — keine Lücke, bis sie vorbei ist", () => {
+  const days = shiftHistory("2026-10-23");
+  const s = rotaSettings();
+  // Mo 26.10. Nachtschicht 22:00–06:00, nichts erfasst
+  const during = A.detect(days, s, { now: at(3, 0, "2026-10-27") });
+  const gaps = during.find((x) => x.code === "gaps");
+  assert.equal(!!gaps && gaps.dates.indexOf("2026-10-26") >= 0, false);
+  assert.deepEqual(A.planFill(days, s, ["2026-10-26"], { now: at(3, 0, "2026-10-27") }), []);
+  const after = A.detect(days, s, { now: at(7, 0, "2026-10-27") });
+  const g = after.find((x) => x.code === "gaps");
+  assert.ok(g && g.dates.indexOf("2026-10-26") >= 0);
+  assert.deepEqual(fillOf(g.plan.find((p) => p.date === "2026-10-26")), ["2026-10-26", "day", "22:00", "06:00", "02:00–02:30"]);
+});
+
+test("Schichtplan: laufende Nachtschicht — Gehen vergessen nach dem geplanten Ende", () => {
+  const days = shiftHistory("2026-10-23");
+  days["2026-10-26"] = { date: "2026-10-26", start: "22:00", end: "", breaks: [{ id: "n", label: "Pause", start: "02:00", end: "02:30", paid: false }] };
+  const s = rotaSettings();
+  // 06:30: Schicht eben vorbei — noch kein Hinweis
+  assert.equal(A.detect(days, s, { now: at(6, 30, "2026-10-27") }).some((x) => x.code === "leave"), false);
+  const list = A.detect(days, s, { now: at(8, 30, "2026-10-27") });
+  const leave = list.find((x) => x.code === "leave");
+  assert.ok(leave);
+  assert.equal(leave.date, "2026-10-26");
+  assert.equal(leave.end, "06:00");
+  assert.equal(leave.typical.source, "plan");
+  assert.deepEqual(apply(days, leave, s, at(8, 30, "2026-10-27")).issues, []);
+});
+
+test("Schichtplan: „Kommen vergessen“ zählt ab dem geplanten Beginn", () => {
+  const days = shiftHistory();
+  const s = rotaSettings();
+  // Fr 16.10. Frühschicht 06:00: um 06:50 fehlt das Kommen
+  const early = A.detect(days, s, { now: at(6, 50) }).find((x) => x.code === "in");
+  assert.ok(early);
+  assert.equal(early.start, "06:00");
+  assert.equal(early.typical.source, "plan");
+  assert.equal(A.detect(days, s, { now: at(6, 40) }).some((x) => x.code === "in"), false, "bis 45 min nach Beginn nicht");
+  // Nach der geplanten Pause kommt sie mit — so, wie sie geplant ist
+  const later = A.detect(days, s, { now: at(10, 0) }).find((x) => x.code === "in");
+  assert.deepEqual(later.patch.breaks.map((b) => b.start + "–" + b.end), ["09:00–09:30"]);
+  // Spätwoche: um 09:30 ist nichts vergessen, um 14:50 schon
+  const lateDays = shiftHistory("2026-10-20");
+  assert.equal(A.detect(lateDays, s, { now: at(9, 30, "2026-10-21") }).some((x) => x.code === "in"), false);
+  const late = A.detect(lateDays, s, { now: at(14, 50, "2026-10-21") }).find((x) => x.code === "in");
+  assert.equal(late.start, "14:00");
+  // Nachtwoche: 21:30 ist vor der Schicht, 22:50 nicht mehr
+  const nightDays = shiftHistory("2026-10-27");
+  assert.equal(A.detect(nightDays, s, { now: at(21, 30, "2026-10-28") }).some((x) => x.code === "in"), false);
+  assert.equal(A.detect(nightDays, s, { now: at(22, 50, "2026-10-28") }).find((x) => x.code === "in").start, "22:00");
+});
+
+test("Schichtplan: Abweichung für den Tag geht dem Rhythmus vor", () => {
+  const days = shiftHistory();
+  delete days["2026-10-13"];
+  const s = rotaSettings({ [Rota.overrideKey("2026-10-13")]: "late" });
+  const p = A.planFill(days, s, ["2026-10-13"], { now: at(9, 30) });
+  assert.deepEqual(p.map(fillOf), [["2026-10-13", "day", "14:00", "22:30", "18:00–18:30"]]);
+  assert.equal(p[0].typical.plan, "override");
+  // Noch nicht umgezogene Abweichung im Datensatz gilt ebenso
+  const legacy = Object.assign({}, days, { "2026-10-13": { date: "2026-10-13", plan: "night", breaks: [] } });
+  assert.equal(A.planFill(legacy, rotaSettings(), ["2026-10-13"], { now: at(9, 30) })[0].start, "22:00");
+});
+
+test("Schichtplan: laut Plan frei — kein „Kommen vergessen“, keine Lücke", () => {
+  const days = shiftHistory();
+  delete days["2026-10-12"];
+  const s = rotaSettings({ [Rota.overrideKey("2026-10-12")]: "free", [Rota.overrideKey(TODAY)]: "free" });
+  assert.deepEqual(A.planFill(days, s, ["2026-10-12"], { now: at(9, 30) }), []);
+  const list = A.detect(days, s, { now: at(9, 30) });
+  assert.equal(list.some((x) => x.code === "in"), false);
+  assert.equal(list.some((x) => x.code === "gaps"), false);
+  // Rhythmus mit freiem Montag: dasselbe ohne Abweichung
+  const cycle = Rota.preset("three-shift").cycle.slice();
+  cycle[0] = null;
+  assert.deepEqual(A.planFill(days, rotaSettings({ rota: Object.assign({}, ROTA3, { cycle }) }), ["2026-10-12"], { now: at(9, 30) }), []);
+  // Wer trotzdem kam und das Gehen vergass, bekommt das Gehen aus der Gewohnheit
+  days["2026-10-12"] = { date: "2026-10-12", start: "06:00", end: "", breaks: [] };
+  const end = A.planFill(days, s, ["2026-10-12"], { now: at(9, 30) });
+  assert.equal(end.length, 1);
+  assert.equal(end[0].kind, "end");
+  assert.notEqual(end[0].typical.source, "plan");
+  assert.equal(end[0].typical.planFree, true);
+});
+
+test("Schichtplan: bezahlte Pause, gelöschte Vorlage, übliche Zeiten mit Datum", () => {
+  const days = shiftHistory();
+  delete days["2026-10-12"];
+  const tpls = R.defaultSettings().shiftTemplates.map((t) => t.id === "early" ? Object.assign({}, t, { breakPaid: true }) : t);
+  const paid = A.planFill(days, rotaSettings({ shiftTemplates: tpls }), ["2026-10-12"], { now: at(9, 30) });
+  assert.deepEqual(paid.map(fillOf), [["2026-10-12", "day", "06:00", "14:30", "09:00–09:30 bezahlt"]]);
+  assert.deepEqual(paid[0].issues, []);
+  assert.equal(paid[0].net, 510, "die bezahlte Pause zählt zur Arbeitszeit");
+  // Vorlage gelöscht: der Plan greift nicht, die Gewohnheit schon
+  const gone = A.planFill(days, rotaSettings({ shiftTemplates: tpls.filter((t) => t.id !== "early") }), ["2026-10-12"], { now: at(9, 30) });
+  assert.equal(gone[0].typical.source, "weekday");
+  // typicalTimes: mit Datum der Plan, mit Wochentag die Gewohnheit
+  const s = rotaSettings();
+  const byDate = A.typicalTimes(days, s, { date: "2026-10-19", now: at(9, 30) });
+  assert.equal(byDate.source, "plan");
+  assert.deepEqual(byDate.text, { start: "14:00", end: "22:30", lunchStart: "18:00", lunchEnd: "18:30" });
+  assert.equal(A.typicalTimes(days, s, { weekday: 1, now: at(9, 30) }).source, "weekday");
+});
+
+test("Schichtplan im Browser: rota.js lädt nach assist.js und wird trotzdem gefunden", () => {
+  const html = fs.readFileSync(path.join(__dirname, "../index.html"), "utf8");
+  const order = (html.match(/assets\/js\/core\/[a-z]+\.js/g) || []);
+  assert.ok(order.indexOf("assets/js/core/assist.js") < order.indexOf("assets/js/core/rota.js"), "Annahme dieses Tests");
+  const sandbox = { console };
+  sandbox.self = sandbox;
+  vm.createContext(sandbox);
+  order.filter((f) => ["time", "rules", "holidays", "engine", "assist", "rota"].some((n) => f.endsWith("/" + n + ".js")))
+    .forEach((f) => vm.runInContext(fs.readFileSync(path.join(__dirname, "..", f), "utf8"), sandbox));
+  const BA = sandbox.ZK.Assist;
+  const days = shiftHistory();
+  delete days["2026-10-12"];
+  const s = Object.assign(sandbox.ZK.Rules.defaultSettings(), { holidayRegion: "CH-LU", rota: ROTA3 });
+  const p = BA.planFill(days, s, ["2026-10-12"], { now: at(9, 30) });
+  assert.equal(p[0].typical.source, "plan");
+  assert.equal(p[0].start + "–" + p[0].end, "06:00–14:30");
+});
+
+/* ---------------------------------------------------------------------- */
 /* Oberfläche: Texte in allen vier Sprachen                                */
 /* ---------------------------------------------------------------------- */
 

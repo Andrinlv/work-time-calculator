@@ -4,8 +4,12 @@
    „Vergessen zu stempeln? Zeitkonto merkt es und schlägt deine üblichen
    Zeiten vor.“ Hier steckt alles ohne DOM:
 
-     · Übliche Zeiten   Median von Kommen, Gehen und Mittag aus den letzten
-                        acht erfassten Arbeitstagen mit demselben Wochentag
+     · Übliche Zeiten   Läuft der Schichtplan, ist die geplante Schicht des
+                        Tages das Übliche (Kommen, Gehen, Pause, bezahlt
+                        oder nicht) — ein laut Plan freier Tag bekommt
+                        keinen erfundenen Arbeitstag. Sonst der Median von
+                        Kommen, Gehen und Mittag aus den letzten acht
+                        erfassten Arbeitstagen mit demselben Wochentag
                         (sonst aus den letzten Arbeitstagen, sonst aus der
                         Schichtvorlage). Nachtschicht-Leute bekommen Nacht-
                         zeiten, sobald die jüngsten Tage Nächte waren.
@@ -18,13 +22,17 @@
    als Fehler, und jeder Hinweis lässt sich für den Tag ausblenden.
    ========================================================================== */
 (function (root, factory) {
+  /* Der Schichtplan wird erst beim Rechnen geholt: im Browser lädt
+     core/rota.js nach dieser Datei. */
   if (typeof module === "object" && module.exports) {
-    module.exports = factory(require("./time.js"), require("./rules.js"), require("./engine.js"));
+    module.exports = factory(require("./time.js"), require("./rules.js"), require("./engine.js"),
+      function () { return require("./rota.js"); });
   } else {
     root.ZK = root.ZK || {};
-    root.ZK.Assist = factory(root.ZK.Time, root.ZK.Rules, root.ZK.Engine);
+    root.ZK.Assist = factory(root.ZK.Time, root.ZK.Rules, root.ZK.Engine,
+      function () { return root.ZK.Rota || null; });
   }
-})(typeof self !== "undefined" ? self : globalThis, function (T, R, E) {
+})(typeof self !== "undefined" ? self : globalThis, function (T, R, E, rotaApi) {
   "use strict";
 
   var SAMPLE_LIMIT = 8;          // so viele gleiche Wochentage zählen
@@ -224,6 +232,10 @@
       if (le <= ls) le = ls + Math.max(stepOf(s), 15);
       typ.lunch = (ls > typ.start && le < typ.end) ? { start: ls, end: le } : null;
     }
+    return withText(typ);
+  }
+
+  function withText(typ) {
     typ.text = {
       start: fmt(typ.start),
       end: fmt(typ.end),
@@ -231,6 +243,44 @@
       lunchEnd: typ.lunch ? fmt(typ.lunch.end) : null
     };
     return typ;
+  }
+
+  /**
+   * Die geplante Schicht als übliche Zeiten (source "plan"). Gleiche Achse
+   * wie die Vorbild-Tage (Nacht ab 00:00 bis 04:00 liegt über 1440); die
+   * Zeiten gelten genau wie geplant — ohne Rundungsraster.
+   *   entry: Rota.dayPlan mit Schicht
+   */
+  function fromPlan(entry, weekday) {
+    var Rota = rotaApi();
+    var st = Rota.shiftTimes(entry.tpl);
+    var night = st.start >= 18 * 60 || st.start < 4 * 60;
+    var shift = night && st.start < 12 * 60 ? T.DAY : 0;
+    var lunch = null;
+    if (st.breakStart !== null && st.breakStart > st.start && st.breakEnd < st.end) {
+      lunch = { start: st.breakStart + shift, end: st.breakEnd + shift };
+    }
+    var tpl = entry.tpl;
+    return withText({
+      start: st.start + shift, end: st.end + shift, lunch: lunch, lunchPaid: !!(lunch && st.paid),
+      n: 0, source: "plan", plan: entry.source, night: night, weekday: weekday,
+      template: { id: tpl.id || null, name: tpl.name || "", nameKey: tpl.nameKey || null }
+    });
+  }
+
+  /**
+   * Was der Schichtplan für `iso` vorsieht:
+   *   null            kein Plan (ausgeschaltet, Vorlage gelöscht, Ferien …) → Gewohnheit
+   *   { free: true }  laut Plan frei (auch Feiertag, an dem der Rhythmus pausiert)
+   *   { typ }         die geplante Schicht als übliche Zeiten
+   */
+  function plannedFor(iso, s, rec, holiday) {
+    var Rota = rotaApi();
+    if (!Rota || !s || !Rota.isActive(s.rota)) return null;
+    var e = Rota.dayPlanOf(s, iso, rec, holiday);
+    if (Rota.hasShift(e)) return { typ: fromPlan(e, T.weekdayOf(iso)) };
+    if (e.free || e.off === "holiday") return { free: true };
+    return null;
   }
 
   /**
@@ -266,13 +316,16 @@
   }
 
   /**
-   * Übliche Zeiten für den Wochentag von opts.date (oder opts.weekday).
+   * Übliche Zeiten für den Tag opts.date — läuft der Schichtplan, die dort
+   * geplante Schicht (an einem laut Plan freien Tag der Median mit
+   * planFree: true). Mit opts.weekday nur der Median dieses Wochentags.
    * opts: { date, weekday, before (exklusiv, Standard heute), now }
    */
   function typicalTimes(days, s, opts) {
     opts = opts || {};
-    var wd = typeof opts.weekday === "number" ? opts.weekday : T.weekdayOf(opts.date || T.todayISO(opts.now));
-    return typicalFromSamples(collectSamples(days, s, opts), wd, s);
+    var samples = collectSamples(days, s, opts);
+    if (typeof opts.weekday === "number") return typicalFromSamples(samples, opts.weekday, s);
+    return typicalSource(days, s, { now: opts.now, samples: samples })(opts.date || T.todayISO(opts.now));
   }
 
   /* ------------------------------------------------------------------ */
@@ -286,13 +339,14 @@
 
   function lunchDur(typ) { return typ.lunch ? typ.lunch.end - typ.lunch.start : 30; }
 
-  function newBreak(opts, idx, start, end) {
+  /** paid: nur die bezahlte Pause einer geplanten Schicht */
+  function newBreak(opts, idx, start, end, paid) {
     return {
       id: "a" + (opts.idBase || Date.now().toString(36)) + (idx || 0),
       label: opts.breakLabel || "",
       start: fmt(start),
       end: fmt(end),
-      paid: false
+      paid: !!paid
     };
   }
 
@@ -344,7 +398,9 @@
     var dur = list.length ? short : Math.max(lunchDur(typ), short);
     if (typ.lunch) {
       var ls = onDay(typ.lunch.start, startTod);
-      if (fits(ls, ls + dur)) { breaks.push(newBreak(opts, breaks.length, ls, ls + dur)); return true; }
+      /* Die Pause der geplanten Schicht kommt so, wie sie geplant ist (auch bezahlt) */
+      var asPlanned = !!typ.lunchPaid && dur === lunchDur(typ);
+      if (fits(ls, ls + dur)) { breaks.push(newBreak(opts, breaks.length, ls, ls + dur, asPlanned)); return true; }
     }
     /* Längste freie Strecke zwischen Kommen, Pausen und Gehen */
     var edges = [startTod];
@@ -377,7 +433,7 @@
     if (typ.lunch) {
       var ls = onDay(typ.lunch.start, st);
       var le = ls + lunchDur(typ);
-      if (ls > st && le < endTl) breaks.push(newBreak(opts, 0, ls, le));
+      if (ls > st && le < endTl) breaks.push(newBreak(opts, 0, ls, le, typ.lunchPaid));
     }
     if (!breaks.length && s.defaultLunch) {
       var req = R.minBreakFor(endTl - st, s.breakRuleset, s.customBreakTiers);
@@ -451,7 +507,8 @@
       });
       endTl = Math.max(startTod + sol.gross, lastEnd !== null ? lastEnd + 1 : startTod + 31);
     }
-    endTl = roundTo(endTl, s);
+    // Das Schichtende laut Plan gilt genau so, wie es geplant ist
+    if (!(typ.source === "plan" && !needLater && endTl === typ.end - shift)) endTl = roundTo(endTl, s);
     if (endTl > cap) endTl = floorTo(cap, s);
     if (lastEnd !== null && endTl < lastEnd) return null;
     if (endTl <= startTod) return null;
@@ -504,19 +561,47 @@
     return out;
   }
 
-  /** Erinnert Werte je Wochentag, damit ein Durchlauf die Vorbilder nur einmal sammelt. */
+  /**
+   * Übliche Zeiten je Tag → function (iso, res) → typical. Zuerst der
+   * Schichtplan, sonst der Median je Wochentag (ein Durchlauf sammelt die
+   * Vorbilder nur einmal). An einem laut Plan freien Tag kommt der Median
+   * mit planFree: true — er taugt dann nur noch für Tage, an denen trotzdem
+   * gestempelt wurde (Gehen ergänzen), nicht für einen erfundenen Arbeitstag.
+   *   res: Engine-Ergebnis des Tages (liefert den Feiertag), sonst wird gerechnet
+   */
   function typicalSource(days, s, opts) {
-    var samples = opts.samples || collectSamples(days, s, { before: T.todayISO(opts.now), now: opts.now });
+    var now = opts.now || new Date();
+    var samples = opts.samples || collectSamples(days, s, { before: T.todayISO(now), now: now });
     var memo = {};
-    return function (iso) {
+    var Rota = rotaApi();
+    var rotaOn = !!(Rota && s && Rota.isActive(s.rota));
+    function usual(iso) {
       var wd = T.weekdayOf(iso);
       if (!memo[wd]) memo[wd] = typicalFromSamples(samples, wd, s);
       return memo[wd];
+    }
+    return function (iso, res) {
+      if (!rotaOn) return usual(iso);
+      var rec = days ? days[iso] || null : null;
+      var p = plannedFor(iso, s, rec, (res || computeAt(rec, iso, s, now)).holiday);
+      if (p && p.typ) return p.typ;
+      return p && p.free ? Object.assign({}, usual(iso), { planFree: true }) : usual(iso);
     };
+  }
+
+  /** Endet die geplante Schicht erst nach `now`? (Nachtschicht von gestern läuft noch) */
+  function planEndsAfter(iso, typ, now) {
+    if (!typ || typ.source !== "plan") return false;
+    var d = T.fromISO(iso);
+    var shift = typ.night && typ.start >= T.DAY ? T.DAY : 0;
+    var end = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, typ.end - shift);
+    return end.getTime() > now.getTime();
   }
 
   /**
    * Vorschläge für vergangene Tage: Gehen ergänzen bzw. ganzen Tag füllen.
+   * Ein laut Schichtplan freier Tag wird nie als Arbeitstag gefüllt, eine
+   * geplante Schicht, die noch läuft (Nacht von gestern), auch nicht.
    * → [{ date, kind: "end"|"day", patch, start, end, breaks, typical, issues }]
    */
   function planFill(days, s, dates, opts) {
@@ -527,7 +612,7 @@
     (dates || []).forEach(function (iso) {
       var rec = days ? days[iso] : null;
       var res = computeAt(rec, iso, s, now);
-      var typ = typicalFor(iso);
+      var typ = typicalFor(iso, res);
       var base = { breakLabel: opts.breakLabel, idBase: iso.replace(/-/g, "") };
       var entry = null;
       if (res.incomplete) {
@@ -536,7 +621,7 @@
         var p = { end: ce.end };
         if (ce.breaksChanged) p.breaks = ce.breaks;
         entry = { date: iso, kind: "end", patch: p, start: rec.start, end: ce.end, breaks: ce.breaks, addedBreak: ce.addedBreak, typical: typ };
-      } else if (res.target > 0 && !res.recorded && !hasContent(rec)) {
+      } else if (res.target > 0 && !res.recorded && !hasContent(rec) && !typ.planFree && !planEndsAfter(iso, typ, now)) {
         var day = buildDay(typ, s, base);
         entry = { date: iso, kind: "day", patch: { start: day.start, end: day.end, breaks: day.breaks }, start: day.start, end: day.end, breaks: day.breaks, typical: typ };
       }
@@ -580,7 +665,7 @@
     var recA = days ? days[active] : null;
     var resA = computeAt(recA, active, s, now);
     if (resA.running) {
-      var typA = typicalFor(active);
+      var typA = typicalFor(active, resA);
       var nowTl = nowMin + (resA.overnight ? T.DAY : 0);
 
       /* (e) Gehen vergessen — kam jemand spät, gilt das verschobene
@@ -620,8 +705,9 @@
       var recT = days ? days[today] : null;
       var hasEnd = !!(recT && String(recT.end || "").trim());
       if (resA.startTod === null && !hasEnd && resA.type === "work" && resA.target > 0 && resA.credited === 0) {
-        var typT = typicalFor(today);
-        if (typT.start < T.DAY && nowMin > typT.start + LATE_START) {
+        /* Mit Schichtplan zählt der geplante Beginn; laut Plan frei: kein Hinweis */
+        var typT = typicalFor(today, resA);
+        if (!typT.planFree && typT.start < T.DAY && nowMin > typT.start + LATE_START) {
           var noBreaks = !(recT && recT.breaks && recT.breaks.length);
           var full = noBreaks && typT.end < T.DAY && nowMin >= typT.end;
           var patch, lunch = null;
@@ -633,7 +719,7 @@
             /* Der Mittag ist vorbei und nicht erfasst: der übliche kommt mit */
             if (noBreaks && typT.lunch && nowMin >= typT.lunch.end) {
               lunch = { start: typT.text.lunchStart, end: typT.text.lunchEnd };
-              patch.breaks = [newBreak({ breakLabel: label, idBase: today.replace(/-/g, "") }, 0, typT.lunch.start, typT.lunch.end)];
+              patch.breaks = [newBreak({ breakLabel: label, idBase: today.replace(/-/g, "") }, 0, typT.lunch.start, typT.lunch.end, typT.lunchPaid)];
             }
           }
           out.push({ code: "in", date: today, start: typT.text.start, end: typT.text.end, fullDay: full, lunch: lunch, typical: typT, patch: patch });

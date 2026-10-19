@@ -404,9 +404,11 @@
     if (!typ) return "";
     if (typ.source === "weekday") return I.t("assist.basis.weekday", { n: typ.n, wd: I.weekdayName(typ.weekday, "short") });
     if (typ.source === "recent") return I.tn("assist.basis.recent", typ.n);
-    if (typ.source === "template" && typ.template) {
+    if ((typ.source === "template" || typ.source === "plan") && typ.template) {
       var name = typ.template.nameKey ? I.t(typ.template.nameKey) : typ.template.name;
       if (typ.template.nameKey && name === typ.template.nameKey) name = typ.template.name;
+      // Schichtplan (features/rota.js): „Laut Plan: Frühschicht“
+      if (typ.source === "plan") return I.t("rota.byPlan", { name: name || "" });
       return I.t("assist.basis.template", { name: name || "" });
     }
     return I.t("assist.basis.default");
@@ -430,6 +432,10 @@
         o.title = I.t("assist.in.title");
         o.sub = sug.lunch ? I.t("assist.in.subLunch", { time: sug.start, from: sug.lunch.start, to: sug.lunch.end })
           : I.t("assist.in.sub", { time: sug.start });
+        // Geplante Schicht: ihre Pause ist nicht unbedingt ein Mittag (Früh 09:00, Nacht 02:00)
+        if (sug.lunch && sug.typical && sug.typical.source === "plan") {
+          o.sub = I.t("assist.in.sub", { time: sug.start }) + " · " + I.t("assist.preview.break", { from: sug.lunch.start, to: sug.lunch.end });
+        }
         o.primary = { act: "apply", label: I.t("assist.in.apply", { time: sug.start }) };
       }
       o.secondary = { act: "now", label: I.t("assist.in.now") };
@@ -623,7 +629,7 @@
     var sub = D.el("span.assist-sub", { text: t.sub });
     if (t.basis) {
       sub.appendChild(document.createTextNode(" · "));
-      sub.appendChild(D.el("span.assist-basis", { text: t.basis, "data-tip": I.t("assist.basisTip") }));
+      sub.appendChild(D.el("span.assist-basis", { text: t.basis, "data-tip": sug.typical && sug.typical.source === "plan" ? null : I.t("assist.basisTip") }));
     }
     txt.appendChild(sub);
     main.appendChild(txt);
