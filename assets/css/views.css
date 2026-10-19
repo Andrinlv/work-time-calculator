@@ -2760,3 +2760,312 @@ body.mini-pip::before { display: none; }
   .wf-kpi .v { font-size: var(--fs-lg); }
 }
 @media print { .wf-card { display: none !important; } }
+
+/* ==========================================================================
+   FEATURE: Jahresrückblick & Momente (ui/features/review.js)
+   --------------------------------------------------------------------------
+   Story-Karten in drei Markentönen (tief, taupe, Papier). Die Töne stehen
+   als --rv-* an der Karte: dieselbe Quelle für den Bildschirm und für das
+   geteilte Bild (Canvas liest sie aus). Schrift auf jedem Ton ≥ 4.5:1.
+   ========================================================================== */
+.rv-card.tone-a {
+  --rv-bg1: var(--brand-800); --rv-bg2: var(--brand-900);
+  --rv-ink: var(--brand-25); --rv-soft: var(--brand-200); --rv-accent: var(--brand-300);
+  --rv-ring: var(--brand-700); --rv-ring-fill: var(--brand-500);
+}
+.rv-card.tone-b {
+  --rv-bg1: var(--brand-600); --rv-bg2: var(--brand-700);
+  --rv-ink: #FFFFFF; --rv-soft: var(--brand-100); --rv-accent: var(--brand-25);
+  --rv-ring: var(--brand-500); --rv-ring-fill: var(--brand-400);
+}
+.rv-card.tone-c {
+  --rv-bg1: var(--brand-50); --rv-bg2: var(--brand-100);
+  --rv-ink: var(--brand-900); --rv-soft: var(--brand-700); --rv-accent: var(--brand-600);
+  --rv-ring: var(--brand-200); --rv-ring-fill: var(--brand-400);
+}
+[data-theme="dark"] .rv-card.tone-a {
+  --rv-bg1: #221F1C; --rv-bg2: var(--brand-950);
+  --rv-ink: var(--brand-50); --rv-soft: var(--brand-300); --rv-accent: var(--brand-200);
+  --rv-ring: var(--brand-800); --rv-ring-fill: var(--brand-600);
+}
+[data-theme="dark"] .rv-card.tone-b {
+  --rv-bg1: var(--brand-700); --rv-bg2: var(--brand-800);
+  --rv-ink: #FFFFFF; --rv-soft: var(--brand-100); --rv-accent: var(--brand-50);
+  --rv-ring: var(--brand-600); --rv-ring-fill: var(--brand-500);
+}
+[data-theme="dark"] .rv-card.tone-c {
+  --rv-bg1: #36312C; --rv-bg2: #2A2622;
+  --rv-ink: var(--brand-50); --rv-soft: var(--brand-200); --rv-accent: var(--brand-300);
+  --rv-ring: var(--brand-700); --rv-ring-fill: var(--brand-500);
+}
+
+/* ---- Dialog -------------------------------------------------------------- */
+.modal.rv-modal {
+  width: min(460px, 100%);
+  height: min(880px, calc(100vh - 32px));
+  height: min(880px, calc(100dvh - 32px));
+  max-height: none;
+}
+.rv-modal .modal-head { padding: 10px 12px 8px 18px; border-bottom: 0; gap: var(--gap-2); }
+.rv-modal .modal-head > div:first-child { min-width: 0; }
+.rv-modal .modal-head h2 { white-space: nowrap; }
+.rv-modal .modal-head .sub { font-variant-numeric: tabular-nums; }
+.rv-modal .modal-head .close { margin-left: 0; }
+.rv-tools { margin-left: auto; display: flex; align-items: center; gap: 6px; flex: none; }
+.rv-yearsel.select { width: auto; min-height: 34px; padding: 4px 30px 4px 12px; font-weight: 800; background-position: right 10px center; }
+.rv-yearlabel { font-size: var(--fs-lg); font-weight: 850; letter-spacing: -.02em; padding: 0 4px; }
+.rv-play[aria-pressed="true"] { --btn-bg: var(--surface-3); color: var(--ink); }
+
+.rv-progress { display: flex; gap: 4px; padding: calc(12px + env(safe-area-inset-top, 0px)) 18px 0; flex: none; }
+.rv-progress i { flex: 1 1 0; height: 3px; border-radius: 2px; background: var(--line-strong); overflow: hidden; }
+.rv-progress b { display: block; width: 0; height: 100%; background: var(--ink); border-radius: inherit; }
+.rv-progress .done b, .rv-progress .now b { width: 100%; }
+.rv-progress.playing .now b { animation: rv-fill var(--rv-ms, 6500ms) linear both; }
+@keyframes rv-fill { from { width: 0 } to { width: 100% } }
+
+.rv-modal .modal-body { padding: 0 12px; display: flex; flex-direction: column; overflow: hidden; }
+.rv-modal .modal-foot { padding: 10px 12px calc(10px + env(safe-area-inset-bottom, 0px)); border-top: 0; background: transparent; flex-wrap: nowrap; }
+.rv-navbtns { display: flex; gap: 6px; }
+.rv-copy .short, .rv-share .short { display: none; }
+.rv-share, .rv-copy { white-space: nowrap; }
+
+.rv-stage {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  container-type: size;
+  touch-action: pan-y;
+  cursor: pointer;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* ---- Karte --------------------------------------------------------------- */
+.rv-card {
+  position: absolute;
+  inset: 0;
+  border-radius: var(--r-lg);
+  background-color: var(--rv-bg2);
+  color: var(--rv-ink);
+  isolation: isolate;
+  display: flex;
+  flex-direction: column;
+  gap: min(14px, 1.8cqh);
+  padding: min(24px, 3cqh) 22px min(18px, 2.4cqh);
+  /* Sehr niedrige Fenster: der Inhalt rollt in der Karte statt abgeschnitten zu werden */
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: none;
+  font-family: var(--font-sans);
+  /* Waagrechtes Wischen gehört dem Blättern, senkrecht rollt die Karte */
+  touch-action: pan-y;
+  /* Feine Kante: Papier auf Weiss und Tief auf Anthrazit bleiben unterscheidbar */
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.rv-card::-webkit-scrollbar { display: none; }
+/* Zierring wie im „Heute“-Kopf — als Hintergrund rollt er nie mit */
+.rv-card {
+  background-image:
+    radial-gradient(circle at 108% 104%, transparent 26cqi, color-mix(in srgb, var(--rv-ring) 62%, transparent) calc(26cqi + 1px) 41cqi, transparent calc(41cqi + 1px)),
+    linear-gradient(160deg, var(--rv-bg1), var(--rv-bg2));
+}
+.rv-card.from-next { animation: rv-in-next .34s var(--ease-out) both; }
+.rv-card.from-prev { animation: rv-in-prev .34s var(--ease-out) both; }
+@keyframes rv-in-next { from { opacity: 0; transform: translateX(26px) } to { opacity: 1; transform: none } }
+@keyframes rv-in-prev { from { opacity: 0; transform: translateX(-26px) } to { opacity: 1; transform: none } }
+
+.rv-rings { display: grid; grid-template-columns: repeat(2, var(--d)); grid-template-rows: repeat(2, var(--d)); gap: calc(var(--d) * .3); }
+.rv-rings i { display: block; width: var(--d); height: var(--d); border-radius: 50%; border: calc(var(--d) * .24) solid var(--rv-ring); }
+.rv-rings i:nth-child(4) { background: var(--rv-ring-fill); border-color: var(--rv-ring-fill); }
+.rv-rings-deco { --d: 18px; position: absolute; top: min(22px, 2.8cqh); right: 20px; }
+.rv-rings-hero { --d: min(15cqi, 8cqh); margin-bottom: min(22px, 3cqh); }
+.rv-rings-mini { --d: 8px; gap: 2px; display: inline-grid; vertical-align: middle; }
+.rv-rings-mini i { border-width: 2px; }
+
+.rv-kicker {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--rv-soft);
+  padding-right: 64px;
+  flex: none;
+}
+.rv-main { margin-top: auto; min-width: 0; flex: none; }
+.rv-big {
+  font-size: min(28cqi, 15cqh);
+  font-weight: 900;
+  line-height: 1;
+  letter-spacing: -.045em;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  padding-bottom: .04em;
+  margin-left: -.04em;
+}
+.is-cover .rv-big { font-size: min(36cqi, 17cqh); }
+/* Endwert für Screenreader, solange die sichtbare Zahl hochzählt */
+.rv-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); opacity: 0; white-space: nowrap; pointer-events: none; }
+.rv-unit { font-size: min(6.4cqi, 3.6cqh); font-weight: 780; letter-spacing: -.015em; margin-top: 4px; line-height: 1.2; }
+.rv-lead { font-size: clamp(13px, min(4.3cqi, 2.4cqh), 17px); line-height: 1.42; color: var(--rv-soft); margin-top: min(10px, 1.4cqh); max-width: 36ch; }
+.rv-meta { font-size: 13px; font-weight: 650; color: var(--rv-soft); margin-top: 8px; }
+
+.rv-bars {
+  display: grid;
+  grid-template-columns: repeat(var(--n, 7), minmax(0, 1fr));
+  gap: min(8px, 2cqi);
+  height: min(150px, 20cqh);
+  flex: none;
+}
+.rv-bar { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.rv-bar-track { position: relative; flex: 1 1 auto; border-radius: 6px; background: color-mix(in srgb, var(--rv-ink) 9%, transparent); overflow: hidden; }
+.rv-bar-track i { position: absolute; left: 0; right: 0; bottom: 0; border-radius: 6px; background: color-mix(in srgb, var(--rv-ink) 40%, transparent); }
+.rv-bar.hi .rv-bar-track i { background: var(--rv-ink); }
+.rv-bar.muted .rv-bar-track { opacity: .5; }
+.rv-bar-label { font-size: 11px; font-weight: 650; text-align: center; color: var(--rv-soft); white-space: nowrap; }
+.rv-bar.hi .rv-bar-label { color: var(--rv-ink); font-weight: 850; }
+
+.rv-split { display: grid; gap: 10px; flex: none; }
+.rv-split-bar { display: flex; height: 14px; border-radius: 7px; overflow: hidden; background: color-mix(in srgb, var(--rv-ink) 9%, transparent); }
+.rv-split-bar i { display: block; height: 100%; }
+.rv-split .k0 { background: color-mix(in srgb, var(--rv-ink) 32%, transparent); }
+.rv-split .k1 { background: var(--rv-ink); }
+.rv-split .k2 { background: color-mix(in srgb, var(--rv-ink) 62%, transparent); }
+.rv-split .k3 { background: color-mix(in srgb, var(--rv-ink) 18%, transparent); }
+.rv-legend { list-style: none; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 14px; margin: 0; padding: 0; }
+.rv-legend li { display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 600; color: var(--rv-soft); min-width: 0; }
+.rv-legend li > i { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+.rv-legend li span { min-width: 0; overflow-wrap: anywhere; }
+.rv-legend li b { margin-left: auto; color: var(--rv-ink); font-variant-numeric: tabular-nums; }
+
+.rv-box {
+  display: grid;
+  gap: 3px;
+  padding: 12px 14px;
+  border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--rv-ink) 10%, transparent);
+  flex: none;
+}
+.rv-box-title { font-size: 11px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; color: var(--rv-soft); }
+.rv-box strong { font-size: clamp(15px, 4.6cqi, 19px); font-weight: 850; letter-spacing: -.01em; line-height: 1.25; }
+.rv-box-sub { font-size: 12px; color: var(--rv-soft); }
+
+.rv-rows { margin: 0; flex: none; }
+.rv-rows > div {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  padding: min(9px, 1.2cqh) 0;
+  border-top: 1px solid color-mix(in srgb, var(--rv-ink) 16%, transparent);
+}
+.rv-rows dt { font-size: 13px; font-weight: 600; color: var(--rv-soft); min-width: 0; }
+.rv-rows dd { margin: 0; text-align: right; flex: none; }
+.rv-rows dd b { display: block; font-size: 16px; font-weight: 850; font-variant-numeric: tabular-nums; }
+.rv-rows dd span { display: block; font-size: 11px; color: var(--rv-soft); margin-top: 1px; }
+
+.rv-fun { font-size: clamp(13px, min(4.2cqi, 2.3cqh), 16px); font-weight: 700; line-height: 1.4; color: var(--rv-accent); flex: none; }
+.rv-note, .rv-hint { font-size: 12px; color: var(--rv-soft); line-height: 1.4; flex: none; }
+.rv-foot {
+  margin-top: auto;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .12em;
+  color: var(--rv-soft);
+  flex: none;
+}
+.rv-mark { display: inline-flex; align-items: center; gap: 7px; }
+.rv-mark b { color: var(--rv-ink); font-weight: 900; margin-right: -4px; }
+
+/* Telefon: der Rückblick füllt den Bildschirm */
+@media (max-width: 560px) {
+  /* Ganz verdeckt: die App dahinter ist weder sichtbar noch erreichbar */
+  body:has(> .rv-scrim) > .app { visibility: hidden; }
+  .modal-scrim.rv-scrim { padding: 0; }
+  .modal.rv-modal { width: 100%; height: 100vh; height: 100dvh; border-radius: 0; border: 0; }
+  .rv-modal .modal-head { padding-left: 14px; }
+  .rv-progress { padding-left: 14px; padding-right: 14px; }
+  .rv-modal .modal-body { padding: 0 10px; }
+  .rv-modal .modal-foot { padding-left: 10px; padding-right: 10px; }
+}
+@media (max-width: 420px) {
+  .rv-copy { padding: 0; width: 40px; min-width: 40px; }
+  .rv-copy .long, .rv-share .long { display: none; }
+  .rv-share .short { display: inline; }
+}
+/* Handy quer: wenig Höhe — Kopf und Fuss schmal */
+@media (max-height: 500px) and (orientation: landscape) {
+  .modal.rv-modal { height: calc(100dvh - 16px); }
+  .rv-modal .modal-head { padding-top: 4px; padding-bottom: 4px; }
+  .rv-modal .modal-foot { padding-top: 6px; padding-bottom: 6px; }
+}
+
+/* ---- Einstieg in der Statistik --------------------------------------------- */
+.rv-entry {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--gap-4);
+}
+.rv-rings-entry { --d: 15px; --rv-ring: var(--brand-400); --rv-ring-fill: var(--brand-500); }
+.rv-entry h2 { font-size: var(--fs-lg); letter-spacing: -.02em; }
+.rv-entry p { font-size: var(--fs-sm); color: var(--ink-3); line-height: 1.5; margin-top: 2px; max-width: 70ch; }
+.rv-entry.is-hot {
+  background: linear-gradient(135deg, var(--brand-700), var(--brand-900));
+  color: var(--brand-25);
+  border-color: transparent;
+}
+.rv-entry.is-hot h2 { font-size: var(--fs-xl); }
+.rv-entry.is-hot p { color: var(--brand-200); }
+.rv-entry.is-hot .rv-rings-entry { --d: 22px; --rv-ring: var(--brand-400); --rv-ring-fill: var(--brand-300); }
+.rv-entry-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.rv-entry-chips span {
+  padding: 3px 10px;
+  border-radius: var(--r-pill);
+  background: rgba(251, 250, 249, .12);
+  font-size: var(--fs-xs);
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: var(--brand-25);
+}
+.btn.rv-entry-hot-btn { --btn-bg: var(--brand-25); --btn-ink: var(--brand-900); --btn-line: transparent; }
+.btn.rv-entry-hot-btn:hover { --btn-bg: #FFFFFF; }
+[data-theme="dark"] .rv-entry.is-hot { border-color: var(--line); background: linear-gradient(135deg, var(--brand-800), var(--brand-950)); }
+@media (max-width: 640px) {
+  .rv-entry { grid-template-columns: auto minmax(0, 1fr); }
+  .rv-entry > .btn { grid-column: 1 / -1; }
+}
+
+/* ---- Momente auf „Heute“ ----------------------------------------------------- */
+.rv-moment {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 5px 5px 12px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--line);
+  background: var(--surface);
+  box-shadow: var(--shadow-xs);
+  font-size: var(--fs-sm);
+  font-weight: 650;
+  color: var(--ink-2);
+  animation: zk-rise-sm .3s var(--ease-out) both;
+}
+.rv-moment-ic {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--ink-2);
+}
+.rv-moment-ic .ic { width: 15px; height: 15px; }
+.rv-moment-text { flex: 1 1 auto; min-width: 0; line-height: 1.4; }
+.rv-moment-x { flex: none; }
+@media print { .rv-moment { display: none !important; } }
