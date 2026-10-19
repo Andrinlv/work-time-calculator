@@ -4,6 +4,112 @@ Alle nennenswerten Änderungen an Zeitkonto. Das Format folgt lose
 [Keep a Changelog](https://keepachangelog.com/de/1.1.0/), die Versionierung
 [SemVer](https://semver.org/lang/de/).
 
+## [1.3.0] — 2026-10-19
+
+### Wichtig vorab — das Zeitkonto steigt
+
+- **Pausenrecht nach Arbeitszeit.** ArG Art. 15, ArbZG §4 und AZG §11 knüpfen die
+  Pflichtpause an die *Arbeitszeit*, nicht an die Anwesenheit. Bisher stieg ein Tag
+  07:30–17:00 mit 30 min Mittag (genau 9 h Arbeit) fälschlich in die Stundenstufe
+  und verlor 30 min. Jetzt gilt die kleinste Pause, nach der die verbleibende
+  Arbeitszeit die Stufe nicht mehr erreicht (5 h 40 anwesend → 10 min). Typische
+  Bürotage gewinnen dadurch bis zu 30 min — mit den Testdaten steigt das Konto von
+  +28:21 auf +51:17. Jeder geänderte Tag ist nachgerechnet.
+- **Kurstage mit Stempelzeiten** zählen das Soll nicht mehr doppelt (+6 h statt +8 h 30).
+- **Bezahlte Pausen** zählen zur Pflichtpause.
+
+### Neu — Stempeln ohne Nachdenken
+
+- **Stempelleiste nach Zustand.** Ein Hauptknopf, der immer das Richtige anbietet:
+  Kommen → Gehen (+ Pause) → Pause beenden → Weiter arbeiten. Keine grauen Knöpfe
+  mehr; jeder Stempel lässt sich rückgängig machen. *Gehen* schliesst eine offene Pause.
+- **Stempeln per Direktlink, NFC-Tag oder App-Symbol.** Langes Drücken auf das
+  Symbol bietet *Stempeln* und *Pause*; `…#/stamp` funktioniert auch auf einem
+  NFC-Tag. Kommt man nach *Gehen* zurück, wird die Lücke zur Pause.
+- **QR-Stempel-Plakat** für Spindtür oder Eingang (A4/A5, druckfertig, PNG).
+  Der QR-Encoder ist selbst geschrieben und gegen zwei Referenz-Bibliotheken geprüft.
+- **Nachtschichten über Mitternacht:** Gehen-Stempel, Countdown und Erinnerungen
+  folgen der Schicht vom Vortag statt einen neuen Tag zu beginnen.
+- **Lückenhilfe.** Erkennt vergessenes Kommen, Gehen, offene Pausen und Tage ohne
+  Erfassung und trägt mit einem Tipp deine üblichen Zeiten nach (Median je
+  Wochentag) — mit Vorschau, nie über Erfasstes, immer rückgängig zu machen.
+- **Pausen-Timer** mit 15/30/45/60 min, dezentem Ton und Vibration.
+- **Benachrichtigungen, die auf Android ankommen** — über den Serviceworker, mit
+  Aktionsknöpfen *Gehen stempeln*, *Pause beenden*, *+15 min*.
+- **Mini-Uhr** (Chrome/Edge am Desktop): ein schwebendes Fenster mit
+  Feierabend-Countdown und Stempelknopf, immer sichtbar über Outlook und Excel.
+
+### Neu — Planen und Verstehen
+
+- **Zeitschieber.** Den Feierabend auf dem Zeitstrahl verschieben und sofort sehen,
+  was das für Tagessaldo, Zeitkonto und Pflichtpause bedeutet — inklusive des
+  Moments, ab dem die Stundenpause greift.
+- **Schichtplan.** Rotationsmuster (z. B. Früh/Spät/Nacht) einmal eingeben; geplante
+  Schichten erscheinen in Kalender, Woche und Heute, lassen sich mit einem Tipp
+  übernehmen und zu kurze Ruhezeiten werden Wochen im Voraus gemeldet.
+- **Pensum und Arbeitsmodell ab Stichtag.** Ein Wechsel auf 80 % ab 1. November
+  rechnet die Vergangenheit nicht mehr um; die Einstellungen fragen, ab wann er gilt.
+- **Monatsabschluss.** Ein sauber geprüfter Monat wird abgeschlossen: der Saldo ist
+  eingefroren, Änderungen an abgeschlossenen Tagen werden auf allen Wegen
+  abgefangen, der Rapport trägt den Vermerk. Dazu die **Lohnmeldung** als CSV mit
+  frei wählbaren Lohnarten-Codes.
+- **Erkenntnisse** in der Statistik: Arbeitsrhythmus als 24-Stunden-Uhr mit belegten
+  Aussagen, Saldo-Prognose mit Wohlfühl-Korridor, **Überzeit nach ArG** (45/50 h,
+  Jahreskontingent), Nacht-, Sonntags- und Feiertagsstunden, Homeoffice-Anteil.
+- **Jahresrückblick** in neun Bildern, als Bild oder Text teilbar. Dazu **Momente**:
+  höchstens eine kurze Zeile am Tag, etwa ein Ferien-Countdown.
+- **Frag dein Zeitkonto.** „Wann kann ich gehen?", „wie vill Ferie hani no",
+  „quand puis-je partir" — Antworten in der Schnellsuche, in fünf Sprachvarianten,
+  mit genau den Zahlen der Ansichten.
+- **Schichtvorlagen bearbeiten** in den Einstellungen (Name, Zeiten, bezahlte Pause).
+
+### Datensicherheit
+
+- **Mehrere Fenster** (installierte App und Browser-Tab) überschreiben sich nicht
+  mehr: jedes Fenster merkt sich seine eigenen Änderungen und legt sie auf den
+  neuesten gespeicherten Stand. *Rückgängig* nimmt nur Eigenes zurück.
+- **Beschädigte Daten** werden nicht mehr still durch einen leeren Neustart ersetzt:
+  die App bietet die automatische Sicherung an. Ein leerer Stand überschreibt nie
+  eine gefüllte Sicherung; die Sicherung vom Vortag bleibt zusätzlich liegen.
+- **Voller Speicher** beim Start zeigt trotzdem alle Daten; beim Speichern wird zuerst
+  die ältere Sicherung geopfert.
+- **Dauerhafter Speicher** wird beim Browser beantragt; die neue Karte
+  *Datensicherheit* zeigt den Stand und stellt Sicherungen mit einem Klick wieder her.
+- **Updates über GitHub Pages:** Seite und Programmdateien kommen immer aus derselben
+  Version; eine neue Version wird still übernommen, sobald man die App verlässt.
+  Der Serviceworker löscht nur noch eigene Caches.
+- **Import** prüft und migriert eine Datei, bevor er etwas ändert; ein eigener
+  CSV-Export lässt sich vollständig wieder einlesen.
+
+### Behoben — rund 200 Befunde aus einem vollständigen Audit
+
+- **Handy:** Seitenmenü lag unter seinem eigenen Abdunkler; Tableiste machte Seiten
+  breiter als den Bildschirm; Kopfzeile, Querformat, Pausenzeilen auf Tablets.
+- **Bedienung:** Die Leertaste stempelte auf jedem fokussierten Knopf; Neuzeichnen
+  stahl Fokus und Scrollposition; Tooltips waren unsichtbar oder verbreiterten die Seite.
+- **Darstellung:** Kalenderfarben und Level-Ring wurden nie angezeigt (CSS-Variablen);
+  Ferien- und Feiertage zeigten „Kommen-Zeit eingeben"; ein laufender Tag erschien
+  als rotes Minus; die Kopfzeile hiess „Tagessaldo", zeigte aber das Konto.
+- **Kontrast nach WCAG 2.2 AA** in hell, dunkel und Kontrastmodus (vorher 364
+  Befunde, jetzt 0). Druck ist immer hell.
+- **Tempo:** Rapport „Alle" fror auf dem Handy bis zu 9 s ein, jetzt ≈ 0,2 s;
+  Heute zeichnet nicht mehr jede Sekunde neu; Rückgängig kopiert nicht mehr pro
+  Tastendruck den ganzen Datenbestand.
+- **Rechnen:** laufende Pausen zählten als Arbeit; Feiertage galten als fehlende
+  Arbeitstage; Ferien an Feiertagen verbrauchten Kontingent; Nachtschichten über
+  die Zeitumstellung; Näfelser Fahrt und Waadtländer Feiertage.
+- **Daten:** Schnellerfassung, Brückentage und *Zeitraum ausfüllen* überschreiben
+  Erfasstes nur noch nach Rückfrage; Outlook-Termine mit „Ferien" im Titel werden
+  nicht mehr zu ganzen Ferientagen; eigene Stempel werden nie vom Abgleich gelöscht.
+- **Sprachen:** Browsersprache wird beim ersten Start erkannt; letzte fest
+  verdrahtete deutsche Texte übersetzt; Feiertagsnamen und „KW" lokalisiert.
+
+### Technik
+
+- **Erweiterungspunkte** (`ZK.Ext`): neue Funktionen hängen sich in Ansichten ein,
+  ohne sie umzubauen; ein Fehler bleibt in seiner Erweiterung.
+- Serviceworker-Version auf v1.3.0. Tests: von 178 auf über 700.
+
 ## [1.2.0] — 2026-08-14
 
 ### Neu — Werkzeuge
