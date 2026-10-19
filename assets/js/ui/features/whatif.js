@@ -214,9 +214,15 @@
         var still = true;
         try { still = App.day(iso).running; } catch (e) { /* lieber erinnern */ }
         if (!still) { if (onReminder) onReminder(); return; }
-        try {
-          new Notification(I.t("app.name"), { body: I.t("wf.remindBody", { time: time }), tag: "zeitkonto-whatif" });
-        } catch (e) { /* Benachrichtigung ist optional */ }
+        // App.notify wählt den Weg, der auch auf Android ankommt (Serviceworker)
+        if (App.notify) {
+          App.notify({
+            tag: "zeitkonto-whatif", title: I.t("app.name"),
+            body: I.t("wf.remindBody", { time: time }),
+            actions: [{ action: "stamp-out", title: I.t("day.clockOut") }],
+            data: { kind: "leave", date: iso }
+          });
+        }
         D.toast(I.t("wf.remindBody", { time: time }), { icon: "bell", duration: 12000 });
         if (onReminder) onReminder();
       }, ms)
