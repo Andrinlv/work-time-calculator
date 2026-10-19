@@ -3808,4 +3808,3 @@ button.rota-day:hover { border-color: var(--ink-3); background: var(--surface-3)
 .onb-more { display: grid; gap: var(--gap-4); margin-top: var(--gap-4); padding-top: var(--gap-4); border-top: 1px solid var(--line-faint); }
 .onb-sub .section-title { margin-bottom: 8px; }
 .onb-sub-note { font-size: var(--fs-xs); line-height: 1.45; color: var(--ink-3); margin-top: 8px; }
-.onb-more .setting-row.onb-max { padding: 0; border-bottom: 0; }

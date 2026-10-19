@@ -1177,7 +1177,7 @@
 
   ZK.Ext.register("today.cards", {
     id: "rota",
-    order: 20,
+    order: 8,       // gleich unter dem Feierabend; nach dem Pausen-Timer, vor der Lückenhilfe
     when: function (ctx) { return isOn(ctx.App); },
     render: function (host, ctx) {
       var App = ctx.App, iso = ctx.iso;
@@ -1218,6 +1218,15 @@
 
       function setText(node, text) { if (node.textContent !== text) node.textContent = text; }
 
+      /* Der Stapel in „Heute“ gehört allen Erweiterungen: zeigt diese Karte
+         etwas, ist er sichtbar; sonst nur ausblenden, wenn auch keine andere
+         Karte etwas zeigt (gleiche Abmachung wie Lückenhilfe und Zeitschieber). */
+      function syncHost() {
+        if (!card.hidden) { host.hidden = false; return; }
+        for (var i = 0; i < host.children.length; i++) if (!host.children[i].hidden) return;
+        host.hidden = true;
+      }
+
       function update(c) {
         c = c || {};
         var rec = c.rec || App.record(iso);
@@ -1225,6 +1234,7 @@
         entry = win.byIso[iso];
         var m = RU.todayModel({ entry: entry, rec: rec, phase: c.phase, leave: c.leave });
         card.hidden = !m;
+        syncHost();
         if (!m) return;
         var tpl = entry.tpl;
         var past = iso < T.todayISO();
@@ -1303,8 +1313,11 @@
     return out;
   }
 
+  /* Vor den Antworten von „Frag dein Zeitkonto“: wer „plan …“ tippt, will
+     planen — Treffer gibt es ohnehin nur mit einem einleitenden Planwort. */
   ZK.Ext.register("palette.commands", {
     id: "rota",
+    order: -20,
     collect: function (query, ctx) {
       var App = ctx.App;
       var tpls = templatesOf(App).filter(function (t) { return Rota.shiftTimes(t); });
@@ -1333,9 +1346,13 @@
       var rec = App.store.getDay(iso);
       var e = Rota.dayPlan(iso, { rota: rota, templates: tpls, record: rec, holiday: App.holiday(iso) });
       var currentId = Rota.hasShift(e) ? e.id : (e.free || e.off ? Rota.FREE : null);
+      /* Ganz ausgeschrieben („plan 23.10. nacht“) ist es keine Auswahl mehr,
+         sondern DIE Antwort auf die Eingabe: zweizeilig und zuoberst, Enter führt sie aus */
+      var exact = !!cmd.target && !late;
       function item(target, name, sub) {
         var cur = target === "reset" ? false : target === currentId;
         return {
+          answer: exact,
           group: group, icon: target === Rota.FREE ? "coffee" : target === "reset" ? "refresh" : "zap", late: late,
           label: I.t("rota.cmd.set", { date: date, name: name }),
           sub: sub + (cur ? (sub ? " · " : "") + I.t("rota.cmd.current") : ""),

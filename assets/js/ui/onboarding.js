@@ -16,8 +16,8 @@
 
   /* ArG Art. 9: 45 h für Industrie, Büro- und technisches Personal (Bell-
      Produktion wie Verwaltung), 50 h für alle übrigen Betriebe. Gesetzt wird
-     der Wert nur, wenn man ihn ausdrücklich einschaltet. */
-  var LEGAL_MAX_WEEKLY = 45 * 60;
+     der Wert nur, wenn man den anderen ausdrücklich wählt. */
+  var MAX_WEEKLY = [{ hours: 45, key: "onb.max45" }, { hours: 50, key: "onb.max50" }];
   var PART_TIME = [50, 60, 70, 80, 90];
   var SHIFT_PRESETS = ["early-late", "three-shift"];
 
@@ -35,8 +35,10 @@
       "onb.rota": "Rhythmus",
       "onb.rotaNone": "Ohne Rhythmus",
       "onb.thisWeek": "Diese Woche arbeitest du",
-      "onb.maxWeekly": "Höchstarbeitszeit 45 h pro Woche",
-      "onb.maxWeeklyHint": "ArG für Industrie- und Büropersonal. Bisher eingestellt: {v}.",
+      "onb.maxWeekly": "Höchstarbeitszeit pro Woche",
+      "onb.max45": "45 h · Industrie und Büro",
+      "onb.max50": "50 h · übrige Betriebe",
+      "onb.maxWeeklyHint": "Gesetzliche Grenze (ArG Art. 9) — massgebend für Warnungen und Überzeit.",
       "onb.partHint": "Genau einstellen kannst du ihn im nächsten Schritt."
     },
     en: {
@@ -52,8 +54,10 @@
       "onb.rota": "Rotation",
       "onb.rotaNone": "No rotation",
       "onb.thisWeek": "This week you work",
-      "onb.maxWeekly": "Maximum 45 h per week",
-      "onb.maxWeeklyHint": "Swiss law for industrial and office staff. Currently set: {v}.",
+      "onb.maxWeekly": "Maximum weekly hours",
+      "onb.max45": "45 h · industry and office",
+      "onb.max50": "50 h · other businesses",
+      "onb.maxWeeklyHint": "Legal limit (Swiss Labour Act, art. 9) — used for warnings and overtime.",
       "onb.partHint": "You can set it exactly in the next step."
     },
     fr: {
@@ -69,8 +73,10 @@
       "onb.rota": "Rotation",
       "onb.rotaNone": "Sans rotation",
       "onb.thisWeek": "Cette semaine, vous travaillez",
-      "onb.maxWeekly": "Maximum 45 h par semaine",
-      "onb.maxWeeklyHint": "LTr pour le personnel industriel et de bureau. Réglage actuel : {v}.",
+      "onb.maxWeekly": "Durée maximale de la semaine",
+      "onb.max45": "45 h · industrie et bureau",
+      "onb.max50": "50 h · autres entreprises",
+      "onb.maxWeeklyHint": "Limite légale (LTr art. 9) — sert aux avertissements et aux heures supplémentaires.",
       "onb.partHint": "Vous pourrez l'ajuster à l'étape suivante."
     },
     it: {
@@ -86,8 +92,10 @@
       "onb.rota": "Rotazione",
       "onb.rotaNone": "Senza rotazione",
       "onb.thisWeek": "Questa settimana lavori",
-      "onb.maxWeekly": "Massimo 45 h a settimana",
-      "onb.maxWeeklyHint": "LL per il personale industriale e d'ufficio. Impostazione attuale: {v}.",
+      "onb.maxWeekly": "Durata massima settimanale",
+      "onb.max45": "45 h · industria e ufficio",
+      "onb.max50": "50 h · altre aziende",
+      "onb.maxWeeklyHint": "Limite legale (LL art. 9) — vale per avvisi e lavoro straordinario.",
       "onb.partHint": "Potrai regolarlo con precisione al passo successivo."
     }
   });
@@ -335,8 +343,7 @@
       var more = D.el("div.onb-more");
       if (draft.work === "shift" && Rota) drawShiftOptions(more);
       if (draft.work === "part") drawPartOptions(more);
-      var currentMax = App.settings().maxWeeklyMinutes || 50 * 60;
-      if ((draft.work === "office" || draft.work === "shift") && currentMax > LEGAL_MAX_WEEKLY) drawMaxWeekly(more, currentMax);
+      if (draft.work === "office" || draft.work === "shift") drawMaxWeekly(more, App.settings().maxWeeklyMinutes || 45 * 60);
       if (more.children.length) content.appendChild(more);
     }
 
@@ -389,29 +396,22 @@
       more.appendChild(group);
     }
 
-    /* Höchstarbeitszeit: nur auf ausdrücklichen Wunsch */
+    /* Höchstarbeitszeit: der eingestellte Wert ist vorgewählt; geändert wird
+       nur, wenn man ausdrücklich den anderen antippt */
     function drawMaxWeekly(more, currentMax) {
-      var row = D.el("div.setting-row.is-switch.onb-max");
-      var info = D.el("div.info");
-      info.appendChild(D.el("b", { id: "onb-max-l", text: I.t("onb.maxWeekly") }));
-      info.appendChild(D.el("span", { id: "onb-max-h", text: I.t("onb.maxWeeklyHint", { v: T.formatDuration(currentMax, "hm") }) }));
-      row.appendChild(info);
-      var ctl = D.el("div.ctl");
-      var label = D.el("label.switch");
-      var input = D.el("input", {
-        type: "checkbox", "data-key": "onb-max", checked: draft.maxWeekly === LEGAL_MAX_WEEKLY,
-        "aria-labelledby": "onb-max-l", "aria-describedby": "onb-max-h"
+      var group = D.el("div.onb-sub");
+      var gid = "onb-max-l";
+      group.appendChild(D.el("div.section-title", { id: gid, text: I.t("onb.maxWeekly") }));
+      var chips = D.el("div.chipset", { role: "group", "aria-labelledby": gid });
+      var shown = draft.maxWeekly || currentMax;
+      MAX_WEEKLY.forEach(function (o) {
+        chips.appendChild(chip("onb-max-" + o.hours, I.t(o.key), shown === o.hours * 60, function () {
+          draft.maxWeekly = o.hours * 60 === currentMax ? null : o.hours * 60;
+        }));
       });
-      input.addEventListener("change", function () { draft.maxWeekly = input.checked ? LEGAL_MAX_WEEKLY : null; });
-      label.appendChild(input);
-      label.appendChild(D.el("span.track"));
-      ctl.appendChild(label);
-      row.appendChild(ctl);
-      row.addEventListener("click", function (e) {
-        if (e.target.closest("label, button, a, input")) return;
-        input.click();
-      });
-      more.appendChild(row);
+      group.appendChild(chips);
+      group.appendChild(D.el("p.onb-sub-note", { text: I.t("onb.maxWeeklyHint") }));
+      more.appendChild(group);
     }
 
     function drawModel() {
