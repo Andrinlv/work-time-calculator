@@ -31,6 +31,8 @@
   ];
 
   var store = ZK.Store.createStore({ defaultSettings: R.defaultSettings });
+  // Monatsabschluss: Tage eines abgeschlossenen Monats nimmt der Store nicht mehr an
+  if (ZK.Closing && store.setGuard) store.setGuard(ZK.Closing.guard, { prefix: ZK.Closing.PREFIX });
 
   var App = {
     version: APP_VERSION,
@@ -103,6 +105,7 @@
    * @param {String} [upto]  einschliesslich, Standard heute
    * @param {Object} [opts]  wird an E.accountBalance weitergereicht
    *                         (z. B. { includeRunning: true })
+   * Abgeschlossene Monate zählen mit ihrem eingefrorenen Saldo (ZK.Closing).
    */
   App.accountBalance = function (upto, opts) {
     var now = new Date();
@@ -110,7 +113,7 @@
     if (balanceCache.stamp !== stamp) balanceCache = { stamp: stamp, values: {} };
     var key = (upto || "") + "|" + (opts && opts.includeRunning ? "run" : "");
     if (!balanceCache.values[key]) {
-      balanceCache.values[key] = E.accountBalance(store.allDays(), App.settings(), upto, undefined, opts);
+      balanceCache.values[key] = (ZK.Closing ? ZK.Closing.accountBalance : E.accountBalance)(store.allDays(), App.settings(), upto, undefined, opts);
     }
     return Object.assign({}, balanceCache.values[key]);
   };
@@ -1307,7 +1310,7 @@
 
   App.undo = function () {
     if (!store.canUndo()) return;
-    store.undo();
+    if (store.undo() === false) return;   // gesperrt (abgeschlossener Monat) — der Store meldet es
     App.applyTheme();
     App.applyDensity();
     App.applyLanguage();
@@ -1317,7 +1320,7 @@
 
   App.redo = function () {
     if (!store.canRedo()) return;
-    store.redo();
+    if (store.redo() === false) return;
     // Wie beim Rückgängigmachen: Einstellungen wirken erst, wenn sie angewendet sind
     App.applyTheme();
     App.applyDensity();
@@ -2078,6 +2081,7 @@
         storageFullDismiss = null;
       }
       if (evt.type === "external") onExternalChange(evt);
+      if (evt.type === "locked" && ZK.ClosingUI) ZK.ClosingUI.onLocked(App, evt);
     });
     if (store.isNewerSchema()) warnNewerVersion();
     if (store.isFull && store.isFull()) setTimeout(showStorageFull, 400);

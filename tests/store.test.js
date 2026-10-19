@@ -787,3 +787,194 @@ test("Speichergrösse kommt aus dem Gedächtnis, nicht aus einem erneuten Lesen"
   assert.equal(reads, before);
   assert.equal(d.bytes, mem.getItem(S.KEY).length);
 });
+
+/* ---------------------------------------------------------------------- */
+/* Sperre (Monatsabschluss)                                                */
+/* ---------------------------------------------------------------------- */
+
+/* Gesperrt ist, wofür die Einstellungen „lock:JJJJ-MM“ tragen — wie die
+   Abschlüsse der App, aber ohne deren Rechnerei. */
+function lockGuard(iso, settings) { return !!settings["lock:" + iso.slice(0, 7)]; }
+
+function lockedStore(opts) {
+  const store = fresh(opts);
+  store.setGuard(lockGuard, { prefix: "lock:" });
+  return store;
+}
+
+test("Sperre: gesperrte Tage werden nicht geschrieben, sondern gemeldet", () => {
+  const store = lockedStore();
+  store.setDays({ "2026-09-15": { start: "08:00", end: "17:00" }, "2026-10-01": { start: "08:00", end: "17:00" } });
+  store.updateSettings({ "lock:2026-09": true });
+  const events = [];
+  store.subscribe((e) => events.push(e));
+  const rev = store.rev();
+
+  const res = store.setDay("2026-09-15", { end: "18:00" });
+  assert.equal(res.end, "17:00", "zurück kommt der unveränderte Tag");
+  assert.equal(store.getDay("2026-09-15").end, "17:00");
+  assert.equal(store.deleteDay("2026-09-15"), false);
+  assert.ok(store.getDay("2026-09-15"));
+  store.setDay("2026-09-20", { type: "vacation" });
+  assert.equal(store.getDay("2026-09-20"), null, "auch neue Tage im gesperrten Monat nicht");
+
+  const bulk = store.setDays({ "2026-09-16": { type: "vacation" }, "2026-10-02": { type: "vacation" } });
+  assert.deepEqual(bulk, { written: 1, locked: ["2026-09-16"] });
+  assert.equal(store.getDay("2026-10-02").type, "vacation", "offene Tage gehen durch");
+  assert.equal(store.getDay("2026-09-16"), null);
+
+  const locked = events.filter((e) => e.type === "locked").map((e) => e.dates);
+  assert.deepEqual(locked, [["2026-09-15"], ["2026-09-15"], ["2026-09-20"], ["2026-09-16"]]);
+  assert.equal(store.isLocked("2026-09-01"), true);
+  assert.equal(store.isLocked("2026-10-01"), false);
+  assert.equal(store.rev(), rev + 1, "nur der offene Tag zählt als Datenänderung");
+});
+
+test("Sperre: Speichern ohne Änderung bleibt still", () => {
+  const store = lockedStore();
+  store.setDay("2026-09-15", { start: "08:00", end: "17:00", note: "" });
+  store.updateSettings({ "lock:2026-09": true });
+  const events = [];
+  store.subscribe((e) => events.push(e));
+  store.setDay("2026-09-15", { start: "08:00" });                  // Feld verlassen ohne Eingabe
+  store.setDay("2026-09-20", { note: "", breaks: [], type: null }); // leeres Formular eines leeren Tags
+  store.setDays({ "2026-09-21": null, "2026-09-15": { end: "17:00" } });
+  assert.deepEqual(events, []);
+});
+
+test("Sperre: Import „zusammenführen“ lässt gesperrte Tage aus, „ersetzen“ nicht", () => {
+  const store = lockedStore();
+  store.setDay("2026-09-15", { start: "08:00", end: "17:00" });
+  store.updateSettings({ "lock:2026-09": true });
+  const events = [];
+  store.subscribe((e) => events.push(e));
+  const file = { days: { "2026-09-15": { start: "07:00", end: "16:00" }, "2026-09-16": { type: "sick" }, "2026-10-05": { type: "sick" } } };
+
+  const merged = store.importState(JSON.parse(JSON.stringify(file)), "merge");
+  assert.equal(merged.added, 1);
+  assert.equal(merged.skipped, 2);
+  assert.equal(merged.locked, 2);
+  assert.equal(store.getDay("2026-09-15").start, "08:00");
+  assert.equal(store.getDay("2026-09-16"), null);
+  assert.deepEqual(events.find((e) => e.type === "locked").dates, ["2026-09-15", "2026-09-16"]);
+
+  const kept = store.importState(JSON.parse(JSON.stringify(file)), "merge-keep");
+  assert.equal(kept.locked, 1, "merge-keep: vorhandene Tage sind ohnehin geschützt");
+
+  store.importState(JSON.parse(JSON.stringify(file)), "replace");
+  assert.equal(store.getDay("2026-09-15").start, "07:00", "ersetzen ist ein ganzer Stand");
+  store.undo();
+  assert.equal(store.getDay("2026-09-15").start, "08:00", "und lässt sich auch als Ganzes zurücknehmen");
+});
+
+test("Sperre: ein Schritt nur aus gesperrten Tagen bleibt liegen, bis der Monat offen ist", () => {
+  const clock = fakeClock();
+  const store = lockedStore({ clock });
+  store.setDay("2026-09-15", { start: "08:00" });
+  clock.tick(5000);
+  store.setDay("2026-09-15", { start: "09:00" });
+  clock.tick(5000);
+  // Wie ein Abschluss aus einem anderen Fenster: kein eigener Rückgängig-Schritt
+  store.updateSettings({ "lock:2026-09": true }, { undo: false });
+  const events = [];
+  store.subscribe((e) => events.push(e));
+
+  assert.equal(store.undo(), false);
+  assert.equal(store.getDay("2026-09-15").start, "09:00");
+  assert.equal(store.canUndo(), true, "der Schritt ist nicht verloren");
+  assert.deepEqual(events.map((e) => e.type), ["locked"]);
+
+  store.updateSettings({ "lock:2026-09": false }, { undo: false });
+  assert.equal(store.undo(), "day");
+  assert.equal(store.getDay("2026-09-15").start, "08:00");
+});
+
+test("Sperre: ein gemischter Schritt nimmt nur die offenen Tage zurück", () => {
+  const clock = fakeClock();
+  const store = lockedStore({ clock });
+  store.setDays({ "2026-09-30": { type: "vacation" }, "2026-10-01": { type: "vacation" } });
+  clock.tick(5000);
+  store.updateSettings({ "lock:2026-09": true }, { undo: false });
+  const events = [];
+  store.subscribe((e) => events.push(e));
+  store.undo();
+  assert.equal(store.getDay("2026-10-01"), null);
+  assert.equal(store.getDay("2026-09-30").type, "vacation");
+  assert.deepEqual(events.filter((e) => e.type === "locked").map((e) => e.dates), [["2026-09-30"]]);
+  store.redo();
+  assert.equal(store.getDay("2026-10-01").type, "vacation");
+});
+
+test("Abschliessen und sofort wieder öffnen sind zwei eigene Rückgängig-Schritte", () => {
+  const store = lockedStore({ clock: () => 1000000 });          // stehende Uhr: alles „gleichzeitig“
+  store.updateSettings({ "lock:2026-09": true }, { coalesce: false });
+  store.updateSettings({ "lock:2026-09": undefined }, { coalesce: false });
+  store.undo();
+  assert.equal(store.isLocked("2026-09-15"), true, "Rückgängig nimmt nur das Wiederöffnen zurück");
+  store.undo();
+  assert.equal(store.isLocked("2026-09-15"), false);
+});
+
+test("Sperre: Rückgängig des Abschlusses selbst ist erlaubt", () => {
+  const clock = fakeClock();
+  const store = lockedStore({ clock });
+  store.setDay("2026-09-15", { start: "08:00" });
+  clock.tick(5000);
+  store.updateSettings({ "lock:2026-09": true });
+  assert.equal(store.isLocked("2026-09-15"), true);
+  store.undo();
+  assert.equal(store.isLocked("2026-09-15"), false);
+  store.setDay("2026-09-15", { start: "07:00" });
+  assert.equal(store.getDay("2026-09-15").start, "07:00");
+});
+
+test("Alles löschen entfernt die zugehörigen Einstellungen — und Rückgängig bringt sie zurück", () => {
+  const store = lockedStore();
+  store.setDay("2026-09-15", { start: "08:00", end: "17:00" });
+  store.updateSettings({ "lock:2026-09": true, holidayRegion: "CH-BE" });
+  store.reset(true);
+  assert.equal(store.getSettings()["lock:2026-09"], undefined, "ohne Tage gibt es nichts abzuschliessen");
+  assert.equal(store.getSettings().holidayRegion, "CH-BE", "die übrigen Einstellungen bleiben");
+  assert.equal(store.dayCount(), 0);
+  store.undo();
+  assert.equal(store.getSettings()["lock:2026-09"], true);
+  assert.equal(store.getDay("2026-09-15").start, "08:00", "auch der gesperrte Tag ist zurück");
+});
+
+test("Sperre aus dem anderen Fenster verwirft die offene Änderung und meldet sie", () => {
+  const backend = S.memoryBackend();
+  const make = () => {
+    const st = S.createStore({ backend, defaultSettings: R.defaultSettings });
+    st.setGuard(lockGuard, { prefix: "lock:" });
+    st.load();
+    return st;
+  };
+  const a = make();
+  a.setDays({ "2026-09-15": { start: "08:00", end: "17:00" }, "2026-10-01": { start: "08:00", end: "17:00" } });
+  a.flush();
+  const b = make();
+  const events = [];
+  a.subscribe((e) => events.push(e));
+
+  a.setDay("2026-09-15", { end: "19:00" });
+  a.setDay("2026-10-01", { end: "19:00" });
+  b.updateSettings({ "lock:2026-09": true });
+  b.flush();
+  a.flush();
+
+  const saved = JSON.parse(backend.getItem(S.KEY));
+  assert.equal(saved.days["2026-09-15"].end, "17:00", "der gesperrte Tag bleibt, wie er beim Sperren war");
+  assert.equal(saved.days["2026-10-01"].end, "19:00", "der offene Tag kommt durch");
+  assert.equal(saved.settings["lock:2026-09"], true);
+  const ext = events.find((e) => e.type === "external");
+  assert.ok(ext && ext.days.includes("2026-09-15"), "die Oberfläche zeichnet den Tag neu");
+  assert.deepEqual(events.find((e) => e.type === "locked").dates, ["2026-09-15"]);
+
+  // Hat dieses Fenster selbst gesperrt, gilt sein eigener Stand
+  const c = make();
+  c.setDay("2026-10-05", { start: "08:00" });
+  c.updateSettings({ "lock:2026-10": true });
+  b.setDay("2026-11-02", { start: "08:00" }); b.flush();
+  c.flush();
+  assert.equal(JSON.parse(backend.getItem(S.KEY)).days["2026-10-05"].start, "08:00");
+});

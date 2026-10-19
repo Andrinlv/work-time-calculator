@@ -3342,6 +3342,7 @@ body.mini-pip::before { display: none; }
   /* bedruckbare Fläche bei 10 mm Rand, 1 mm Luft gegen eine Leerseite */
   .qr-print-host .qr-sheet.is-a4 { width: 190mm; height: 276mm; }
   .qr-print-host .qr-sheet.is-a5 { width: 128mm; height: 189mm; }
+}
 
 /* ===== FEATURE: breaktimer ===== */
 /* Pausen-Timer: kompakte Karte in „Heute“ (Ring, Countdown, Dauer-Chips),
@@ -3418,4 +3419,125 @@ body.mini-pip::before { display: none; }
 
 @media (prefers-reduced-motion: reduce) {
   .bt-ring .bt-arc { transition: none; }
+}
+
+/* ===== FEATURE: closing ===== */
+/* Monatsabschluss und Lohnmeldung: Knöpfe und Abzeichen in „Berichte“,
+   Abschluss-Dialog, Schloss im Kalender, Lohnarten in den Einstellungen. */
+/* Berichte: Kopf */
+.closing-badge { color: var(--plus-ink); background: var(--plus-soft); border-color: var(--plus-line); min-height: 32px; padding: 0 11px; font-size: var(--fs-xs); white-space: nowrap; }
+.closing-badge .ic { width: 13px; height: 13px; flex: none; }
+.closing-btn { position: relative; }
+.closing-btn .closing-dot {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--warn-solid);
+  box-shadow: 0 0 0 2px var(--bg);
+}
+
+/* Abschluss-Dialog */
+.closing-dialog { display: flex; flex-direction: column; gap: var(--gap-4); }
+.closing-text { font-size: var(--fs-sm); line-height: 1.6; color: var(--ink-2); }
+.closing-sums { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--gap-2); }
+.closing-sum {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 9px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  min-width: 0;
+}
+.closing-sum .k { font-size: var(--fs-2xs); font-weight: 750; letter-spacing: .05em; text-transform: uppercase; color: var(--ink-3); overflow-wrap: anywhere; }
+.closing-sum .v { font-size: var(--fs-lg); font-weight: 850; letter-spacing: -.02em; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.closing-issues ul { margin: 6px 0 0; padding: 0; list-style: none; font-size: var(--fs-xs); line-height: 1.6; }
+.closing-issues li b { font-weight: 750; }
+.closing-ack { align-self: flex-start; }
+
+/* Hinweise (Berichte, Kalender, Heute) */
+.closing-notice, .closing-today { align-items: center; }
+.closing-notice .closing-notice-text, .closing-today .closing-notice-text { flex: 1 1 auto; min-width: 0; }
+.closing-notice .closing-reopen, .closing-today .closing-reopen { flex: none; margin-left: auto; }
+.report-closed {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 4px 10px;
+  border: 1px solid var(--plus-line);
+  border-radius: var(--r-pill);
+  color: var(--plus-ink);
+  font-weight: 750;
+  line-height: 1.35;
+  text-align: left;
+}
+.report-closed .ic { width: 13px; height: 13px; flex: none; }
+
+/* Kalender: Schloss in der Zelle und am Monatssaldo */
+.cal-cell .closed-lock { display: inline-flex; flex: none; color: var(--ink-3); }
+.cal-cell .closed-lock .ic { width: 11px; height: 11px; }
+.cal-kpis .closing-lock { display: inline-flex; color: var(--ink-3); }
+.cal-kpis .closing-lock .ic { width: 12px; height: 12px; }
+
+/* Statistik: abgeschlossene Monate */
+.closing-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--gap-3) var(--gap-5);
+  padding: 12px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+}
+.closing-strip-head { display: flex; align-items: flex-start; gap: 10px; flex: 1 1 16em; min-width: 0; }
+.closing-strip-head .ic { width: 17px; height: 17px; flex: none; margin-top: 2px; color: var(--ink-3); }
+.closing-strip-head b { display: block; font-size: var(--fs-sm); font-weight: 800; }
+.closing-strip-head span { display: block; font-size: var(--fs-2xs); color: var(--ink-3); line-height: 1.45; }
+.closing-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.closing-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 7px;
+  padding: 5px 11px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  white-space: nowrap;
+}
+.closing-chip b { font-weight: 850; font-variant-numeric: tabular-nums; }
+
+/* Einstellungen: Lohnarten */
+.closing-codes-hint { font-size: var(--fs-xs); color: var(--ink-3); line-height: 1.5; margin-bottom: 4px; }
+.wage-codes { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 15em), 1fr)); gap: 0 var(--gap-5); padding-top: 4px; }
+.wage-code {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--gap-3);
+  padding: 7px 0;
+  border-bottom: 1px solid var(--line-faint);
+  min-width: 0;
+}
+.wage-code .wc-name { font-size: var(--fs-sm); font-weight: 650; min-width: 0; overflow-wrap: break-word; hyphens: auto; }
+.wage-code .wc-input { flex: none; width: 7.5em; min-height: 36px; padding: 6px 10px; }
+.wage-codes > .wage-code:last-child { border-bottom: 0; }
+
+@media (max-width: 720px) {
+  .closing-notice, .closing-today { flex-wrap: wrap; }
+  .closing-notice .closing-notice-text, .closing-today .closing-notice-text { flex-basis: calc(100% - 30px); }
+  .closing-notice .closing-reopen, .closing-today .closing-reopen { margin-left: 28px; }
+  .closing-notice.cal-notice .sub, .closing-notice .sub { display: block; }
+}
+
+@media print {
+  .report-closed { padding: 2px 8px; font-size: 8.5pt; }
+  .closing-drift { padding: 5px 8px; font-size: 9px; }
 }

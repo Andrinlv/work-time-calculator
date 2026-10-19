@@ -15,6 +15,12 @@
    Vorwärtskompatibel: Felder und Bereiche, die erst eine neuere Version
    kennt, werden unverändert mitgeführt, und die Schema-Nummer wird nie
    zurückgestuft. Ein veralteter Tab löscht so nichts, was er nicht kennt.
+
+   Sperre (Monatsabschluss): Die App kann eine Prüffunktion setzen
+   (setGuard). Änderungen an gesperrten Tagen werden übersprungen und als
+   Ereignis { type: "locked", dates } gemeldet — die Oberfläche sagt dann,
+   warum nichts gespeichert wurde. Ganze Stände (Import „ersetzen“,
+   Zurücksetzen und deren Rückgängig) gehen bewusst an der Sperre vorbei.
    ========================================================================== */
 (function (root, factory) {
   if (typeof module === "object" && module.exports) module.exports = factory();
@@ -194,6 +200,8 @@
     var pending = freshPending();
     var newerSchema = false;
     var revision = 0;
+    var guard = null;            // (iso, settings) → true = Tag gesperrt
+    var guardPrefix = null;      // Einstellungen, die zu den Tagen gehören (z. B. "closing:")
 
     /** Was dieses Fenster seit dem letzten Speichern selbst verändert hat. */
     function freshPending() {
@@ -306,11 +314,11 @@
         lastError = null;
         lastErrorEmit = 0;
         full = false;
-        if (external) emit(external);
+        if (external) emitExternal(external);
         return true;
       } catch (e) {
         lastError = e;
-        if (external) emit(external);   // fremder Stand ist übernommen, auch wenn Schreiben scheiterte
+        if (external) emitExternal(external);   // fremder Stand ist übernommen, auch wenn Schreiben scheiterte
         var quota = isQuotaError(e);
         if (quota) full = true;
         // Nicht bei jedem Tastendruck erneut warnen
@@ -351,18 +359,7 @@
       var ext;
       try { ext = parseRaw(raw); } catch (e) { return null; }   // Kaputtes überschreiben wir lieber nicht ungefragt
       var mine = state;
-      var changedDays = [];
-      var keys = {};
-      Object.keys(mine.days).forEach(function (k) { keys[k] = 1; });
-      Object.keys(ext.days).forEach(function (k) { keys[k] = 1; });
-      Object.keys(keys).forEach(function (iso) {
-        if (pending.days[iso]) {
-          if (mine.days[iso]) ext.days[iso] = mine.days[iso];
-          else delete ext.days[iso];
-        } else if (dayJSON(mine.days[iso]) !== dayJSON(ext.days[iso])) {
-          changedDays.push(iso);
-        }
-      });
+      // Einstellungen zuerst: ob ein Tag gesperrt ist, entscheidet der zusammengeführte Stand
       var changedSettings = [];
       Object.keys(ext.settings).forEach(function (k) {
         if (pending.settings[k]) return;
@@ -371,6 +368,27 @@
       Object.keys(pending.settings).forEach(function (k) {
         if (mine.settings[k] === undefined) delete ext.settings[k];
         else ext.settings[k] = mine.settings[k];
+      });
+      var changedDays = [];
+      var lockedMine = [];
+      var keys = {};
+      Object.keys(mine.days).forEach(function (k) { keys[k] = 1; });
+      Object.keys(ext.days).forEach(function (k) { keys[k] = 1; });
+      Object.keys(keys).forEach(function (iso) {
+        var differs = dayJSON(mine.days[iso]) !== dayJSON(ext.days[iso]);
+        /* Ein anderes Fenster hat den Monat inzwischen abgeschlossen: die
+           eigene, noch nicht gespeicherte Änderung darf ihn nicht still
+           verschieben — der abgeschlossene Stand gilt. Hat dieses Fenster
+           selbst abgeschlossen, ist sein Stand der abgeschlossene. */
+        if (pending.days[iso] && differs && isLocked(iso, ext.settings) && !isLocked(iso, mine.settings)) {
+          lockedMine.push(iso);
+          changedDays.push(iso);
+        } else if (pending.days[iso]) {
+          if (mine.days[iso]) ext.days[iso] = mine.days[iso];
+          else delete ext.days[iso];
+        } else if (differs) {
+          changedDays.push(iso);
+        }
       });
       Object.keys(pending.meta).forEach(function (k) { ext.meta[k] = mine.meta[k]; });
       Object.keys(pending.parts).forEach(function (k) {
@@ -383,7 +401,13 @@
       lastRaw = raw;
       rebaseHistory(changedDays, changedSettings);
       if (!changedDays.length && !changedSettings.length) return null;
-      return { type: "external", days: changedDays, settings: changedSettings.length > 0, settingKeys: changedSettings, newer: newerSchema };
+      return { type: "external", days: changedDays, settings: changedSettings.length > 0, settingKeys: changedSettings, newer: newerSchema, locked: lockedMine };
+    }
+
+    /** Fremden Stand melden — und eigene Änderungen, die die Sperre verworfen hat. */
+    function emitExternal(evt) {
+      emit(evt);
+      if (evt.locked && evt.locked.length) emitLocked(evt.locked, true);
     }
 
     /** Abzeichen gehen beim Zusammenführen nie verloren. */
@@ -427,7 +451,7 @@
       if (!state || raw === null || raw === undefined || raw === lastRaw) return false;
       if (dirty) { flush(); return true; }
       var evt = absorb(raw);
-      if (evt) emit(evt);
+      if (evt) emitExternal(evt);
       return !!evt;
     }
 
@@ -439,7 +463,7 @@
 
     function emit(evt) {
       evt = evt || { type: "change" };
-      if (evt.type !== "error") revision++;
+      if (evt.type !== "error" && evt.type !== "locked") revision++;
       listeners.forEach(function (fn) {
         try { fn(evt, state); } catch (e) { /* Listener isolieren */ }
       });
@@ -451,6 +475,44 @@
         var i = listeners.indexOf(fn);
         if (i >= 0) listeners.splice(i, 1);
       };
+    }
+
+    /* ---- Sperre ---------------------------------------------------- */
+
+    /**
+     * @param {Function} fn    (iso, settings) → true, wenn der Tag gesperrt ist
+     * @param {Object} [opts]  { prefix: Einstellungsschlüssel, die zu den Tagen
+     *                         gehören — „Alles löschen“ entfernt sie mit }
+     */
+    function setGuard(fn, opts) {
+      guard = typeof fn === "function" ? fn : null;
+      guardPrefix = opts && opts.prefix ? String(opts.prefix) : null;
+    }
+
+    function isLocked(iso, settings) {
+      if (!guard) return false;
+      try { return !!guard(iso, settings || state.settings); } catch (e) { return false; }
+    }
+
+    /** partial: derselbe Vorgang hat anderes sehr wohl gespeichert */
+    function emitLocked(dates, partial) {
+      if (dates && dates.length) emit({ type: "locked", dates: dates.slice().sort(), partial: !!partial });
+    }
+
+    /* Felder, die ein leerer Tag ohnehin hat — sie zu „speichern“ ist keine Änderung */
+    var EMPTY_FIELDS = { start: "", end: "", note: "", type: null, targetOverride: null, location: "office", absenceFactor: 1 };
+
+    /** Würde die Änderung am gesperrten Tag gar nichts bewirken? Dann still übergehen. */
+    function wouldNotChange(iso, patch) {
+      var cur = state.days[iso];
+      if (patch === null) return !cur;
+      if (cur) return dayJSON(cur, true) === dayJSON(Object.assign({}, cur, patch, { date: iso }), true);
+      return Object.keys(patch || {}).every(function (k) {
+        var v = patch[k];
+        if (v === undefined || v === null || v === "" || k === "date" || k === "updatedAt") return true;
+        if (Array.isArray(v)) return v.length === 0;
+        return has(EMPTY_FIELDS, k) && EMPTY_FIELDS[k] === v;
+      });
     }
 
     /* ---- Tage ------------------------------------------------------ */
@@ -469,6 +531,10 @@
       // Schritt und keine Markierung — sonst überstimmt dieses Fenster beim
       // Zusammenführen grundlos die Eingabe eines anderen.
       if (state.days[iso] && dayJSON(current, true) === dayJSON(next, true)) return current;
+      if (isLocked(iso)) {
+        if (!wouldNotChange(iso, patch)) emitLocked([iso]);
+        return state.days[iso] || null;
+      }
       var label = opts.label || "day";
       var entry = beginUndo(label, opts.undo === false ? false : label + "|" + iso + "|" + Object.keys(patch || {}).sort().join(","));
       if (entry) trackDay(entry, iso);
@@ -481,6 +547,7 @@
 
     function deleteDay(iso, opts) {
       if (!state.days[iso]) return false;
+      if (isLocked(iso)) { emitLocked([iso]); return false; }
       var entry = beginUndo((opts && opts.label) || "delete", opts && opts.undo === false ? false : null);
       if (entry) trackDay(entry, iso);
       delete state.days[iso];
@@ -490,16 +557,27 @@
       return true;
     }
 
+    /** → { written, locked: [iso] } */
     function setDays(map, opts) {
-      var entry = beginUndo((opts && opts.label) || "bulk", opts && opts.undo === false ? false : null);
-      Object.keys(map).forEach(function (iso) {
-        if (entry) trackDay(entry, iso);
-        pending.days[iso] = true;
-        if (map[iso] === null) delete state.days[iso];
-        else state.days[iso] = Object.assign({}, state.days[iso] || { date: iso, breaks: [] }, map[iso], { date: iso, updatedAt: new Date().toISOString() });
+      var locked = [];
+      var keys = Object.keys(map).filter(function (iso) {
+        if (!isLocked(iso)) return true;
+        if (!wouldNotChange(iso, map[iso])) locked.push(iso);
+        return false;
       });
-      persist();
-      emit({ type: "bulk", count: Object.keys(map).length });
+      if (keys.length) {
+        var entry = beginUndo((opts && opts.label) || "bulk", opts && opts.undo === false ? false : null);
+        keys.forEach(function (iso) {
+          if (entry) trackDay(entry, iso);
+          pending.days[iso] = true;
+          if (map[iso] === null) delete state.days[iso];
+          else state.days[iso] = Object.assign({}, state.days[iso] || { date: iso, breaks: [] }, map[iso], { date: iso, updatedAt: new Date().toISOString() });
+        });
+        persist();
+        emit({ type: "bulk", count: keys.length });
+      }
+      emitLocked(locked, keys.length > 0);
+      return { written: keys.length, locked: locked };
     }
 
     function allDays() { return state.days; }
@@ -534,7 +612,8 @@
       patch = patch || {};
       var quiet = opts.undo === false || isBookkeeping(patch);
       var keys = Object.keys(patch).sort();
-      var entry = quiet ? null : beginUndo("settings", "settings|" + keys.join(","));
+      // coalesce: false — eigener Schritt auch bei schneller Folge (Abschliessen, dann Wiederöffnen)
+      var entry = quiet ? null : beginUndo("settings", opts.coalesce === false ? null : "settings|" + keys.join(","));
       keys.forEach(function (k) {
         if (entry) trackSetting(entry, k);
         pending.settings[k] = true;
@@ -577,7 +656,13 @@
        eigenen anzulegen.
 
        Eintrag: { label, key, at, days: {iso: json|ABSENT},
-                  settings: {key: json|ABSENT}, parts: {name: json|ABSENT} }
+                  settings: {key: json|ABSENT}, parts: {name: json|ABSENT},
+                  whole: true bei Import „ersetzen“ und Zurücksetzen }
+
+       Gesperrte Tage (abgeschlossener Monat) setzt ein Schritt nicht zurück
+       — ausser er stellt einen ganzen Stand wieder her (whole). Bestünde ein
+       Schritt nur aus gesperrten Tagen, bleibt er liegen: nach dem
+       Wiederöffnen des Monats lässt er sich noch zurücknehmen.
     */
     var ABSENT = "";   // „gab es vorher nicht“ — gültiges JSON ist nie leer
 
@@ -619,18 +704,12 @@
       if (!has(entry.parts, name)) entry.parts[name] = rawOf(state[name]);
     }
 
-    /** Setzt die Vorher-Werte eines Schritts ein; liefert den Gegen-Schritt. */
+    /** Setzt die Vorher-Werte eines Schritts ein; liefert den Gegen-Schritt
+        und die Tage, die die Sperre ausgelassen hat. */
     function applyEntry(entry) {
-      var inverse = { label: entry.label, key: null, at: clock(), days: {}, settings: {}, parts: null };
-      Object.keys(entry.days).forEach(function (iso) {
-        var cur = dayRaw(iso);
-        var want = entry.days[iso];
-        inverse.days[iso] = cur;
-        if (cur === want) return;
-        if (want === ABSENT) delete state.days[iso];
-        else state.days[iso] = JSON.parse(want);
-        pending.days[iso] = true;
-      });
+      var inverse = { label: entry.label, key: null, at: clock(), days: {}, settings: {}, parts: null, whole: !!entry.whole };
+      var locked = [];
+      // Einstellungen zuerst: gesperrt ist, was NACH dem Schritt abgeschlossen ist
       Object.keys(entry.settings).forEach(function (k) {
         var cur = settingRaw(k);
         var want = entry.settings[k];
@@ -639,6 +718,16 @@
         if (want === ABSENT) delete state.settings[k];
         else state.settings[k] = JSON.parse(want);
         pending.settings[k] = true;
+      });
+      Object.keys(entry.days).forEach(function (iso) {
+        var cur = dayRaw(iso);
+        var want = entry.days[iso];
+        if (cur !== want && !entry.whole && isLocked(iso)) { locked.push(iso); return; }
+        inverse.days[iso] = cur;
+        if (cur === want) return;
+        if (want === ABSENT) delete state.days[iso];
+        else state.days[iso] = JSON.parse(want);
+        pending.days[iso] = true;
       });
       if (entry.parts) {
         inverse.parts = {};
@@ -658,28 +747,46 @@
           else if (name !== "version") pending.parts[name] = true;
         });
       }
-      return inverse;
+      return { inverse: inverse, locked: locked };
     }
 
-    function undo() {
-      if (!undoStack.length) return false;
-      var entry = undoStack.pop();
-      redoStack.push(applyEntry(entry));
+    /**
+     * Gesperrte Tage, falls ein Schritt NUR aus ihnen bestünde — dann wird
+     * er gar nicht angewendet. Sonst null.
+     */
+    function lockedOnly(entry) {
+      if (entry.whole) return null;
+      var changesOther = Object.keys(entry.settings).some(function (k) { return settingRaw(k) !== entry.settings[k]; }) ||
+        Object.keys(entry.parts || {}).some(function (n) { return rawOf(state[n]) !== entry.parts[n]; });
+      if (changesOther) return null;
+      var locked = [];
+      var free = false;
+      Object.keys(entry.days).forEach(function (iso) {
+        if (dayRaw(iso) === entry.days[iso]) return;
+        if (isLocked(iso)) locked.push(iso);
+        else free = true;
+      });
+      return locked.length && !free ? locked : null;
+    }
+
+    /** Rückgängig oder Wiederherstellen; false = nichts getan (leer oder gesperrt). */
+    function step(from, to) {
+      if (!from.length) return false;
+      var entry = from[from.length - 1];
+      var blocked = lockedOnly(entry);
+      if (blocked) { emitLocked(blocked); return false; }
+      from.pop();
+      var applied = applyEntry(entry);
+      to.push(applied.inverse);
       lastPushed = null;
       persist(true);
       emit({ type: "restore" });
+      emitLocked(applied.locked, true);
       return entry.label;
     }
 
-    function redo() {
-      if (!redoStack.length) return false;
-      var entry = redoStack.pop();
-      undoStack.push(applyEntry(entry));
-      lastPushed = null;
-      persist(true);
-      emit({ type: "restore" });
-      return entry.label;
-    }
+    function undo() { return step(undoStack, redoStack); }
+    function redo() { return step(redoStack, undoStack); }
 
     function canUndo() { return undoStack.length > 0; }
     function canRedo() { return redoStack.length > 0; }
@@ -780,8 +887,10 @@
       // 2. Anwenden — als ein einziger Rückgängig-Schritt
       var entry = beginUndo("import", null);
       var added = 0, updated = 0, skipped = invalid + badKeys;
+      var locked = [];
 
       if (mode === "replace") {
+        entry.whole = true;   // ein ganzer Stand — auch abgeschlossene Monate
         Object.keys(state.days).forEach(function (iso) { trackDay(entry, iso); });
         Object.keys(days).forEach(function (iso) { trackDay(entry, iso); });
         state.days = {};
@@ -795,6 +904,12 @@
 
       Object.keys(days).forEach(function (iso) {
         var incoming = days[iso];
+        // Zusammenführen lässt abgeschlossene Monate unangetastet
+        if (mode !== "replace" && isLocked(iso) && !(mode === "merge-keep" && state.days[iso])) {
+          if (!wouldNotChange(iso, incoming)) locked.push(iso);
+          skipped++;
+          return;
+        }
         trackDay(entry, iso);
         if (!state.days[iso]) {
           state.days[iso] = Object.assign({ date: iso, start: "", end: "", note: "", breaks: [] }, incoming);
@@ -826,15 +941,27 @@
 
       persist(true);
       emit({ type: "import" });
-      return { added: added, updated: updated, skipped: skipped, invalid: invalid, newer: version > SCHEMA };
+      emitLocked(locked, added + updated > 0 || !!settings || !!achievements);
+      return { added: added, updated: updated, skipped: skipped, invalid: invalid, newer: version > SCHEMA, locked: locked.length };
     }
 
     /** Alles löschen — vollständig umkehrbar (Tage, Einstellungen, Erfolge, Meta). */
     function reset(keepSettings) {
       var entry = beginUndo("reset", null);
+      entry.whole = true;
       var fresh = blank();
       Object.keys(state.days).forEach(function (iso) { trackDay(entry, iso); });
-      if (keepSettings) fresh.settings = state.settings;
+      if (keepSettings) {
+        fresh.settings = state.settings;
+        // Abschlüsse gehören zu den Tagen: ohne Tage gäbe es nichts mehr, was sie einfrieren
+        if (guardPrefix) {
+          Object.keys(fresh.settings).forEach(function (k) {
+            if (k.indexOf(guardPrefix) !== 0) return;
+            trackSetting(entry, k);
+            delete fresh.settings[k];
+          });
+        }
+      }
       else Object.keys(Object.assign({}, state.settings, fresh.settings)).forEach(function (k) { trackSetting(entry, k); });
       Object.keys(Object.assign({}, state, fresh)).forEach(function (k) {
         if (k !== "days" && k !== "settings") trackPart(entry, k);
@@ -935,6 +1062,8 @@
       readBackup: readBackup,
       readCorrupt: readCorrupt,
       syncExternal: syncExternal,
+      setGuard: setGuard,
+      isLocked: function (iso) { return isLocked(iso); },
       isNewerSchema: function () { return newerSchema; },
       isFull: function () { return full; },
       /** Zähler, der bei jeder Datenänderung steigt — Schlüssel für Zwischenspeicher. */
