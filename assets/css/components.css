@@ -75,7 +75,10 @@
   transition: background var(--t-fast), border-color var(--t-fast),
               transform var(--t-fast), box-shadow var(--t-fast), color var(--t-fast);
 }
-.btn:hover { background: var(--surface-3); border-color: var(--ink-3); }
+/* Hover setzt nur Variablen: so behalten Varianten (primary, plus …) ihre
+   eigene Hover-Fläche. Ein direktes `background` hier hat früher die
+   Primärtaste beim Überfahren weiss auf hellgrau gemacht. */
+.btn:hover { --btn-bg: var(--surface-3); --btn-line: var(--line-input); }
 .btn:active { transform: translateY(1px) scale(.995); }
 .btn:disabled, .btn[aria-disabled="true"] { opacity: .42; cursor: not-allowed; pointer-events: none; }
 .btn .ic { width: 16px; height: 16px; flex: none; }
@@ -86,8 +89,7 @@
   --btn-line: transparent;
   box-shadow: var(--shadow-sm);
 }
-.btn.primary:hover { --btn-bg: var(--brand-700); box-shadow: var(--shadow-md); }
-[data-theme="dark"] .btn.primary:hover { --btn-bg: #FFFFFF; }
+.btn.primary:hover { --btn-bg: var(--surface-invert-hover); box-shadow: var(--shadow-md); }
 
 .btn.ghost { --btn-bg: transparent; --btn-line: transparent; color: var(--ink-2); }
 .btn.ghost:hover { --btn-bg: var(--surface-3); color: var(--ink); }
@@ -95,12 +97,14 @@
 .btn.soft { --btn-bg: var(--surface-3); --btn-line: transparent; }
 .btn.soft:hover { --btn-bg: var(--surface-inset); }
 
-.btn.plus  { --btn-bg: var(--plus-soft);  --btn-ink: var(--plus);  --btn-line: var(--plus-line); }
-.btn.minus { --btn-bg: var(--minus-soft); --btn-ink: var(--minus); --btn-line: var(--minus-line); }
-.btn.warn  { --btn-bg: var(--warn-soft);  --btn-ink: var(--warn);  --btn-line: var(--warn-line); }
-.btn.info  { --btn-bg: var(--info-soft);  --btn-ink: var(--info);  --btn-line: var(--info-line); }
+.btn.plus  { --btn-bg: var(--plus-soft);  --btn-ink: var(--plus-ink);  --btn-line: var(--plus-line); }
+.btn.minus { --btn-bg: var(--minus-soft); --btn-ink: var(--minus-ink); --btn-line: var(--minus-line); }
+.btn.warn  { --btn-bg: var(--warn-soft);  --btn-ink: var(--warn-ink);  --btn-line: var(--warn-line); }
+.btn.info  { --btn-bg: var(--info-soft);  --btn-ink: var(--info-ink);  --btn-line: var(--info-line); }
 .btn.plus:hover  { --btn-bg: color-mix(in srgb, var(--plus) 20%, transparent); }
 .btn.minus:hover { --btn-bg: color-mix(in srgb, var(--minus) 20%, transparent); }
+.btn.warn:hover  { --btn-bg: color-mix(in srgb, var(--warn) 20%, transparent); }
+.btn.info:hover  { --btn-bg: color-mix(in srgb, var(--info) 20%, transparent); }
 
 .btn.sm { min-height: 32px; padding: 0 11px; font-size: var(--fs-xs); border-radius: var(--r-xs); gap: 5px; }
 .btn.sm .ic { width: 14px; height: 14px; }
@@ -146,10 +150,12 @@
   white-space: nowrap;
 }
 .segmented button:hover { color: var(--ink); }
+/* Weiss auf --surface-3 allein trennt nur 1.1:1 — die Kontur macht die
+   Auswahl auch ohne Schatten erkennbar (≥ 3:1). */
 .segmented button[aria-pressed="true"] {
   background: var(--surface);
   color: var(--ink);
-  box-shadow: var(--shadow-xs);
+  box-shadow: 0 0 0 1px var(--line-input), var(--shadow-xs);
 }
 
 /* ---- Eingabefelder ---------------------------------------------------- */
@@ -164,25 +170,26 @@
   color: var(--ink-2);
 }
 .field .hint { font-size: var(--fs-2xs); color: var(--ink-3); line-height: 1.45; }
-.field .err { font-size: var(--fs-2xs); color: var(--minus); font-weight: 650; }
+.field .err { font-size: var(--fs-2xs); color: var(--minus-ink); font-weight: 650; }
 
 .input, .select, .textarea {
   width: 100%;
   min-height: 42px;
   padding: 9px 12px;
   border-radius: var(--r-sm);
-  border: 1px solid var(--line-strong);
+  border: 1px solid var(--line-input);
   background: var(--surface);
   color: var(--ink);
   font-size: var(--fs-md);
   outline: none;
   transition: border-color var(--t-fast), box-shadow var(--t-fast), background var(--t-fast);
 }
-.input::placeholder, .textarea::placeholder { color: var(--ink-3); opacity: .6; }
+.input::placeholder, .textarea::placeholder { color: var(--ink-3); opacity: 1; }
 .input:hover, .select:hover, .textarea:hover { border-color: var(--ink-3); }
+/* Innen eine satte 1-px-Kontur (≥ 3:1), aussen der weiche Halo */
 .input:focus, .select:focus, .textarea:focus {
-  border-color: var(--brand-500);
-  box-shadow: 0 0 0 3.5px var(--focus-ring);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent), 0 0 0 4.5px var(--focus-ring);
 }
 .input.time {
   font-family: var(--font-mono);
@@ -213,16 +220,39 @@
   cursor: pointer;
 }
 
-.input-wrap { position: relative; display: flex; align-items: center; }
+/* Zahl mit Einheit: Die Einheit steht als eigenes Element neben der Zahl
+   im gemeinsamen Rahmen — so überlappt sie nie, egal wie lang sie ist. */
+.input-wrap {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--line-input);
+  background: var(--surface);
+  transition: border-color var(--t-fast), box-shadow var(--t-fast);
+}
+.input-wrap:hover { border-color: var(--ink-3); }
+.input-wrap:focus-within { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), 0 0 0 4.5px var(--focus-ring); }
+.input-wrap:has(.input.invalid) { border-color: var(--minus); }
+.input-wrap .input {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 40px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  padding-right: 4px;
+}
+.input-wrap .input:focus { box-shadow: none; }
 .input-wrap .suffix {
-  position: absolute;
-  right: 11px;
+  flex: none;
+  padding: 0 12px 0 4px;
   font-size: var(--fs-2xs);
   font-weight: 700;
   color: var(--ink-3);
+  white-space: nowrap;
   pointer-events: none;
 }
-.input-wrap .input { padding-right: 46px; }
 
 /* ---- Schalter --------------------------------------------------------- */
 .switch {
@@ -237,7 +267,7 @@
   width: 42px; height: 24px;
   border-radius: var(--r-pill);
   background: var(--surface-inset);
-  border: 1px solid var(--line-strong);
+  border: 1px solid var(--line-input);
   position: relative;
   flex: none;
   transition: background var(--t), border-color var(--t);
@@ -248,13 +278,16 @@
   top: 2px; left: 2px;
   width: 18px; height: 18px;
   border-radius: 50%;
-  background: var(--surface);
+  /* Aus: dunkler Knopf auf heller Schiene (hell) bzw. heller Knopf auf
+     dunkler Schiene (dunkel) — ein Knopf in Flächenfarbe verschwand im
+     Dunkelmodus (1.2:1). Ein: weisser Knopf auf gefüllter Schiene. */
+  background: var(--ink-3);
   box-shadow: var(--shadow-xs);
   transition: transform var(--t-slow), background var(--t);
 }
-.switch input:checked + .track { background: var(--brand-500); border-color: var(--brand-500); }
+.switch input:checked + .track { background: var(--switch-on); border-color: var(--switch-on); }
 .switch input:checked + .track::after { transform: translateX(18px); background: #fff; }
-.switch input:focus-visible + .track { box-shadow: 0 0 0 3.5px var(--focus-ring); }
+.switch input:focus-visible + .track { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent); }
 .switch .lbl { font-size: var(--fs-sm); font-weight: 650; }
 .switch .lbl small { display: block; font-size: var(--fs-2xs); color: var(--ink-3); font-weight: 550; }
 
@@ -273,10 +306,10 @@
   background: var(--surface-3);
   white-space: nowrap;
 }
-.tag.plus  { color: var(--plus);  background: var(--plus-soft);  border-color: var(--plus-line); }
-.tag.minus { color: var(--minus); background: var(--minus-soft); border-color: var(--minus-line); }
-.tag.warn  { color: var(--warn);  background: var(--warn-soft);  border-color: var(--warn-line); }
-.tag.info  { color: var(--info);  background: var(--info-soft);  border-color: var(--info-line); }
+.tag.plus  { color: var(--plus-ink);  background: var(--plus-soft);  border-color: var(--plus-line); }
+.tag.minus { color: var(--minus-ink); background: var(--minus-soft); border-color: var(--minus-line); }
+.tag.warn  { color: var(--warn-ink);  background: var(--warn-soft);  border-color: var(--warn-line); }
+.tag.info  { color: var(--info-ink);  background: var(--info-soft);  border-color: var(--info-line); }
 .tag.solid { background: var(--surface-invert); color: var(--ink-invert); border-color: transparent; }
 .tag .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: none; }
 
@@ -303,7 +336,9 @@
   border-color: transparent;
   box-shadow: var(--shadow-xs);
 }
-.chip[aria-pressed="true"] .swatch { box-shadow: 0 0 0 2px rgba(255, 255, 255, .35); }
+/* Kontrastring in Schriftfarbe: sonst verschwindet z. B. der helle
+   Arbeit-Punkt im Dunkelmodus auf dem hellen Chip. */
+.chip[aria-pressed="true"] .swatch { box-shadow: 0 0 0 1.5px var(--ink-invert); }
 
 /* ---- Kennzahl (KPI) --------------------------------------------------- */
 .kpi {
@@ -383,12 +418,13 @@
 }
 .notice .ic { flex: none; width: 17px; height: 17px; margin-top: 1px; }
 .notice strong { font-weight: 800; }
-.notice.warn  { background: var(--warn-soft);  border-color: var(--warn-line);  color: var(--warn); }
-.notice.minus { background: var(--minus-soft); border-color: var(--minus-line); color: var(--minus); }
-.notice.plus  { background: var(--plus-soft);  border-color: var(--plus-line);  color: var(--plus); }
-.notice.info  { background: var(--info-soft);  border-color: var(--info-line);  color: var(--info); }
+.notice.warn  { background: var(--warn-soft);  border-color: var(--warn-line);  color: var(--warn-ink); }
+.notice.minus { background: var(--minus-soft); border-color: var(--minus-line); color: var(--minus-ink); }
+.notice.plus  { background: var(--plus-soft);  border-color: var(--plus-line);  color: var(--plus-ink); }
+.notice.info  { background: var(--info-soft);  border-color: var(--info-line);  color: var(--info-ink); }
 .notice p { color: inherit; }
-.notice .sub { opacity: .82; font-size: var(--fs-xs); }
+/* Ohne Abdunklung: die Funktionsschrift liegt schon knapp über 4.5:1 */
+.notice .sub { font-size: var(--fs-xs); }
 
 /* ---- Tabelle ---------------------------------------------------------- */
 .table-wrap { overflow-x: auto; border-radius: var(--r-md); border: 1px solid var(--line); }
@@ -479,6 +515,42 @@ table.data tfoot td {
   flex-wrap: wrap;
 }
 .modal-foot .left { margin-right: auto; }
+/* Fällt der Fokus mangels Feld auf den Dialog selbst, braucht es keinen Ring */
+.modal:focus { outline: none; }
+
+/* Tastenkürzel-Übersicht */
+.kbd-list { display: flex; flex-direction: column; gap: 2px; }
+.kbd-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 20px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--line-faint);
+}
+.kbd-row:last-child { border-bottom: 0; }
+.kbd-row span { font-size: var(--fs-sm); font-weight: 650; }
+.kbd-row small { display: block; font-size: var(--fs-2xs); font-weight: 550; color: var(--ink-3); }
+.kbd-row kbd {
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  padding: 3px 7px;
+  border-radius: var(--r-xs);
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  color: var(--ink-2);
+  white-space: nowrap;
+  flex: none;
+}
+
+/* Handy quer: wenig Höhe — Kopf und Fuss des Dialogs werden schmaler */
+@media (max-height: 500px) and (orientation: landscape) {
+  .modal-scrim { padding: var(--gap-2); }
+  .modal { max-height: calc(100vh - 16px); max-height: calc(100dvh - 16px); border-radius: var(--r-lg); }
+  .modal-head { padding: var(--gap-3) var(--gap-4) var(--gap-2); }
+  .modal-body { padding: var(--gap-3) var(--gap-4); }
+  .modal-foot { padding: var(--gap-2) var(--gap-4); }
+}
 
 /* ---- Toasts ----------------------------------------------------------- */
 .toasts {
@@ -492,7 +564,16 @@ table.data tfoot td {
   max-width: min(380px, calc(100vw - 32px));
   pointer-events: none;
 }
-@media (max-width: 1000px) { .toasts { bottom: calc(72px + env(safe-area-inset-bottom, 0px)); } }
+/* Mobil sitzen Meldungen über der Tableiste; die genaue Höhe misst
+   dom.js (placeToasts), das hier ist nur der Startwert. Bei offenem Dialog
+   wandern sie nach oben, damit sie nicht dessen Knöpfe verdecken. */
+@media (max-width: 1000px) {
+  .toasts { left: var(--gap-4); right: var(--gap-4); max-width: none; align-items: stretch; bottom: calc(72px + env(safe-area-inset-bottom, 0px)); }
+  .toast { width: 100%; max-width: 440px; margin-left: auto; }
+  body.has-modal .toasts { top: calc(var(--gap-3) + env(safe-area-inset-top, 0px)); bottom: auto !important; }
+}
+/* Unten läge der Stapel über der Stempelleiste — dann unter der Kopfzeile */
+.toasts.top { top: calc(var(--header-h) + var(--gap-3) + env(safe-area-inset-top, 0px)); bottom: auto !important; }
 .toast {
   pointer-events: auto;
   display: flex;
@@ -525,10 +606,17 @@ table.data tfoot td {
   flex: none;
 }
 [data-theme="dark"] .toast .act { background: rgba(0, 0, 0, .12); }
+.toast .act.close { display: inline-grid; place-items: center; padding: 4px; }
+.toast .act.close .ic { width: 14px; height: 14px; margin: 0; }
 .toast .act:hover { background: rgba(255, 255, 255, .28); }
-.toast.plus  { background: var(--plus);  color: #fff }
-.toast.minus { background: var(--minus); color: #fff }
-.toast.warn  { background: var(--warn);  color: #fff }
+.toast.plus  { background: var(--plus-solid);  color: var(--on-tone) }
+.toast.minus { background: var(--minus-solid); color: var(--on-tone) }
+.toast.warn  { background: var(--warn-solid);  color: var(--on-tone) }
+/* Auf farbigen Toasts: Untertitel voll deckend, Aktionsknopf zur Gegenfarbe
+   der Schrift hin getönt (hell: dunkler, dunkel: heller) */
+.toast:is(.plus, .minus, .warn) .body span { opacity: 1; }
+.toast:is(.plus, .minus, .warn) .act { background: color-mix(in srgb, var(--surface-invert) 22%, transparent); }
+.toast:is(.plus, .minus, .warn) .act:hover { background: color-mix(in srgb, var(--surface-invert) 34%, transparent); }
 
 /* ---- Befehlspalette --------------------------------------------------- */
 .palette-scrim {
@@ -648,31 +736,49 @@ table.data tfoot td {
 }
 
 /* ---- Tooltip ---------------------------------------------------------- */
+/* Eine einzige, fest positionierte Ebene (dom.js setupTips). Früher ein
+   ::after am Element: das wurde in overflow-Containern abgeschnitten,
+   öffnete sich in der Kopfzeile über den Bildschirmrand und machte die
+   Seite breiter, obwohl es unsichtbar war. position:relative bleibt, weil
+   sich Inhalte darauf verlassen könnten. */
 [data-tip] { position: relative; }
-[data-tip]::after {
-  content: attr(data-tip);
-  position: absolute;
-  bottom: calc(100% + 8px);
-  left: 50%;
-  transform: translateX(-50%) translateY(4px);
-  background: var(--surface-invert);
-  color: var(--ink-invert);
-  font-size: var(--fs-2xs);
-  font-weight: 650;
+.tip-layer {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 170;
+  max-width: min(280px, calc(100vw - 16px));
   padding: 6px 9px;
   border-radius: var(--r-xs);
-  white-space: nowrap;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity var(--t-fast), transform var(--t-fast);
-  z-index: 60;
+  background: var(--surface-invert);
+  color: var(--ink-invert);
+  font-family: var(--font-sans);
+  font-size: var(--fs-2xs);
+  font-weight: 650;
+  line-height: 1.4;
+  letter-spacing: 0;
+  text-transform: none;
+  text-align: left;
+  white-space: normal;
+  overflow-wrap: anywhere;
   box-shadow: var(--shadow-md);
-  max-width: 260px;
+  pointer-events: none;
+  visibility: hidden;
+  opacity: 0;
+  transition: opacity var(--t-fast), visibility 0s linear .14s;
 }
-[data-tip]:hover::after, [data-tip]:focus-visible::after {
-  opacity: 1;
-  transform: translateX(-50%);
+.tip-layer.on { visibility: visible; opacity: 1; transition: opacity var(--t-fast); }
+.tip-layer .tip-arrow {
+  position: absolute;
+  top: 100%;
+  left: var(--tip-ax, 50%);
+  width: 8px;
+  height: 8px;
+  margin: -4px 0 0 -4px;
+  background: inherit;
+  transform: rotate(45deg);
 }
+.tip-layer.below .tip-arrow { top: auto; bottom: 100%; margin: 0 0 -4px -4px; }
 
 /* ---- Ladeplatzhalter -------------------------------------------------- */
 .skeleton {

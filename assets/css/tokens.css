@@ -4,6 +4,13 @@
    Die Farbwelt orientiert sich am warmen Taupe-Grau des Logos.
    Chroma wird bewusst sparsam eingesetzt: die Marke ist monochrom,
    Farbe bedeutet immer eine Aussage (Plus, Minus, Warnung, Info).
+
+   Kontrast (WCAG 2.2 AA) ist in den Tokens verankert, nicht in den
+   Komponenten: Schrift-Tokens (--ink-*, --*-ink) erreichen auf jeder
+   Fläche, auf der sie stehen (bg, surface-1…3, Tönungen) mindestens 4.5:1,
+   Konturen von Bedienelementen (--line-input, --accent) mindestens 3:1.
+   tests/contrast.test.js rechnet das für hell, dunkel und beide
+   Kontrast-Modi nach — wer hier einen Wert ändert, sieht es dort.
    ========================================================================== */
 
 :root {
@@ -21,7 +28,11 @@
   --brand-900: #2A2622;
   --brand-950: #1A1715;
 
-  /* ---- Funktionsfarben ----------------------------------------------- */
+  /* ---- Funktionsfarben ----------------------------------------------- *
+     Drei Rollen je Aussage, weil eine Farbe nicht alles kann:
+     --plus        Fläche/Marke (Balken, Punkte, Zeitstrahl), ≥ 3:1
+     --plus-ink    Schrift auf Fläche oder eigener Tönung, ≥ 4.5:1
+     --plus-solid  gefüllte Taste/Toast, Beschriftung in --on-tone      */
   --plus:      #3F8F5B;
   --plus-soft: rgba(63, 143, 91, .12);
   --plus-line: rgba(63, 143, 91, .34);
@@ -38,21 +49,35 @@
   --info-soft: rgba(78, 115, 150, .12);
   --info-line: rgba(78, 115, 150, .32);
 
+  --plus-ink:  #1C713F;
+  --minus-ink: #AB3F30;
+  --warn-ink:  #845A05;
+  --info-ink:  #426689;
+
+  --plus-solid:  #2E7D52;
+  --minus-solid: #BE5040;
+  --warn-solid:  #98680C;
+  --on-tone:     #FFFFFF;
+
+  /* Fokus: der Halo ist Zierde, die Kontur (--accent) trägt den Kontrast */
   --focus-ring: rgba(133, 124, 116, .45);
+  --switch-on:  var(--brand-500);
 
   /* ---- Abwesenheitsarten (Kalenderfarben) ----------------------------
      Identitätsfarben im Kalender. Sie stehen NIE allein: jede Zelle trägt
-     zusätzlich ein Textkürzel, jede Legende einen Namen.                */
+     zusätzlich ein Textkürzel, jede Legende einen Namen.
+     Sie färben auch Schrift (Kalender-Kürzel, Rapport, Schnellerfassung),
+     darum erreichen alle ≥ 4.5:1 auf surface, surface-2 und der Auswahl. */
   --type-work:     var(--brand-500);
   --type-vacation: #2F6FA8;
   --type-holiday:  #7A4FA3;
   --type-sick:     #B4442F;
   --type-accident: #9C3B28;
-  --type-comp:     #9A6B12;
-  --type-military: #4F7A5A;
-  --type-training: #2E7D52;
-  --type-unpaid:   #8C8C8C;
-  --type-free:     #A79C92;
+  --type-comp:     #90630A;
+  --type-military: #4A7556;
+  --type-training: #2A794F;
+  --type-unpaid:   #5F5F5F;
+  --type-free:     #746A61;
 
   /* ---- Diagrammfarben ------------------------------------------------
      Divergierendes Paar für Plus/Minus. Beide Werte sind mit
@@ -133,15 +158,19 @@
   --line:          rgba(42, 38, 34, .11);
   --line-strong:   rgba(42, 38, 34, .20);
   --line-faint:    rgba(42, 38, 34, .06);
+  --line-input:    #91867C;   /* Kontur von Eingabefeldern/Schaltern, ≥ 3:1 */
 
   --ink:           #221F1C;
   --ink-2:         #56504A;
-  --ink-3:         #857C74;
+  /* Der Logo-Ton #857C74 (--brand-500) bleibt für Ringe und Marken; als
+     Schrift ist er zu hell (3.7:1 auf --bg). */
+  --ink-3:         #6A615A;
   --ink-invert:    #FBFAF9;
 
   --accent:        #6D655E;
   --accent-ink:    #FFFFFF;
   --accent-soft:   rgba(109, 101, 94, .10);
+  --surface-invert-hover: var(--brand-700);
 
   --shadow-xs: 0 1px 2px rgba(42, 38, 34, .06);
   --shadow-sm: 0 2px 6px rgba(42, 38, 34, .07), 0 1px 2px rgba(42, 38, 34, .04);
@@ -171,15 +200,17 @@
   --line:          rgba(246, 244, 242, .10);
   --line-strong:   rgba(246, 244, 242, .20);
   --line-faint:    rgba(246, 244, 242, .05);
+  --line-input:    #7C746D;
 
   --ink:           #F2EFEB;
-  --ink-2:         #B6ADA4;
-  --ink-3:         #8B827A;
+  --ink-2:         #C8C0B7;
+  --ink-3:         #AAA198;
   --ink-invert:    #171512;
 
   --accent:        #C4BBB2;
   --accent-ink:    #221F1C;
   --accent-soft:   rgba(196, 187, 178, .12);
+  --surface-invert-hover: #FFFFFF;
 
   --plus:      #5FBE83;
   --plus-soft: rgba(95, 190, 131, .14);
@@ -197,16 +228,28 @@
   --info-soft: rgba(127, 166, 203, .14);
   --info-line: rgba(127, 166, 203, .32);
 
+  --plus-ink:  #5FBE83;
+  --minus-ink: #EC8272;
+  --warn-ink:  #DCA84A;
+  --info-ink:  #7FA6CB;
+
+  /* Im Dunkeln sind die Funktionsfarben hell: gefüllte Flächen tragen
+     deshalb dunkle Schrift statt Weiss (Weiss auf #5FBE83 wäre 2.3:1). */
+  --plus-solid:  #5FBE83;
+  --minus-solid: #E2796A;
+  --warn-solid:  #DCA84A;
+  --on-tone:     #171512;
+
   --type-work:     #C4BBB2;
   --type-vacation: #6FA0D2;
   --type-holiday:  #B08BDA;
-  --type-sick:     #E2796A;
-  --type-accident: #CE6754;
+  --type-sick:     #E67D6E;
+  --type-accident: #E39062;
   --type-comp:     #DCA84A;
   --type-military: #7FB08D;
-  --type-training: #4CA476;
-  --type-unpaid:   #9A938C;
-  --type-free:     #7A736C;
+  --type-training: #54AC7D;
+  --type-unpaid:   #B3B3B3;
+  --type-free:     #A79C92;
 
   /* Dunkelmodus-Diagrammfarben: eigene Stufen, kein automatisches
      Umkehren der hellen Werte. Ebenfalls validiert gegen #211E1A.      */
@@ -229,18 +272,68 @@
 
 /* ==========================================================================
    KONTRAST-MODUS (Barrierefreiheit)
+   --------------------------------------------------------------------------
+   Hebt alles, was Information trägt, auf etwa 7:1 (Schrift) bzw. 4.5:1
+   (Konturen, Flächen): Tinte, gedämpfte Tinte, Funktionsschrift, Linien,
+   Funktionsflächen und gefüllte Tasten. Hell und dunkel sind getrennte
+   Blöcke, damit kein heller Wert in den Dunkelmodus durchsickert.
    ========================================================================== */
-[data-contrast="high"] {
+[data-contrast="high"]:not([data-theme="dark"]) {
   --line:        rgba(42, 38, 34, .34);
   --line-strong: rgba(42, 38, 34, .55);
+  --line-input:  #5E554E;
+  --ink:         #14110F;
   --ink-2:       #3A342F;
-  --ink-3:       #56504A;
+  --ink-3:       #4E463F;
+  --accent:      var(--brand-800);
+  --focus-ring:  rgba(63, 58, 53, .5);
+  --switch-on:   var(--brand-700);
+
+  --plus:        #277947;
+  --minus:       #B44738;
+  --warn:        #8F6203;
+  --info:        #496E91;
+  --plus-line:   rgba(39, 121, 71, .6);
+  --minus-line:  rgba(180, 71, 56, .6);
+  --warn-line:   rgba(143, 98, 3, .6);
+  --info-line:   rgba(73, 110, 145, .6);
+
+  --plus-ink:    #025429;
+  --minus-ink:   #8B1F13;
+  --warn-ink:    #624203;
+  --info-ink:    #264A6B;
+
+  --plus-solid:  #0E653C;
+  --minus-solid: #9F3325;
+  --warn-solid:  #785102;
 }
 [data-theme="dark"][data-contrast="high"] {
   --line:        rgba(246, 244, 242, .30);
   --line-strong: rgba(246, 244, 242, .5);
-  --ink-2:       #DED7D0;
-  --ink-3:       #B6ADA4;
+  --line-input:  #A79C92;
+  --ink:         #FAF8F6;
+  --ink-2:       #E6DED5;
+  --ink-3:       #CEC5BC;
+  --accent:      #E6DED5;
+  --focus-ring:  rgba(230, 222, 213, .5);
+
+  --plus:        #7BD99D;
+  --minus:       #FFB2A6;
+  --warn:        #F3BE61;
+  --info:        #A1CAF0;
+  --plus-line:   rgba(123, 217, 157, .6);
+  --minus-line:  rgba(255, 178, 166, .6);
+  --warn-line:   rgba(243, 190, 97, .6);
+  --info-line:   rgba(161, 202, 240, .6);
+
+  --plus-ink:    #7BD99D;
+  --minus-ink:   #FFB2A6;
+  --warn-ink:    #F3BE61;
+  --info-ink:    #A1CAF0;
+
+  --plus-solid:  #7BD99D;
+  --minus-solid: #FFB2A6;
+  --warn-solid:  #F3BE61;
 }
 
 /* ==========================================================================

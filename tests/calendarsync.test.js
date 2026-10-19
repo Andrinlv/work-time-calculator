@@ -341,3 +341,135 @@ test("Standardeinstellungen sind vollständig", () => {
   assert.ok(s.rules.length >= 9);
   assert.ok(s.futureDays > 0);
 });
+
+/* ====================================================================== */
+/* Kurze Termine, Wortgrenzen, Halbtage aus der Dauer                      */
+/* ====================================================================== */
+
+test("Kurze Termine mit Stichwort werden keine Abwesenheitstage", () => {
+  const mapped = C.mapEvents([
+    timed("Ferienplanung Team", "2026-11-05", "10:00", "11:00"),
+    timed("Arzttermin", "2026-11-06", "16:00", "17:00"),
+    timed("Zahnarzt", "2026-11-09", "09:00", "10:00", { showAs: "oof" }),
+    timed("Remote-Meeting", "2026-11-10", "14:00", "15:00", { showAs: "workingElsewhere" })
+  ], {});
+  assert.deepEqual(Object.keys(mapped), []);
+});
+
+test("Lange Termine zählen — ein halber Tag wird zum Halbtag", () => {
+  const mapped = C.mapEvents([
+    timed("Ferien", "2026-11-05", "08:00", "17:00", { id: "f" }),
+    timed("Weiterbildung Excel", "2026-11-06", "08:00", "12:00", { id: "w" }),
+    timed("Krank", "2026-11-09", "13:00", "17:30", { id: "k" })
+  ], {});
+  assert.equal(mapped["2026-11-05"].factor, 1);
+  assert.equal(mapped["2026-11-06"].type, "training");
+  assert.equal(mapped["2026-11-06"].factor, 0.5);
+  assert.equal(mapped["2026-11-09"].factor, 0.5);
+});
+
+test("Mehrtägiger Termin mit Uhrzeit: angebrochene Rand-Tage zählen nicht", () => {
+  const ev = {
+    id: "m", subject: "Ferien", isAllDay: false, showAs: "oof",
+    start: { dateTime: "2026-11-09T17:00:00", timeZone: "Europe/Zurich" },
+    end: { dateTime: "2026-11-12T08:00:00", timeZone: "Europe/Zurich" }
+  };
+  const mapped = C.mapEvents([ev], {});
+  assert.deepEqual(Object.keys(mapped).sort(), ["2026-11-10", "2026-11-11"]);
+  assert.equal(mapped["2026-11-10"].factor, 1);
+});
+
+test("Stichwörter greifen als ganzes Wort oder Wortende, nie mitten im Wort", () => {
+  const hit = (subject) => {
+    const m = C.mapEvents([allDay(subject, "2026-11-12", "2026-11-13")], {})["2026-11-12"];
+    return m ? m.type : null;
+  };
+  assert.equal(hit("Konkursverfahren Firma X"), "vacation", "nur „Abwesend“ (oof) greift, nicht „Kurs“");
+  assert.equal(C.hasKeyword("konkursverfahren firma x", "kurs"), false);
+  assert.equal(C.hasKeyword("informationsveranstaltung", "formation"), false);
+  assert.equal(C.hasKeyword("ferienvertretung für max", "ferien"), false);
+  assert.equal(hit("Sommerferien"), "vacation");
+  assert.equal(hit("Betriebsferien"), "vacation");
+  assert.equal(hit("Ferientag"), "vacation");
+  assert.equal(hit("Krankheitstage"), "sick");
+  assert.equal(hit("Zahnarzt"), "sick");
+  assert.equal(hit("Kurse Excel"), "training");
+  assert.equal(hit("WK Thun"), "military");
+  assert.equal(C.hasKeyword("wkly sync", "wk"), false);
+  assert.equal(hit("Formation continue"), "training");
+});
+
+test("Derselbe Termin aus zwei Kalendern zählt nur einmal", () => {
+  const ev = allDay("Ferien Halbtag", "2026-11-13", "2026-11-14", { id: "same" });
+  const mapped = C.mapEvents([ev, Object.assign({}, ev)], {});
+  assert.equal(mapped["2026-11-13"].factor, 0.5);
+});
+
+test("Ganztagestermin in UTC landet auf dem richtigen Tag", () => {
+  const ev = allDay("Ferien", "2026-08-06", "2026-08-07");
+  ev.start.timeZone = "UTC";
+  ev.end.timeZone = "UTC";
+  assert.deepEqual(C.eventDays(ev), ["2026-08-06"]);
+});
+
+/* ====================================================================== */
+/* Eigene Stempelungen und Handarbeit sind tabu                            */
+/* ====================================================================== */
+
+test("Stempelungen auf einem Kalendertag bleiben bei geändertem Termin erhalten", () => {
+  const record = { date: "2026-11-10", type: "training", absenceFactor: 1, source: "outlook", start: "08:00", end: "17:00",
+    breaks: [{ id: "a", start: "12:00", end: "12:30" }] };
+  const mapped = { "2026-11-10": { date: "2026-11-10", type: "training", factor: 0.5, note: "Kurs Halbtag" } };
+  const plan = C.planSync(mapped, (iso) => (iso === record.date ? record : null), { from: "2026-11-10", to: "2026-11-10" });
+  assert.equal(plan.changes.length, 0);
+  assert.equal(plan.protectedDays.length, 1);
+  const gone = C.planSync({}, (iso) => (iso === record.date ? record : null), { from: "2026-11-10", to: "2026-11-10" });
+  assert.equal(gone.changes.length, 0, "auch ein gelöschter Termin leert keinen gestempelten Tag");
+});
+
+test("buildPatch leert nie einen gestempelten Tag, auch nicht mit einem fremden Plan", () => {
+  const before = { type: "training", factor: 1, start: "08:00", end: "17:00", location: "office", source: "outlook" };
+  const patch = C.buildPatch([
+    { date: "2026-11-10", action: "set", type: "vacation", factor: 1, before: before },
+    { date: "2026-11-11", action: "clear", before: before }
+  ], "x");
+  assert.deepEqual(Object.keys(patch), []);
+});
+
+test("Von Hand geänderter Kalendertag gilt als eigener Eintrag", () => {
+  const record = { date: "2026-11-10", type: "sick", absenceFactor: 1, source: "outlook",
+    outlookSyncedAt: "2026-11-01T08:00:00.000Z", updatedAt: "2026-11-03T09:30:00.000Z" };
+  const getDay = (iso) => (iso === record.date ? record : null);
+  const range = { from: "2026-11-10", to: "2026-11-10" };
+  const changed = C.planSync({ "2026-11-10": { date: "2026-11-10", type: "vacation", factor: 1 } }, getDay, range);
+  assert.equal(changed.changes.length, 0, "die eigene Korrektur wird nicht zurückgedreht");
+  assert.equal(changed.protectedDays.length, 1);
+  const gone = C.planSync({}, getDay, range);
+  assert.equal(gone.changes.length, 0, "und nicht gelöscht, wenn der Termin verschwindet");
+
+  const fresh = Object.assign({}, record, { updatedAt: "2026-11-01T08:00:00.020Z" });
+  const plan = C.planSync({}, (iso) => (iso === record.date ? fresh : null), range);
+  assert.equal(plan.changes[0].action, "clear", "unberührter Kalendertag wird wie bisher zurückgenommen");
+});
+
+test("Gelöschte Ferien mit verbleibendem Homeoffice-Termin: Abwesenheit weg, Ort bleibt", () => {
+  const record = { date: "2026-11-11", type: "vacation", absenceFactor: 1, source: "outlook", start: "", end: "", note: "Ferien" };
+  const mapped = { "2026-11-11": { date: "2026-11-11", location: "home", locationSubject: "Homeoffice" } };
+  const plan = C.planSync(mapped, (iso) => (iso === record.date ? record : null), { from: "2026-11-11", to: "2026-11-11" });
+  assert.equal(plan.changes[0].action, "clear");
+  const patch = C.buildPatch(plan.changes, "x");
+  const merged = Object.assign({}, record, patch["2026-11-11"]);
+  assert.equal(merged.type, null);
+  assert.equal(merged.location, "home");
+  assert.equal(merged.note, "");
+});
+
+test("Ein Homeoffice-Abgleich macht einen von Hand geänderten Tag nicht wieder zum Kalendertag", () => {
+  const record = { date: "2026-11-10", type: "sick", absenceFactor: 1, source: "outlook", location: "office",
+    outlookSyncedAt: "2026-11-01T08:00:00.000Z", updatedAt: "2026-11-03T09:30:00.000Z" };
+  const mapped = { "2026-11-10": { date: "2026-11-10", location: "home", locationSubject: "Homeoffice" } };
+  const plan = C.planSync(mapped, (iso) => (iso === record.date ? record : null), { from: "2026-11-10", to: "2026-11-10" });
+  assert.equal(plan.changes[0].action, "location");
+  const patch = C.buildPatch(plan.changes, "2026-11-10T07:00:00.000Z");
+  assert.deepEqual(patch["2026-11-10"], { location: "home" });
+});

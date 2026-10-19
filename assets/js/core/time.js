@@ -169,8 +169,9 @@
     for (var i = 0; i < items.length; i++) {
       var last = out[out.length - 1];
       if (last && items[i].start <= last.end) {
+        // Nahtlos aneinander (12:00–12:30, 12:30–13:00) ist keine Überlappung.
+        if (items[i].start < last.end) last.merged = true;
         last.end = Math.max(last.end, items[i].end);
-        last.merged = true;
       } else {
         out.push({ start: items[i].start, end: items[i].end, ref: items[i].ref });
       }
@@ -323,6 +324,35 @@
     return Math.round((b - a) / 86400000);
   }
 
+  /**
+   * Echte statt Wanduhr-Minuten für Tage mit Zeitumstellung.
+   * Die Zeitachse eines Tages zählt Wanduhr-Minuten ab 00:00 (eine
+   * Nachtschicht 22:00–06:00 liegt bei 1320–1800). In der Nacht der
+   * Umstellung stimmt die Differenz aber nicht mit der gelebten Zeit
+   * überein: Ende März fehlt eine Stunde, Ende Oktober kommt eine dazu.
+   * Liefert null, wenn in den drei Tagen ab `iso` keine Umstellung liegt
+   * (Normalfall — dann sind beide Achsen identisch und niemand muss
+   * umrechnen), sonst { toReal(tl), toWall(r) } in Minuten ab 00:00.
+   */
+  function dstAxis(iso) {
+    var d = fromISO(iso);
+    if (!d) return null;
+    var y = d.getFullYear(), mo = d.getMonth(), da = d.getDate();
+    var base = new Date(y, mo, da);
+    if (base.getTimezoneOffset() === new Date(y, mo, da + 3).getTimezoneOffset()) return null;
+    return {
+      toReal: function (tl) {
+        if (tl === null || tl === undefined || !isFinite(tl)) return tl;
+        return Math.round((new Date(y, mo, da, 0, Math.round(tl)) - base) / 60000);
+      },
+      toWall: function (r) {
+        if (r === null || r === undefined || !isFinite(r)) return r;
+        var t = new Date(base.getTime() + Math.round(r) * 60000);
+        return diffDays(iso, toISO(t)) * DAY + t.getHours() * HOUR + t.getMinutes();
+      }
+    };
+  }
+
   /** Minuten seit Mitternacht für "jetzt". */
   function nowMinutes(now) {
     var d = now || new Date();
@@ -371,6 +401,7 @@
     isoWeekYear: isoWeekYear,
     rangeDays: rangeDays,
     diffDays: diffDays,
+    dstAxis: dstAxis,
     nowMinutes: nowMinutes,
     nowMinutesFloat: nowMinutesFloat,
     clamp: clamp

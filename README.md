@@ -55,15 +55,25 @@ GitHub Pages (siehe unten).
 
 ### Der Alltag
 
-- **Stempeluhr** — Kommen, Pause, Gehen mit einem Klick. Oder Zeiten von Hand
-  eintippen: `0750` wird beim Tippen zu `07:50`, Pfeiltasten verschieben minutenweise.
+- **Stempeluhr** — ein Knopf, der immer das Richtige anbietet: Kommen, dann Gehen
+  oder Pause, dann Pause beenden, nach Feierabend *Weiter arbeiten*. Jeder Stempel
+  lässt sich rückgängig machen. Oder Zeiten von Hand eintippen: `0750` wird beim
+  Tippen zu `07:50`, Pfeiltasten verschieben minutenweise.
+- **Stempeln ohne App zu suchen** — langes Drücken auf das App-Symbol bietet
+  *Stempeln* und *Pause*; der Link `…#/stamp` funktioniert auch auf einem NFC-Tag
+  oder als **QR-Plakat** an der Spindtür (Einstellungen → Stempel-Link). Kommt man
+  nach *Gehen* zurück, wird die Lücke automatisch zur Pause.
 - **Feierabend-Vorhersage** — die zentrale Zahl: wann du gehen kannst, damit der
   Tag exakt aufgeht. Inklusive Pflichtpause, die sich mit der Anwesenheit ändert.
 - **Live-Anzeige** — während der Arbeitszeit läuft die Netto-Zeit mit, mit Ring,
   Zeitstrahl und Restzeit.
 - **Beliebig viele Pausen** pro Tag, mit Bezeichnung. Überlappende Pausen werden
   zusammengefasst, Pausen ausserhalb der Anwesenheit gekürzt.
-- **Nachtschichten** — endet der Tag nach Mitternacht, rechnet die App richtig weiter.
+- **Nachtschichten** — endet der Tag nach Mitternacht, rechnet die App richtig weiter;
+  *Gehen* um 06:00 schliesst die Schicht vom Vortag, auch über die Zeitumstellung.
+- **Lückenhilfe** — vergessen zu stempeln? Die App merkt es und schlägt deine
+  üblichen Zeiten vor. Ein Tipp, und der Tag stimmt.
+- **Pausen-Timer** — 15, 30, 45 oder 60 Minuten, mit dezentem Ton und Vibration.
 
 ### Das Zeitkonto
 
@@ -73,6 +83,12 @@ GitHub Pages (siehe unten).
 - **Wochenansicht** mit gemeinsamem Zeitmassstab — man sieht sofort, wo Zeit liegen bleibt.
 - **Lücken statt stiller Minusstunden**: ein nicht erfasster Arbeitstag wird
   ausgewiesen, aber nicht heimlich verrechnet. (Umschaltbar.)
+- **Ein laufender Tag ist vorläufig** — er erscheint nicht als rotes Minus und
+  bewegt den Kontostand erst, wenn er abgeschlossen ist.
+- **Pensum ab Stichtag** — ein Wechsel auf 80 % ab 1. November rechnet die
+  Vergangenheit nicht um.
+- **Monatsabschluss** — ein geprüfter Monat wird eingefroren; spätere Änderungen
+  oder Regelwechsel verschieben seinen Saldo nicht mehr still.
 
 ### Abwesenheiten
 
@@ -93,6 +109,8 @@ Die Wirkung ist bewusst unterschiedlich:
 
 - **Pausenrecht** wahlweise Schweiz (ArG Art. 15), Deutschland (ArbZG §4),
   Österreich (AZG §11), pauschal oder eigene Staffel.
+  Massgebend ist die **Arbeitszeit**, nicht die Anwesenheit: 9 h Arbeit mit 30 min
+  Mittag verlangen keine Stundenpause. Bezahlte Pausen zählen mit.
   Fehlt eine Pflichtpause, wird sie automatisch abgezogen — sichtbar, nicht heimlich.
 - **Feiertage** für alle 26 Schweizer Kantone sowie Deutschland (inkl. mehrerer
   Bundesländer), Österreich und Frankreich. Ostern wird korrekt berechnet.
@@ -100,14 +118,22 @@ Die Wirkung ist bewusst unterschiedlich:
   fehlende Pausen, unplausible Anwesenheiten.
 - **Rundung** auf 1/5/6/10/15 Minuten, kaufmännisch, auf- oder abwärts.
 - **Arbeitsmodell** frei: Wochenstunden als Vorlage oder Sollzeit je Wochentag,
-  dazu ein Beschäftigungsgrad in Prozent.
+  dazu ein Beschäftigungsgrad in Prozent — mit Gültigkeitsdatum.
+- **Überzeit nach ArG** (Art. 12/13): Wochenstunden über 45 bzw. 50 h, getrennt vom
+  Gleitzeitsaldo, mit Jahreskontingent.
 
 ### Auswertung
 
 - Saldo-Verlauf, Stunden pro Woche, Durchschnitt nach Wochentag,
   Ankunft & Feierabend, Pausen-Disziplin, Jahresübersicht als Heatmap,
   Verteilung der Tagesarten, Ferienkontingent.
-- **Monatsrapport** zum Ausdrucken, mit Übertrag und Unterschriftenfeldern.
+- **Erkenntnisse**: dein Arbeitsrhythmus als 24-Stunden-Uhr mit belegten Aussagen
+  („Freitags gehst du 34 min früher"), Saldo-Prognose bis Monats- und Jahresende,
+  Nacht-, Sonntags- und Feiertagsstunden, Homeoffice-Anteil.
+- **Monatsrapport** zum Ausdrucken, mit Übertrag, Zusammenfassung und
+  Unterschriftenfeldern — auf dem Handy als Karten, gedruckt immer hell.
+- **Lohnmeldung** als CSV für abgeschlossene Monate, mit eigenen Lohnarten-Codes.
+- **Jahresrückblick** in neun Bildern, zum Schmunzeln und Teilen.
 - **Export** als CSV (Excel-tauglich), JSON (vollständige Sicherung),
   ICS (Kalender) oder Text zum Kopieren. **Import** von JSON und CSV.
 
@@ -182,6 +208,15 @@ im Browser gäbe es dafür kein Versteck. Genau dafür ist PKCE gemacht.
   Gehen-Zeit, automatische Pausenabzüge, überschrittene Höchstarbeitszeiten, zu
   kurze Ruhezeiten. Jeder Punkt mit anklickbaren Datumsmarken.
 
+- **Zeitschieber** — den Feierabend auf dem Zeitstrahl verschieben und sofort sehen,
+  was das für Tagessaldo, Zeitkonto und Pflichtpause heisst.
+- **Schichtplan** — Früh/Spät/Nacht-Rhythmus einmal eingeben; geplante Schichten
+  erscheinen im Kalender, lassen sich mit einem Tipp übernehmen, und zu kurze
+  Ruhezeiten werden vorab gemeldet.
+- **Frag dein Zeitkonto** — in der Schnellsuche: „Wann kann ich gehen?",
+  „Wie viele Ferientage habe ich noch?", „wie lange gestern" — in allen Sprachen,
+  auch auf Schweizerdeutsch.
+
 ### Kleinigkeiten, die den Tag leichter machen
 
 - **Schichtvorlagen** — Büro, Früh, Spät, Nacht als Knöpfe in der Tagesansicht.
@@ -191,6 +226,12 @@ im Browser gäbe es dafür kein Versteck. Genau dafür ist PKCE gemacht.
 - **Pausen-Erinnerung** — meldet sich zehn Minuten, bevor die gesetzliche Pause
   fällig wird, mit einem Knopf zum sofortigen Stempeln.
 - **Notizsuche** — in der Schnellsuche nach Notiztexten suchen und direkt zum Tag springen.
+- **Mini-Uhr** — in Chrome und Edge am Desktop ein schwebendes Fenster mit
+  Countdown und Stempelknopf, immer sichtbar über anderen Programmen.
+- **Benachrichtigungen mit Aktionen** — *Gehen stempeln*, *Pause beenden*, *+15 min*;
+  sie kommen, solange die App offen ist oder im Hintergrund läuft.
+- **Momente** — höchstens eine kurze Zeile am Tag: Ferien-Countdown, langes
+  Wochenende, ein neuer Rekord.
 - **Sicherungs-Erinnerung** — der lokale Speicher ist die einzige Kopie. Nach 45
   Tagen ohne Export gibt es einen dezenten Hinweis.
 
@@ -201,11 +242,13 @@ bis zum *Gipfelstürmer*. Freiwillig, abschaltbar, und niemand ausser dir sieht 
 
 ### Bedienung
 
-- **Ctrl/⌘ + K** öffnet die Schnellsuche — Befehle und Datumssprünge (`14.3.` funktioniert).
+- **Ctrl/⌘ + K** öffnet die Schnellsuche — Befehle, Fragen, Schnellerfassung und
+  Datumssprünge (`14.3.` und `12.10.` funktionieren).
 - **Leertaste** stempelt, **B** startet und beendet Pausen, **←/→** wechseln den Tag,
-  **1–6** wechseln die Ansicht, **?** zeigt alle Kürzel.
+  **1–7** wechseln die Ansicht, **?** zeigt alle Kürzel.
 - Vier Sprachen: Deutsch, Englisch, Französisch, Italienisch.
-- Hell, dunkel oder dem System folgend. Drei Dichtestufen, erhöhter Kontrast.
+- Hell, dunkel oder dem System folgend. Drei Dichtestufen, erhöhter Kontrast —
+  alle Texte erfüllen WCAG 2.2 AA.
 - Ausgelegt für Tastatur und Screenreader, funktioniert auf dem Telefon genauso
   wie auf dem grossen Bildschirm.
 
@@ -224,8 +267,22 @@ Daraus folgen zwei Dinge, die man wissen sollte:
 2. **Jedes Gerät führt sein eigenes Konto.** Zum Umziehen die JSON-Sicherung
    exportieren und auf dem anderen Gerät einlesen.
 
-Ein automatisches Reservestück wird bei jedem Start angelegt; kaputte Daten
-werden nicht überschrieben, sondern beiseitegelegt.
+Ein automatisches Reservestück wird bei jedem Start angelegt, das vom Vortag
+bleibt zusätzlich liegen. Kaputte Daten werden nicht überschrieben, sondern
+beiseitegelegt — die App bietet dann die Sicherung zur Wiederherstellung an
+(*Einstellungen → Datensicherheit*).
+
+**Updates löschen nichts.** Die Daten hängen an der Adresse der Seite
+(`andrinlv.github.io`), nicht an den Programmdateien. Wird eine neue Version
+veröffentlicht, ersetzt der Serviceworker nur das Programm; ältere Datenstände
+werden beim Start automatisch auf das neue Schema gehoben. Nur ein Wechsel der
+Adresse (eigene Domain, anderes GitHub-Konto) braucht einen Umzug per Sicherung.
+
+**Mehrere Fenster** — etwa die installierte App und ein Browser-Tab — gleichen sich
+ab und überschreiben sich nicht gegenseitig.
+
+**iPhone/iPad:** Safari löscht Daten von Websites, die sieben Tage nicht geöffnet
+wurden. Als App auf dem Home-Bildschirm gilt das nicht — dort installieren.
 
 ---
 
@@ -244,7 +301,7 @@ erreichbar und lässt sich von dort installieren.
 ## Entwicklung
 
 ```bash
-npm test      # 178 Tests für Rechenkern, Kalenderabgleich und Planung
+npm test      # über 700 Tests: Rechenkern, Recht, Daten, Funktionen, Stylesheets
 npm run build # Icons erzeugen + Einzeldatei bauen
 npm start     # lokaler Server
 ```
@@ -269,6 +326,8 @@ assets/css/
 assets/js/core/
   time.js               Zeit- und Datumsrechnung (reine Funktionen)
   planner.js            Schnellerfassung, Gleitzeit-Planer, Brückentage, Monatscheck
+  assist.js · whatif.js · insights.js · review.js · ask.js · rota.js · closing.js · qr.js
+                        Logik der Zusatzfunktionen (rein, getestet)
   rules.js              Tagesarten, Pausenstaffeln, Arbeitsmodelle
   holidays.js           Feiertage inkl. Osterberechnung
   engine.js             Tages- und Zeitraumberechnung, Kontostand
@@ -283,12 +342,14 @@ assets/js/data/
 
 assets/js/ui/
   i18n.js               vier Sprachen
-  dom.js                DOM-Werkzeuge, Icons, Toasts, Modale
+  dom.js                DOM-Werkzeuge, Icons, Toasts, Modale, Tooltips
+  ext.js                Erweiterungspunkte für Zusatzfunktionen
   charts.js             SVG-Diagramme von Hand
   onboarding.js         Erstkonfiguration
   outlooksync.js        Ablauf und Vorschau des Kalenderabgleichs
   app.js                Zustand, Navigation, Tastatur, PWA
-  views/                die sieben Ansichten
+  views/                die acht Ansichten
+  features/             Zusatzfunktionen, eingehängt über ext.js
 
 tools/
   make-icons.js         erzeugt alle PNG-Icons (ohne Fremdbibliotheken)

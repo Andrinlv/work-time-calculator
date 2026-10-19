@@ -14,9 +14,17 @@
       das Ende als exklusiv behandelt.
 
    2. NICHTS WIRD ÜBERSCHRIEBEN. Der Abgleich erzeugt einen Vorschlag, den
-      der Nutzer bestätigt. Tage mit eigenen Stempelungen bleiben unangetastet;
-      geändert werden nur leere Tage und solche, die zuvor aus dem Kalender
-      stammten.
+      der Nutzer bestätigt. Tage mit eigenen Stempelungen bleiben unangetastet
+      — auch wenn der Tag ursprünglich aus dem Kalender kam. Geändert werden
+      nur leere Tage und solche, die zuvor aus dem Kalender stammten und seither
+      nicht von Hand bearbeitet wurden.
+
+   3. KURZE TERMINE SIND KEINE ABWESENHEIT. „Ferienplanung Team“ (1 h) oder
+      „Arzttermin“ (16–17 Uhr) machen keinen Ferien- oder Krankheitstag.
+      Stichwörter zählen nur bei Ganztagesterminen oder Terminen, die einen
+      wesentlichen Teil des Arbeitstags belegen; ein halber Tag wird zum
+      Halbtag. Stichwörter greifen als ganze Wörter oder als Wortende
+      („Sommerferien“), nie mitten im Wort („Konkursverfahren“ ≠ Kurs).
    ========================================================================== */
 (function (root, factory) {
   if (typeof module === "object" && module.exports) {
@@ -95,6 +103,18 @@
     "morgen halbtag", "matin", "après-midi", "mattina", "pomeriggio"
   ];
 
+  /* Wie viel eines Tages ein Termin belegen muss, um als Abwesenheit zu
+     zählen. Gemessen wird nur im üblichen Arbeitsfenster 06–20 Uhr, damit
+     „Ferien ab Montag 17 Uhr“ den Montag nicht zum Ferientag macht. */
+  var WORK_WINDOW = { from: 6 * 60, to: 20 * 60 };
+  var MIN_ABSENCE_MINUTES = 4 * 60;
+  var DEFAULT_DAY_MINUTES = 504;      // 42-h-Woche / 5 Tage
+  var FULL_DAY_SHARE = 0.75;          // ab drei Vierteln des Tagessolls: ganzer Tag
+
+  /* Von Hand bearbeitet heisst: später gespeichert als übernommen. Der
+     Abgleich selbst schreibt beides im selben Augenblick. */
+  var EDIT_TOLERANCE_MS = 5000;
+
   function defaultSettings() {
     return {
       enabled: false,
@@ -142,13 +162,40 @@
   }
 
   /**
+   * Datum eines Ganztagestermins: immer der Datumsteil, auch wenn Graph die
+   * Zeit in UTC liefert — sonst landet der Ferientag westlich von UTC einen
+   * Tag zu früh.
+   */
+  function wallDate(graphTime) {
+    if (!graphTime || !graphTime.dateTime) return null;
+    var m = /^(\d{4}-\d{2}-\d{2})/.exec(String(graphTime.dateTime));
+    return m ? { date: m[1], minutes: 0 } : null;
+  }
+
+  /**
+   * Wie viele Minuten des Arbeitsfensters ein Termin an einem Tag belegt.
+   * Ganztagestermine belegen den ganzen Tag.
+   */
+  function coverageOn(event, date) {
+    if (event.isAllDay) return WORK_WINDOW.to - WORK_WINDOW.from;
+    var start = toLocalParts(event.start);
+    var end = toLocalParts(event.end);
+    if (!start) return 0;
+    var from = date === start.date ? start.minutes : (date < start.date ? T.DAY : 0);
+    var to = !end ? from : (date === end.date ? end.minutes : (date > end.date ? 0 : T.DAY));
+    from = Math.max(from, WORK_WINDOW.from);
+    to = Math.min(to, WORK_WINDOW.to);
+    return Math.max(0, to - from);
+  }
+
+  /**
    * Alle Kalendertage, die ein Termin berührt.
    * Ganztagestermine enden laut Graph am Folgetag um 00:00 — dieses Ende
    * ist exklusiv und darf nicht als eigener Tag zählen.
    */
   function eventDays(event) {
-    var start = toLocalParts(event.start);
-    var end = toLocalParts(event.end);
+    var start = event.isAllDay ? wallDate(event.start) : toLocalParts(event.start);
+    var end = event.isAllDay ? wallDate(event.end) : toLocalParts(event.end);
     if (!start) return [];
     if (!end) return [start.date];
 
@@ -192,13 +239,36 @@
 
     var showAsHit = hasShowAs && rule.showAs.indexOf(event.showAs) >= 0;
     var keywordHit = hasKeywords && rule.keywords.some(function (k) {
-      return k && text.indexOf(normalize(k)) >= 0;
+      return k && hasKeyword(text, normalize(k));
     });
 
     if (hasShowAs && hasKeywords) return showAsHit || keywordHit;
     if (hasShowAs) return showAsHit;
     if (hasKeywords) return keywordHit;
     return false;
+  }
+
+  var LETTER = "a-z0-9\\u00c0-\\u024f";
+  var keywordCache = Object.create(null);
+
+  /**
+   * Stichwort als ganzes Wort, als Wortende eines zusammengesetzten Worts
+   * („Sommerferien“, „Zahnarzt“: mindestens vier Buchstaben davor) oder mit
+   * Beugungs- bzw. Zeit-Endung („Kurse“, „Ferientag“, „Krankheitstage“).
+   * Nicht aber mitten im Wort: „Konkursverfahren“, „Information“,
+   * „Ferienvertretung“ sind keine Abwesenheiten.
+   */
+  function hasKeyword(text, kw) {
+    var re = keywordCache[kw];
+    if (!re) {
+      var esc = kw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      re = kw.length <= 3
+        ? new RegExp("(^|[^" + LETTER + "])" + esc + "($|[^" + LETTER + "])")
+        : new RegExp("(^|[^" + LETTER + "]|[" + LETTER + "]{4})" + esc +
+          "(s?(?:tag|tage|woche|wochen|halbtag)|e|en|n|s|es|er)?($|[^" + LETTER + "])");
+      keywordCache[kw] = re;
+    }
+    return re.test(text);
   }
 
   function isHalfDay(text) {
@@ -225,10 +295,17 @@
   function mapEvents(events, settings) {
     var s = Object.assign(defaultSettings(), settings || {});
     var rules = s.rules && s.rules.length ? s.rules : DEFAULT_RULES;
+    var dayMinutes = s.dayMinutes > 0 ? s.dayMinutes : DEFAULT_DAY_MINUTES;
     var byDate = Object.create(null);
+    var seen = Object.create(null);
 
     (events || []).forEach(function (event) {
       if (!isRelevant(event, s)) return;
+      // Derselbe Termin aus zwei Kalendern zählt nur einmal
+      if (event.id) {
+        if (seen[event.id]) return;
+        seen[event.id] = true;
+      }
 
       var text = searchableText(event);
       var rule = null;
@@ -240,10 +317,16 @@
 
       var isPrivate = event.sensitivity === "private" || event.sensitivity === "confidential";
       var label = (s.copySubjectToNote !== false && !isPrivate) ? (event.subject || "") : "";
-      var factor = isHalfDay(text) ? 0.5 : 1;
+      var half = isHalfDay(text);
 
       eventDays(event).forEach(function (date) {
         var existing = byDate[date];
+
+        /* Kurze Termine sind Besprechungen, keine Abwesenheit; ein halber
+           Tag wird zum Halbtag. */
+        var covered = coverageOn(event, date);
+        if (covered < MIN_ABSENCE_MINUTES) return;
+        var factor = half || (!event.isAllDay && covered < dayMinutes * FULL_DAY_SHARE) ? 0.5 : 1;
 
         if (rule.locationOnly) {
           byDate[date] = Object.assign({ date: date }, existing, {
@@ -303,7 +386,7 @@
       var proposal = mapped[date] || null;
       var record = getDay(date) || null;
       var hasStamps = !!(record && (String(record.start || "").trim() || String(record.end || "").trim()));
-      var fromCalendar = !!(record && record.source === SOURCE);
+      var fromCalendar = !!(record && record.source === SOURCE && !editedByHand(record));
 
       /* --- Nichts im Kalender: bestehende Kalender-Einträge zurücknehmen --- */
       if (!proposal) {
@@ -323,6 +406,19 @@
 
       /* --- Nur der Arbeitsort ---------------------------------------- */
       if (!proposal.type && proposal.location) {
+        // Die übernommene Abwesenheit ist aus dem Kalender verschwunden,
+        // der Homeoffice-Termin steht noch: Abwesenheit zurücknehmen, Ort setzen
+        if (record && fromCalendar && record.type && !hasStamps) {
+          changes.push({
+            date: date,
+            action: "clear",
+            location: proposal.location,
+            before: summarize(record),
+            after: { location: proposal.location },
+            reason: "gone"
+          });
+          return;
+        }
         if (!record || record.location !== proposal.location) {
           changes.push({
             date: date,
@@ -340,7 +436,9 @@
       }
 
       /* --- Eigene Erfassung hat Vorrang ------------------------------- */
-      if (hasStamps && !fromCalendar) {
+      // Gestempelte Tage bleiben immer unberührt — auch ein Kurstag aus dem
+      // Kalender, an dem man zusätzlich gestempelt hat.
+      if (hasStamps) {
         protectedDays.push({ date: date, proposal: proposal, record: summarize(record) });
         return;
       }
@@ -372,6 +470,15 @@
     return { changes: changes, protectedDays: protectedDays, unchanged: unchanged };
   }
 
+  /** Wurde ein übernommener Tag danach von Hand geändert? */
+  function editedByHand(record) {
+    if (!record.updatedAt || !record.outlookSyncedAt) return false;
+    var edited = Date.parse(record.updatedAt);
+    var synced = Date.parse(record.outlookSyncedAt);
+    if (!isFinite(edited) || !isFinite(synced)) return false;
+    return edited - synced > EDIT_TOLERANCE_MS;
+  }
+
   function summarize(record) {
     if (!record) return null;
     return {
@@ -380,7 +487,8 @@
       start: record.start || "",
       end: record.end || "",
       location: record.location || "office",
-      source: record.source || null
+      source: record.source || null,
+      edited: record.source === SOURCE && editedByHand(record)
     };
   }
 
@@ -393,14 +501,24 @@
     var stamp = syncedAt || new Date().toISOString();
 
     (changes || []).forEach(function (change) {
+      var before = change.before || null;
+      // Stempelungen gehören dem Nutzer: nie leeren, auch wenn ein Plan von
+      // aussen kommt (Absicherung zusätzlich zu planSync)
+      var stamped = !!(before && (String(before.start || "").trim() || String(before.end || "").trim()));
       if (change.action === "clear") {
-        patch[change.date] = null;
+        if (stamped) return;
+        patch[change.date] = change.location
+          ? { type: null, absenceFactor: 1, note: "", location: change.location, source: SOURCE, outlookSyncedAt: stamp }
+          : null;
         return;
       }
       if (change.action === "location") {
-        patch[change.date] = { location: change.location, outlookSyncedAt: stamp };
+        patch[change.date] = { location: change.location };
+        // Einen von Hand geänderten Kalendertag nicht wieder zum Kalendertag machen
+        if (!(before && before.edited)) patch[change.date].outlookSyncedAt = stamp;
         return;
       }
+      if (stamped) return;
       patch[change.date] = {
         type: change.type,
         absenceFactor: change.factor,
@@ -434,6 +552,8 @@
     defaultSettings: defaultSettings,
     toLocalParts: toLocalParts,
     eventDays: eventDays,
+    coverageOn: coverageOn,
+    hasKeyword: hasKeyword,
     searchableText: searchableText,
     matchRule: matchRule,
     isHalfDay: isHalfDay,
