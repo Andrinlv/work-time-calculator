@@ -292,7 +292,7 @@
       /* Compliance */
       maxDailyMinutes: 600,       // Warnung ab 10 h
       minRestHours: 11,           // Ruhezeit zwischen zwei Tagen
-      maxWeeklyMinutes: 50 * 60,
+      maxWeeklyMinutes: 45 * 60, // ArG Art. 9: 45 h Industrie/Büro (50 h übrige) — auch Basis der Überzeit
 
       /* Schichtvorlagen — ein Klick statt vier Felder.
          Frei erweiterbar; die mitgelieferten decken einen Zweischichtbetrieb
