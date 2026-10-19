@@ -12,7 +12,8 @@
      settings.sections Karten vor dem Spaltenumbruch
      reports.actions   Knöpfe im Kopf           reports.top   über dem Blatt
      calendar.top      über dem Monatsraster    calendar.cell Zellen-Dekorierer
-     week.row          Zeilen-Dekorierer
+     week.row          Zeilen-Dekorierer (ctx.scale = { from, span } des Zeitmassstabs)
+     week.span         collect(days) → [{ from, to }] weitet den Zeitmassstab
      header.actions    Knöpfe in der Kopfzeile
      palette.commands  collect(query) → [{icon, label, sub, run}]
      settings.stampLink nach dem Stempel-Link (ctx: App, input)

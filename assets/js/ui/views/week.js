@@ -101,6 +101,12 @@
       if (r.startTl !== null) from = Math.min(from, Math.floor(r.startTl / 60) * 60);
       if (r.endTl !== null) to = Math.max(to, Math.ceil(r.endTl / 60) * 60);
     });
+    /* Erweiterungen dürfen den Massstab weiten (z. B. geplante Nachtschicht) */
+    if (ZK.Ext) ZK.Ext.collect("week.span", range.days, { App: App }).forEach(function (sp) {
+      if (!sp || !isFinite(sp.from) || !isFinite(sp.to)) return;
+      from = Math.max(0, Math.min(from, Math.floor(sp.from / 60) * 60));
+      to = Math.min(2 * T.DAY, Math.max(to, Math.ceil(sp.to / 60) * 60));
+    });
     var span = Math.max(120, to - from);
     function pct(v) { return ((v - from) / span) * 100; }
 
@@ -267,7 +273,7 @@
       row.addEventListener("keydown", function (e) {
         if (e.key === "Enter" || e.key === " " || e.key === "Spacebar") { e.preventDefault(); open(); }
       });
-      if (ZK.Ext) ZK.Ext.decorate("week.row", row, { App: App, iso: res.date, res: res });
+      if (ZK.Ext) ZK.Ext.decorate("week.row", row, { App: App, iso: res.date, res: res, scale: { from: from, span: span } });
       return row;
     }
 
