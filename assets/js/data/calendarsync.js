@@ -367,10 +367,15 @@
    * Vergleicht die Kalendervorschläge mit dem bestehenden Datenbestand und
    * liefert eine Liste von Änderungen zur Bestätigung.
    *
+   * Tage eines abgeschlossenen Monats (opts.isLocked) nimmt der Speicher
+   * nicht an: Was sich dort ändern würde, steht unter den geschützten Tagen
+   * (reason "closed") — nie unter den Änderungen. So zählt der stille
+   * Abgleich sie nicht mit und meldet sie nicht bei jedem Start erneut.
+   *
    * @param {Object} mapped     Ergebnis von mapEvents()
    * @param {Function} getDay   (iso) => record | null
-   * @param {Object} opts       { from, to, settings }
-   * @returns {{changes: Array, protectedDays: Array, unchanged: Number}}
+   * @param {Object} opts       { from, to, settings, isLocked(iso) }
+   * @returns {{changes: Array, protectedDays: Array, unchanged: Number, closed: Number}}
    */
   function planSync(mapped, getDay, opts) {
     opts = opts || {};
@@ -379,6 +384,7 @@
     var changes = [];
     var protectedDays = [];
     var unchanged = 0;
+    var closed = 0;
 
     var dates = T.rangeDays(from, to);
 
@@ -386,12 +392,20 @@
       var proposal = mapped[date] || null;
       var record = getDay(date) || null;
       var hasStamps = !!(record && (String(record.start || "").trim() || String(record.end || "").trim()));
-      var fromCalendar = !!(record && record.source === SOURCE && !editedByHand(record));
+      var fromCalendar = !!(record && (record.source === SOURCE || syncedLocationOnly(record)) && !editedByHand(record));
+      var locked = !!(opts.isLocked && opts.isLocked(date));
+
+      /* Abgeschlossener Monat: benennen statt anbieten */
+      function offer(change) {
+        if (!locked) { changes.push(change); return; }
+        protectedDays.push({ date: date, proposal: proposal, record: summarize(record), reason: "closed", change: change });
+        closed++;
+      }
 
       /* --- Nichts im Kalender: bestehende Kalender-Einträge zurücknehmen --- */
       if (!proposal) {
         if (record && fromCalendar && !hasStamps) {
-          changes.push({
+          offer({
             date: date,
             action: "clear",
             before: summarize(record),
@@ -409,7 +423,7 @@
         // Die übernommene Abwesenheit ist aus dem Kalender verschwunden,
         // der Homeoffice-Termin steht noch: Abwesenheit zurücknehmen, Ort setzen
         if (record && fromCalendar && record.type && !hasStamps) {
-          changes.push({
+          offer({
             date: date,
             action: "clear",
             location: proposal.location,
@@ -420,7 +434,7 @@
           return;
         }
         if (!record || record.location !== proposal.location) {
-          changes.push({
+          offer({
             date: date,
             action: "location",
             location: proposal.location,
@@ -454,7 +468,7 @@
         (!proposal.location || record.location === proposal.location);
       if (same) { unchanged++; return; }
 
-      changes.push({
+      offer({
         date: date,
         action: "set",
         type: proposal.type,
@@ -467,7 +481,17 @@
       });
     });
 
-    return { changes: changes, protectedDays: protectedDays, unchanged: unchanged };
+    return { changes: changes, protectedDays: protectedDays, unchanged: unchanged, closed: closed };
+  }
+
+  /* Ältere Stände legten für einen Homeoffice-Termin nur { location,
+     outlookSyncedAt } an, ohne Quelle. Ohne jeden eigenen Inhalt gehört so
+     ein Datensatz dem Kalender — sonst bliebe er für immer liegen. */
+  function syncedLocationOnly(record) {
+    if (record.source || !record.outlookSyncedAt) return false;
+    return !(String(record.start || "").trim() || String(record.end || "").trim() || record.type ||
+      (record.breaks && record.breaks.length) || String(record.note || "").trim() ||
+      (record.targetOverride !== null && record.targetOverride !== undefined));
   }
 
   /** Wurde ein übernommener Tag danach von Hand geändert? */
@@ -514,6 +538,10 @@
       }
       if (change.action === "location") {
         patch[change.date] = { location: change.location };
+        /* Neuer Datensatz nur für den Ort: er gehört dem Kalender — so räumt
+           ihn der nächste Abgleich wieder ab, und er zählt nicht als eigener
+           Eintrag (Erfassungsbeginn, Lücken) */
+        if (!before) patch[change.date].source = SOURCE;
         // Einen von Hand geänderten Kalendertag nicht wieder zum Kalendertag machen
         if (!(before && before.edited)) patch[change.date].outlookSyncedAt = stamp;
         return;

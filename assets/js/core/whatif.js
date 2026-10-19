@@ -32,13 +32,15 @@
                    { from, to (Indizes), require, extra }
    ========================================================================== */
 (function (root, factory) {
+  /* Den Monatsabschluss erst beim Rechnen holen: closing.js lädt nach dieser Datei */
   if (typeof module === "object" && module.exports) {
-    module.exports = factory(require("./time.js"), require("./rules.js"), require("./engine.js"));
+    module.exports = factory(require("./time.js"), require("./rules.js"), require("./engine.js"),
+      function () { return require("./closing.js"); });
   } else {
     root.ZK = root.ZK || {};
-    root.ZK.WhatIf = factory(root.ZK.Time, root.ZK.Rules, root.ZK.Engine);
+    root.ZK.WhatIf = factory(root.ZK.Time, root.ZK.Rules, root.ZK.Engine, function () { return root.ZK.Closing; });
   }
-})(typeof self !== "undefined" ? self : globalThis, function (T, R, E) {
+})(typeof self !== "undefined" ? self : globalThis, function (T, R, E, closing) {
   "use strict";
 
   var SPAN_LO = 4 * 60;     // Schieber von Kommen + 4 h …
@@ -97,15 +99,24 @@
    * er in der Zukunft liegt.
    * → { minutes, counts }  counts = false, wenn der Tag vor dem Kontobeginn
    *   liegt und den Stand gar nicht bewegt.
+   * Abgeschlossene Monate zählen eingefroren wie in der Kopfzeile
+   * (ZK.Closing.accountBalance); opts.accountBalance ersetzt die Rechnung.
    */
-  function baseBalance(records, settings, iso, now) {
+  function baseBalance(records, settings, iso, now, opts) {
     var s = Object.assign({}, settings || R.defaultSettings(), { capPlusMinutes: null, capMinusMinutes: null });
     var copy = Object.assign({}, records || {});
     copy[iso] = { date: iso, type: "free", start: "", end: "", breaks: [] };
     var today = T.todayISO(now);
     var upto = iso > today ? iso : today;
     var counts = !(s.carryOverFrom && iso < s.carryOverFrom);
-    return { minutes: E.accountBalance(copy, s, upto, now).minutes, counts: counts };
+    return { minutes: accountOf(opts)(copy, s, upto, now).minutes, counts: counts };
+  }
+
+  /** Dieselbe Kontorechnung wie App.accountBalance — nie die Engine allein. */
+  function accountOf(opts) {
+    if (opts && typeof opts.accountBalance === "function") return opts.accountBalance;
+    var C = closing ? closing() : null;
+    return C && C.accountBalance ? C.accountBalance : E.accountBalance;
   }
 
   /**

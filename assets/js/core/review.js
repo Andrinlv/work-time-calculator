@@ -12,20 +12,23 @@
        Feiertag ist keine Erfassung)
      · Ferientage: quotaUsage().vacationTaken („bezogen“ im Kontingent)
      · Zeitkonto: accountBalance() abgerechnet — ein laufender Tag zählt
-       nicht, wie in Kopfzeile und Statistik
+       nicht, abgeschlossene Monate zählen eingefroren (ZK.Closing), wie in
+       Kopfzeile und Statistik; Monatssaldi ebenso
      · Serie: wie bei den Erfolgen — Arbeitstage mit Erfassung; freie Tage
        und Feiertage ohne Eintrag unterbrechen nicht
    Krankheitstage stehen bewusst nirgends: Ein Rückblick zum Teilen soll
    nichts Persönliches über die Gesundheit erzählen.
    ========================================================================== */
 (function (root, factory) {
+  /* Den Monatsabschluss erst beim Rechnen holen: closing.js lädt nach dieser Datei */
   if (typeof module === "object" && module.exports) {
-    module.exports = factory(require("./time.js"), require("./rules.js"), require("./engine.js"), require("./planner.js"));
+    module.exports = factory(require("./time.js"), require("./rules.js"), require("./engine.js"), require("./planner.js"),
+      function () { return require("./closing.js"); });
   } else {
     root.ZK = root.ZK || {};
-    root.ZK.Review = factory(root.ZK.Time, root.ZK.Rules, root.ZK.Engine, root.ZK.Planner);
+    root.ZK.Review = factory(root.ZK.Time, root.ZK.Rules, root.ZK.Engine, root.ZK.Planner, function () { return root.ZK.Closing; });
   }
-})(typeof self !== "undefined" ? self : globalThis, function (T, R, E, P) {
+})(typeof self !== "undefined" ? self : globalThis, function (T, R, E, P, closing) {
   "use strict";
 
   /* Ab so vielen erfassten Tagen lohnt sich ein Rückblick. */
@@ -44,6 +47,24 @@
   /* ------------------------------------------------------------------ */
 
   function todayOf(now) { return T.todayISO(now); }
+
+  /* Abgeschlossene Monate zählen eingefroren — wie Kopfzeile, Kalender und
+     Statistik (ZK.Closing). Ohne closing.js rechnet die Engine allein. */
+  function closingOf() {
+    var C = closing ? closing() : null;
+    return C && C.accountBalance ? C : null;
+  }
+
+  function accountOf(records, s, upto, now) {
+    var C = closingOf();
+    return (C ? C.accountBalance : E.accountBalance)(records, s, upto, now).minutes;
+  }
+
+  /** Saldo eines Zeitraums aus der Summe der Tagessaldi (`live`). */
+  function periodOf(records, s, from, to, live, now) {
+    var C = closingOf();
+    return C && C.periodBalance ? C.periodBalance(records, s, from, to, live, now) : live;
+  }
 
   /** Jeder Tag höchstens einmal gerechnet (Serien, Brücken, Momente). */
   function dayMemo(records, s, now) {
@@ -311,6 +332,8 @@
     if (eligible.length < 2) st.shortestWeekday = null;
 
     st.months.forEach(function (mo) {
+      var first = year + "-" + (mo.month < 9 ? "0" : "") + (mo.month + 1) + "-01";
+      if (!mo.future) mo.balance = periodOf(records, s, first, T.endOfMonth(first), mo.balance, now);
       mo.value = mo.net + mo.credited;
       if (mo.net > 0 && (!st.busiestMonth || mo.net > st.busiestMonth.net)) st.busiestMonth = mo;
     });
@@ -332,8 +355,8 @@
     st.bridge = bestBridge(day, year, today);
 
     /* Zeitkonto: abgerechnet am Jahresende (bzw. heute) und am Vorjahresende */
-    st.balanceEnd = E.accountBalance(records, s, until, now).minutes;
-    st.balanceStart = E.accountBalance(records, s, (year - 1) + "-12-31", now).minutes;
+    st.balanceEnd = accountOf(records, s, until, now);
+    st.balanceStart = accountOf(records, s, (year - 1) + "-12-31", now);
     st.balanceDelta = st.balanceEnd - st.balanceStart;
     st.balanceDays = st.dayTarget > 0 ? Math.floor(Math.abs(st.balanceEnd) / st.dayTarget * 2) / 2 : 0;
 
@@ -458,7 +481,8 @@
     var range = E.computeRange(prevStart, prevEnd, function (iso) { return records[iso]; }, s, now);
     var own = range.days.filter(function (r) { return r.recorded && records[r.date]; }).length;
     if (!own) return null;
-    return { kind: "month", key: "mo:" + T.monthKey(today), vars: { month: prevStart, balance: range.totals.balance } };
+    var balance = periodOf(records, s, prevStart, prevEnd, range.totals.balance, now);
+    return { kind: "month", key: "mo:" + T.monthKey(today), vars: { month: prevStart, balance: balance } };
   }
 
   var MOMENT_ORDER = ["record", "vacation", "weekend", "bridge", "month"];

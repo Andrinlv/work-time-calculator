@@ -103,12 +103,18 @@
    * Ab wann fehlende Arbeitstage als Lücke gelten — dieselbe Lesart wie
    * ZK.CalWeek.trackingStart: erster eigener Eintrag bzw. App-Start,
    * frühestens Kontobeginn. Ohne eigenen Eintrag gibt es keine Lücken.
+   * Eigen heisst: gestempelt, oder eigener Inhalt — nicht eine aus Outlook
+   * übernommene Absenz und nicht ein Datensatz, der nur einen Ort
+   * (Homeoffice-Termin) oder einen Plan trägt. Sonst rückte ein Termin von
+   * vor 60 Tagen den Beginn zurück und erfände Dutzende Lücken.
    */
   function trackingStartOf(days, s, meta) {
     var first = null;
     Object.keys(days || {}).forEach(function (iso) {
       var rec = days[iso];
-      if (!rec || rec.source === "outlook" || !T.isValidISO(iso)) return;
+      if (!rec || !T.isValidISO(iso)) return;
+      var stamped = !!(String(rec.start || "").trim() || String(rec.end || "").trim());
+      if (!stamped && (rec.source === "outlook" || !hasContent(rec))) return;
       if (first === null || iso < first) first = iso;
     });
     if (!first) return null;
@@ -539,7 +545,9 @@
    *   incomplete  Kommen ohne Gehen (Engine: missing-end), nicht laufend
    *   gaps        Arbeitstag mit Soll ohne jede Erfassung ab Erfassungsbeginn
    * Feiertage und Absenzen gelten als erfasst, freie Tage haben kein Soll.
-   * opts: { from, to, now, active, trackingStart }
+   * Tage eines abgeschlossenen Monats (opts.isLocked) nimmt der Speicher
+   * nicht mehr an — sie werden gar nicht erst vorgeschlagen.
+   * opts: { from, to, now, active, trackingStart, isLocked(iso) }
    */
   function scan(days, s, opts) {
     opts = opts || {};
@@ -551,7 +559,7 @@
     var start = opts.trackingStart === undefined ? trackingStartOf(days, s, null) : opts.trackingStart;
     var out = { incomplete: [], gaps: [] };
     T.rangeDays(from, to).forEach(function (iso) {
-      if (iso === opts.active) return;
+      if (iso === opts.active || (opts.isLocked && opts.isLocked(iso))) return;
       var rec = days ? days[iso] : null;
       var res = computeAt(rec, iso, s, now);
       if (res.running) return;
@@ -610,6 +618,7 @@
     var typicalFor = opts.typicalFor || typicalSource(days, s, opts);
     var out = [];
     (dates || []).forEach(function (iso) {
+      if (opts.isLocked && opts.isLocked(iso)) return;
       var rec = days ? days[iso] : null;
       var res = computeAt(rec, iso, s, now);
       var typ = typicalFor(iso, res);
@@ -647,7 +656,7 @@
    *   end    vergangener Tag ohne Gehen               (letzte 31 Tage)
    *   gaps   Arbeitstage ohne Eintrag                 (letzte 31 Tage)
    * opts: { now, active (App.activeStampDate), trackingStart, dismissed,
-   *         breakLabel, includeDismissed }
+   *         breakLabel, includeDismissed, isLocked (abgeschlossene Tage) }
    * Jeder Vorschlag: { code, key, date, priority, typical, patch, … }
    */
   function detect(days, s, opts) {
@@ -728,7 +737,7 @@
     }
 
     /* ---- Vergangene Tage ---- */
-    var found = scan(days, s, { now: now, active: active, trackingStart: opts.trackingStart, from: T.addDays(today, -SCAN_DAYS) });
+    var found = scan(days, s, { now: now, active: active, trackingStart: opts.trackingStart, from: T.addDays(today, -SCAN_DAYS), isLocked: opts.isLocked });
     var plan = planFill(days, s, found.incomplete.concat(found.gaps), { now: now, typicalFor: typicalFor, breakLabel: label });
     plan.filter(function (p) { return p.kind === "end"; }).forEach(function (p) {
       out.push({ code: "end", date: p.date, start: p.start, end: p.end, addedBreak: p.addedBreak, typical: p.typical, patch: p.patch, plan: [p] });
@@ -750,6 +759,7 @@
     var today = T.todayISO(now);
     var active = opts.active || E.activeShiftDate(function (d) { return days ? days[d] || null : null; }, now);
     if (iso >= today || iso === active) return detect(days, s, opts);
+    if (opts.isLocked && opts.isLocked(iso)) return [];
     var start = opts.trackingStart === undefined ? trackingStartOf(days, s, null) : opts.trackingStart;
     var res = computeAt(days ? days[iso] : null, iso, s, now);
     var isGap = !!start && iso >= start && res.target > 0 && !res.recorded && !hasContent(days ? days[iso] : null);

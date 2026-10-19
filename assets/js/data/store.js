@@ -361,7 +361,10 @@
       var mine = state;
       // Einstellungen zuerst: ob ein Tag gesperrt ist, entscheidet der zusammengeführte Stand
       var changedSettings = [];
-      Object.keys(ext.settings).forEach(function (k) {
+      /* Beide Seiten: auch ein dort entfernter Schlüssel ist eine Änderung
+         (z. B. ein wieder geöffneter Monat) — sonst merkte dieses Fenster
+         nichts und zeigte ihn weiter als abgeschlossen. */
+      Object.keys(Object.assign({}, mine.settings, ext.settings)).forEach(function (k) {
         if (pending.settings[k]) return;
         if (stable(ext.settings[k]) !== stable(mine.settings[k])) changedSettings.push(k);
       });
@@ -923,8 +926,22 @@
         updated++;
       });
 
+      /* Abschlüsse gehören zu den Tagen, die das Zusammenführen ohnehin
+         schützt: Ein bestehender Abschluss bleibt, wie er ist — eine ältere
+         Sicherung setzte sonst still den eingefrorenen Saldo zurück, während
+         die korrigierten Tage blieben. Neue Abschlüsse aus der Datei kommen
+         dazu. Ersetzen geht nur mit „Alles ersetzen“. */
+      var closingsKept = [];
       if (mode === "merge" && settings) {
-        Object.keys(settings).forEach(function (k) { trackSetting(entry, k); pending.settings[k] = true; });
+        Object.keys(settings).forEach(function (k) {
+          if (guardPrefix && k.indexOf(guardPrefix) === 0 && state.settings[k] !== undefined) {
+            if (stable(settings[k]) !== stable(state.settings[k])) closingsKept.push(k.slice(guardPrefix.length));
+            delete settings[k];
+            return;
+          }
+          trackSetting(entry, k);
+          pending.settings[k] = true;
+        });
         Object.assign(state.settings, settings);
       }
       if (achievements && mode !== "merge-keep") {
@@ -942,7 +959,10 @@
       persist(true);
       emit({ type: "import" });
       emitLocked(locked, added + updated > 0 || !!settings || !!achievements);
-      return { added: added, updated: updated, skipped: skipped, invalid: invalid, newer: version > SCHEMA, locked: locked.length };
+      return {
+        added: added, updated: updated, skipped: skipped, invalid: invalid, newer: version > SCHEMA, locked: locked.length,
+        closingsKept: closingsKept.sort()   // Monate, deren Abschluss in der Datei anders lautete
+      };
     }
 
     /** Alles löschen — vollständig umkehrbar (Tage, Einstellungen, Erfolge, Meta). */

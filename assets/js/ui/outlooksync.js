@@ -123,7 +123,11 @@
       });
 
       var mapped = CS.mapEvents(events, s);
-      var plan = CS.planSync(mapped, function (iso) { return App.store.getDay(iso); }, range);
+      /* Abgeschlossene Monate nehmen nichts an: dort nichts anbieten und
+         nichts zählen — sonst meldete jeder stille Abgleich dieselben Tage */
+      var plan = CS.planSync(mapped, function (iso) { return App.store.getDay(iso); }, Object.assign({}, range, {
+        isLocked: function (iso) { return !!(App.store.isLocked && App.store.isLocked(iso)); }
+      }));
       plan.eventCount = events.length;
       plan.range = range;
 
@@ -219,27 +223,12 @@
       body.appendChild(list);
     }
 
-    /* Geschützte Tage benennen — Vertrauen entsteht durch Sichtbarkeit */
-    if (plan.protectedDays.length) {
-      var warn = D.el("div.notice.warn.mt-4");
-      warn.innerHTML = D.icon("lock") +
-        "<div><strong>" + D.esc(I.tn("ol.protectedTitle", plan.protectedDays.length)) + "</strong>" +
-        "<div class='sub'>" + D.esc(I.t("ol.protectedHint")) + "</div></div>";
-      body.appendChild(warn);
-
-      var chips = D.el("div.chipset.mt-3");
-      plan.protectedDays.slice(0, 24).forEach(function (p) {
-        var chip = D.el("button.chip", {
-          type: "button",
-          text: I.formatDate(p.date, { day: "2-digit", month: "2-digit" }) + " · " + I.t("type." + p.proposal.type)
-        });
-        chip.addEventListener("click", function () {
-          ZK.DayModal.open(App, p.date, function () { App.renderChrome(); App.renderView(); });
-        });
-        chips.appendChild(chip);
-      });
-      body.appendChild(chips);
-    }
+    /* Geschützte Tage benennen — Vertrauen entsteht durch Sichtbarkeit:
+       eigene Erfassungen und Tage abgeschlossener Monate getrennt */
+    var own = plan.protectedDays.filter(function (p) { return p.reason !== "closed"; });
+    var closed = plan.protectedDays.filter(function (p) { return p.reason === "closed"; });
+    protectedBlock(App, body, own, "warn", I.tn("ol.protectedTitle", own.length), I.t("ol.protectedHint"));
+    protectedBlock(App, body, closed, "info", I.tn("ol.closedTitle", closed.length), I.t("ol.closedHint"));
 
     var cancel = D.el("button.btn", { type: "button", text: I.t("common.cancel") });
     apply = D.el("button.btn.primary", {
@@ -272,6 +261,39 @@
       m.close();
       applyChanges(App, list);
     });
+  }
+
+  /** Was der Kalender an einem geschützten Tag gewollt hätte. */
+  function protectedLabel(p) {
+    var c = p.change;
+    if (c && c.action === "clear") return I.t("ol.willClear");
+    if (c && c.action === "location") return I.t("loc." + c.location);
+    var type = (c && c.type) || (p.proposal && p.proposal.type);
+    return type ? I.t("type." + type) : "";
+  }
+
+  function protectedBlock(App, body, list, tone, title, hint) {
+    if (!list.length) return;
+    var box = D.el("div.notice." + tone + ".mt-4");
+    box.innerHTML = D.icon("lock") +
+      "<div><strong>" + D.esc(title) + "</strong>" +
+      "<div class='sub'>" + D.esc(hint) + "</div></div>";
+    body.appendChild(box);
+
+    var chips = D.el("div.chipset.mt-3");
+    list.slice(0, 24).forEach(function (p) {
+      var what = protectedLabel(p);
+      var chip = D.el("button.chip", {
+        type: "button",
+        text: I.formatDate(p.date, { day: "2-digit", month: "2-digit" }) + (what ? " · " + what : "")
+      });
+      chip.addEventListener("click", function () {
+        ZK.DayModal.open(App, p.date, function () { App.renderChrome(); App.renderView(); });
+      });
+      chips.appendChild(chip);
+    });
+    if (list.length > 24) chips.appendChild(D.el("span.tag", { text: "+ " + (list.length - 24) }));
+    body.appendChild(chips);
   }
 
   function changeRow(change, index, selected, onToggle) {
@@ -321,11 +343,13 @@
     var stamp = new Date().toISOString();
     var patch = CS.buildPatch(changes, stamp);
 
-    App.store.setDays(patch, { label: "outlook" });
+    // Gemeldet wird, was der Speicher angenommen hat (ein gesperrter Tag meldet sich selbst)
+    var written = App.store.setDays(patch, { label: "outlook" }).written;
     saveSettings(App, { lastSyncAt: stamp });
     App.afterChange();
 
-    D.toast(I.tn("ol.applied", changes.length), {
+    if (!written) return;
+    D.toast(I.tn("ol.applied", written), {
       tone: "plus",
       icon: "calendar",
       action: { label: I.t("common.undo"), onClick: function () { App.undo(); } }

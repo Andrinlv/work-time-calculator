@@ -356,7 +356,9 @@
       active: App.activeStampDate(),
       trackingStart: trackingStart(App),
       samples: cache.samples,
-      breakLabel: I.t("day.lunch")
+      breakLabel: I.t("day.lunch"),
+      /* Abgeschlossene Monate nehmen nichts mehr an — dort nichts vorschlagen */
+      isLocked: function (iso) { return !!(App.store.isLocked && App.store.isLocked(iso)); }
     };
   }
 
@@ -607,9 +609,10 @@
       m.close();
       if (!again.length) { D.toast(I.t("assist.stale"), { tone: "warn" }); App.renderView(); return; }
       flushToday();
-      App.store.setDays(map, { label: "assist" });
+      // Gezählt wird, was der Speicher angenommen hat
+      var written = App.store.setDays(map, { label: "assist" }).written;
       App.afterChange();
-      D.toast(I.tn("assist.gaps.done", again.length), { tone: "plus", icon: "check", action: undoAction(App) });
+      if (written) D.toast(I.tn("assist.gaps.done", written), { tone: "plus", icon: "check", action: undoAction(App) });
     });
   }
 
@@ -729,7 +732,7 @@
       if (!ctx.from || ctx.from >= today) return null;
       var o = baseOpts(App, now);
       var found = A.scan(App.store.allDays(), App.settings(), {
-        from: ctx.from, to: ctx.to, now: now, active: o.active, trackingStart: o.trackingStart
+        from: ctx.from, to: ctx.to, now: now, active: o.active, trackingStart: o.trackingStart, isLocked: o.isLocked
       });
       var dates = found.incomplete.concat(found.gaps);
       if (!dates.length) return null;

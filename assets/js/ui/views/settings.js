@@ -720,7 +720,15 @@
     }
 
     function importDone(result, count) {
-      var opts = { sub: I.t("set.importResult", result), tone: count ? "plus" : "warn" };
+      var sub = I.t("set.importResult", result);
+      /* Zusammenführen ersetzt keinen bestehenden Monatsabschluss — sagen, welcher blieb */
+      var kept = (result && result.closingsKept) || [];
+      if (kept.length) {
+        sub += " · " + I.tn("set.importClosingsKept", kept.length, {
+          months: kept.map(function (mk) { return I.monthName(+mk.slice(5, 7) - 1, "long") + " " + mk.slice(0, 4); }).join(", ")
+        });
+      }
+      var opts = { sub: sub, tone: count ? "plus" : "warn" };
       if (count) opts.action = { label: I.t("common.undo"), onClick: function () { App.undo(); } };
       D.toast(I.t("toast.imported"), opts);
     }
@@ -1338,8 +1346,11 @@
       return Object.keys(App.store.allDays()).some(function (iso) { return iso < t; });
     }
 
+    /* Wie die Kopfzeile: abgeschlossene Monate bleiben eingefroren — die
+       Vorschau zeigt nur, was sich wirklich verschiebt. */
     function balanceUntilYesterday(settings) {
-      return E.accountBalance(App.store.allDays(), settings, T.addDays(today(), -1)).minutes;
+      var account = ZK.Closing ? ZK.Closing.accountBalance : E.accountBalance;
+      return account(App.store.allDays(), settings, T.addDays(today(), -1)).minutes;
     }
 
     function impactText(before, after) {

@@ -563,6 +563,9 @@
        record(iso), day(iso)         Datensatz / Engine-Ergebnis (App.day)
        range(from, to)               App.range
        accountBalance(upto)          App.accountBalance → { minutes }
+       periodBalance(from, to, live) optional: Saldo eines Zeitraums mit
+                                     abgeschlossenen Monaten eingefroren
+                                     (ZK.Closing.periodBalance), sonst live
        settledBalance()              App.settledBalance → { minutes, live, … }
        activeDate()                  App.activeStampDate
        holiday(iso)                  App.holiday
@@ -589,6 +592,11 @@
   }
 
   function toneOf(v) { return v > 0 ? "plus" : v < 0 ? "minus" : ""; }
+
+  /** Saldo eines Zeitraums wie Kalender und Statistik — abgeschlossene Monate eingefroren. */
+  function periodBal(x, from, to, live) {
+    return x.api.periodBalance ? x.api.periodBalance(from, to, live) : live;
+  }
 
   /** Uhrzeit auf der Zeitachse des Tages, nach Mitternacht mit „+1 Tag“. */
   function clockText(x, tl) {
@@ -947,7 +955,8 @@
     }
     var days = x.api.range(from, to).days;
     var sum = summarize(x, days);
-    var bal = sum.settled;
+    // Monat und Jahr wie Kalender und Statistik (abgeschlossene Monate eingefroren), die Woche wie die Wochenansicht
+    var bal = it.period === "week" ? sum.settled : periodBal(x, from, to, sum.settled);
     if (it.period === "week") label = x.t("ask.period.week", { n: T.isoWeek(ref), bal: x.fmtS(bal) });
     else if (it.period === "month") {
       var d = T.fromISO(from);
@@ -1230,16 +1239,17 @@
     a.data.plusDays = plusDays;
     a.data.plusSum = plusSum;
     a.data.law = law;
-    a.data.balance = range.totals.balance;
+    var yearBal = periodBal(x, from, to, range.totals.balance);
+    a.data.balance = yearBal;
     if (law !== null && law !== undefined) {
       a.label = law > 0 ? x.t("ask.ot.law", { v: x.fmt(law), year: y }) : x.t("ask.ot.lawNone", { year: y });
-      a.sub = join([x.t("ask.ot.sub", { h: x.num(Math.round(maxWeekly / 6) / 10), days: daysText, bal: x.fmtS(range.totals.balance) }),
+      a.sub = join([x.t("ask.ot.sub", { h: x.num(Math.round(maxWeekly / 6) / 10), days: daysText, bal: x.fmtS(yearBal) }),
         ot && ot.cap ? x.t("ask.ot.cap", { cap: x.fmt(ot.cap) }) : null]);
       a.tone = ot && ot.over ? "minus" : "";
       if (ot) a.data.cap = ot.cap;
     } else {
       a.label = x.t("ask.ot.plus", { days: daysText, year: y });
-      a.sub = x.t("ask.ot.plusSub", { sum: x.fmtS(plusSum), bal: x.fmtS(range.totals.balance) });
+      a.sub = x.t("ask.ot.plusSub", { sum: x.fmtS(plusSum), bal: x.fmtS(yearBal) });
       a.tone = plusDays ? "plus" : "";
     }
     return a;

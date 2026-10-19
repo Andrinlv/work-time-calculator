@@ -157,9 +157,34 @@
     return P.analyzeQuickEntry(text, T.todayISO());
   }
 
+  function isLocked(App, iso) {
+    return !!(App.store && App.store.isLocked && App.store.isLocked(iso));
+  }
+
+  /**
+   * Tage abgeschlossener Monate: Die Vorschau zeigt sie als „abgeschlossen“,
+   * gespeichert wird dort nichts — sie zählen weder als neu noch als zu
+   * ersetzen. Liegt alles Eintragbare in solchen Monaten: Fehler „locked“.
+   */
+  function lockPlan(thePlan, locked) {
+    thePlan.locked = 0;
+    if (!locked) return thePlan;
+    thePlan.days.forEach(function (d) {
+      if (d.status === "skipped" || !locked(d.date)) return;
+      if (d.status === "new") thePlan.fresh--;
+      else if (d.status === "occupied") thePlan.occupied--;
+      else if (d.status === "same") thePlan.unchanged--;
+      d.status = "locked";
+      d.reason = "locked";
+      thePlan.locked++;
+    });
+    if (thePlan.locked && !thePlan.fresh && !thePlan.occupied && !thePlan.unchanged) thePlan.error = "locked";
+    return thePlan;
+  }
+
   function plan(App, parsed) {
     var s = App.settings();
-    return P.planQuickEntry(parsed, {
+    return lockPlan(P.planQuickEntry(parsed, {
       getRecord: function (iso) { return App.store.getDay(iso); },
       dayOff: function (iso) {
         if (App.holiday(iso)) return "holiday";
@@ -167,7 +192,7 @@
       },
       lunch: s.defaultLunch,
       breakLabel: I.t("day.lunch")
-    });
+    }), function (iso) { return isLocked(App, iso); });
   }
 
   /** Fehlermeldung zu einem Lesefehler, mit dem Stichwort der eigenen Sprache. */
@@ -195,21 +220,21 @@
     thePlan.days.slice(0, max).forEach(function (d) {
       var kind = d.status === "new" ? "new"
         : d.status === "occupied" ? (overwrite ? "over" : "kept")
-        : d.status === "same" ? "same" : "skip";
-      var row = D.el("div.qe-row.is-" + kind);
+        : d.status === "same" ? "same" : d.status === "locked" ? "locked" : "skip";
+      var row = D.el("div.qe-row.is-" + (kind === "locked" ? "skip.is-locked" : kind));
 
       var top = D.el("div.qe-top");
       top.appendChild(D.el("b.qe-date", { text: shortDate(d.date) }));
-      var tagTone = { "new": "plus", over: "warn", kept: "", same: "plus", skip: "" }[kind];
+      var tagTone = { "new": "plus", over: "warn", kept: "", same: "plus", skip: "", locked: "" }[kind];
       var tagText = {
         "new": I.t("tools.qeStatusNew"), over: I.t("tools.qeStatusOver"), kept: I.t("tools.qeStatusKept"),
-        same: I.t("tools.qeStatusSame"), skip: I.t("tools.qeStatusSkip")
+        same: I.t("tools.qeStatusSame"), skip: I.t("tools.qeStatusSkip"), locked: I.t("lock.status")
       }[kind];
       top.appendChild(D.el("span.tag" + (tagTone ? "." + tagTone : ""), { text: tagText }));
       row.appendChild(top);
 
       /* Saldo des Tages, wie er nach dem Eintragen dastünde */
-      if (kind !== "skip") {
+      if (kind !== "skip" && kind !== "locked") {
         var rec = (kind === "kept" || kind === "same") ? (d.before || {}) : d.after;
         var res = ZK.Engine.computeDay(Object.assign({}, App.record(d.date), rec), {
           settings: s, holiday: App.holiday(d.date), isToday: d.date === T.todayISO()
@@ -220,7 +245,9 @@
       }
 
       var change = D.el("div.qe-change");
-      if (kind === "skip") {
+      if (kind === "locked") {
+        change.appendChild(D.el("span.qe-before", { text: I.t("lock.dayHint") }));
+      } else if (kind === "skip") {
         var h = App.holiday(d.date);
         change.appendChild(D.el("span.qe-before", {
           text: d.reason === "holiday" && h ? (h.names && h.names[I.getLang()]) || h.name : I.t("tools.qeDayOff")
@@ -250,10 +277,12 @@
    */
   function apply(App, thePlan, overwrite, opts) {
     var patch = P.selectQuickPatch(thePlan, overwrite);
-    var n = Object.keys(patch).length;
-    if (!n) return 0;
+    if (!Object.keys(patch).length) return 0;
     var replaced = overwrite ? thePlan.occupied : 0;
-    App.store.setDays(patch, { label: "quick" });
+    /* Gezählt wird, was der Speicher angenommen hat — einen abgeschlossenen
+       Monat meldet er selbst (Sperrmeldung) */
+    var n = App.store.setDays(patch, { label: "quick" }).written;
+    if (!n) return 0;
     if (opts && opts.beforeRender) opts.beforeRender();
     App.afterChange();
     D.toast(I.tn("tools.quickDone", n), {
@@ -298,6 +327,7 @@
   ZK.QuickEntry = {
     analyze: analyze,
     plan: plan,
+    lockPlan: lockPlan,
     summary: summary,
     errorText: errorText,
     renderRows: renderRows,
@@ -428,6 +458,9 @@
 
       if (thePlan.skipped) {
         preview.appendChild(D.el("p.qe-more", { text: I.tn("tools.qeSkipped", thePlan.skipped) }));
+      }
+      if (thePlan.locked) {
+        preview.appendChild(D.el("p.qe-more", { text: I.tn("lock.skipped", thePlan.locked) }));
       }
 
       /* Erfasste Tage nur auf ausdrücklichen Wunsch ersetzen */
@@ -768,7 +801,8 @@
   function confirmBridge(App, bridge, names) {
     /* Erfasste Tage bleiben, wie sie sind — gebucht werden nur leere */
     var recorded = bridge.dates.filter(function (iso) { return P.hasContent(App.store.getDay(iso)); });
-    var free = bridge.dates.filter(function (iso) { return recorded.indexOf(iso) < 0; });
+    // Abgeschlossene Monate nehmen nichts mehr an — dort wird nichts gebucht
+    var free = bridge.dates.filter(function (iso) { return recorded.indexOf(iso) < 0 && !isLocked(App, iso); });
 
     var body = D.el("div.col");
     body.appendChild(D.el("p", {
@@ -808,10 +842,11 @@
       free.forEach(function (iso) {
         patch[iso] = { type: "vacation", absenceFactor: 1, start: "", end: "", breaks: [] };
       });
-      App.store.setDays(patch, { label: "bridge" });
+      var written = App.store.setDays(patch, { label: "bridge" }).written;
       App.afterChange();
       m.close();
-      D.toast(I.tn("tools.bridgeDone", free.length), {
+      if (!written) return;
+      D.toast(I.tn("tools.bridgeDone", written), {
         tone: "plus", icon: "umbrella",
         action: { label: I.t("common.undo"), onClick: function () { App.undo(); } }
       });
@@ -874,9 +909,13 @@
       var range = App.range(first, T.endOfMonth(first));
       var audit = P.auditRange(range.days, today, { since: since || today });
 
+      /* Ein abgeschlossener Monat zählt mit seinem eingefrorenen Saldo — wie im Kalender */
+      var monthBal = ZK.Closing
+        ? ZK.Closing.periodBalance(App.store.allDays(), App.settings(), first, T.endOfMonth(first), range.totals.balance)
+        : range.totals.balance;
       var kpis = D.el("div.grid-3.mb-4");
-      kpiInto(kpis, I.t("cal.monthBalance"), App.fmtSigned(range.totals.balance), "",
-        range.totals.balance > 0 ? "plus" : range.totals.balance < 0 ? "minus" : "");
+      kpiInto(kpis, I.t("cal.monthBalance"), App.fmtSigned(monthBal), "",
+        monthBal > 0 ? "plus" : monthBal < 0 ? "minus" : "");
       kpiInto(kpis, I.t("stats.recordedDays"), String(range.totals.recordedDays), "");
       kpiInto(kpis, I.t("tools.openPoints"), String(audit.total), "",
         audit.errors ? "minus" : audit.total ? "warn" : "plus");

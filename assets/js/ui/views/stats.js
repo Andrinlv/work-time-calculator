@@ -288,9 +288,10 @@
    * Säulen „Stunden pro Woche/Monat“. Jede Säule trägt ihr eigenes Soll:
    * nur die Tage, die wirklich im Zeitraum (und nicht in der Zukunft)
    * liegen — eine angeschnittene Woche wird nicht am vollen Wochensoll
-   * gemessen.
+   * gemessen. `deltas` (ZK.Closing.dayDeltas): abgeschlossene Monate mit
+   * ihrem eingefrorenen Saldo, wie im Kalender.
    */
-  function groupBars(days, bucket) {
+  function groupBars(days, bucket, deltas) {
     var map = {}, order = [];
     days.forEach(function (r) {
       var key = bucket === "month" ? T.monthKey(r.date) : T.startOfWeek(r.date, 1);
@@ -303,7 +304,7 @@
       b.count++;
       b.value += (r.net || 0) + (r.credited || 0);
       b.ref += r.target || 0;
-      b.balance += r.balance || 0;
+      b.balance += (r.balance || 0) + ((deltas && deltas[r.date]) || 0);
     });
     return order.map(function (k) {
       var b = map[k];
@@ -318,14 +319,16 @@
    * Tag oder pro Woche bis `until`. `slots` ist die Länge der ganzen Achse.
    * Ein laufender Tag ist noch nicht abgerechnet (wie im Konto): er bewegt
    * die Linie nicht, sein Zwischenstand steht als `provisional` am Punkt.
+   * `deltas` (ZK.Closing.dayDeltas): Tage abgeschlossener Monate zählen
+   * eingefroren — die Linie endet so beim Zeitkonto der Kennzahl.
    */
-  function trendSeries(days, before, period) {
+  function trendSeries(days, before, period, deltas) {
     var points = [{ date: period.from, start: true, value: before }];
     var running = before;
     var weekKey = null;
     days.forEach(function (r) {
       var open = !!(r.provisional || r.running);
-      if (!open) running += r.balance || 0;
+      if (!open) running += (r.balance || 0) + ((deltas && deltas[r.date]) || 0);
       var pt;
       if (period.grain === "week") {
         var wk = T.startOfWeek(r.date, 1);
@@ -541,7 +544,11 @@
     var before = cached(App, "acc|" + T.addDays(period.from, -1), function () {
       return App.accountBalance(T.addDays(period.from, -1));
     }).minutes;
-    var trend = trendSeries(days, before, period);
+    /* Abgeschlossene Monate zählen eingefroren (wie Kopfzeile und Kennzahl) */
+    var deltas = ZK.Closing ? cached(App, "frz|" + period.from + "|" + period.until, function () {
+      return ZK.Closing.dayDeltas(App.store.allDays(), App.settings(), period.from, period.until);
+    }) : null;
+    var trend = trendSeries(days, before, period, deltas);
     var trendCard = card(I.t("stats.balanceTrend"), I.t("stats.trendStart", { v: App.fmtSigned(before) }));
     var trendHost = D.el("div");
     trendCard.body.appendChild(trendHost);
@@ -600,7 +607,7 @@
     /* 2 · Stunden pro Woche / pro Monat                                 */
     /* ================================================================ */
     var monthly = period.bucket === "month";
-    var groups = groupBars(days, period.bucket);
+    var groups = groupBars(days, period.bucket, deltas);
     var multiYear = monthly && groups.length && groups[0].key.slice(0, 4) !== groups[groups.length - 1].key.slice(0, 4);
     /* Wochensoll des Modells am Anfang und am Ende — wechselt es im
        Zeitraum, zeigt die Unterzeile beide Werte. */

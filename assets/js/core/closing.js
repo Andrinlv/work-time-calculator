@@ -215,20 +215,57 @@
     return isNum(v) ? v : 0;
   }
 
-  function frozenSum(snap, month, from, to, start) {
-    var total = 0;
-    Object.keys(snap.days || {}).forEach(function (dd) {
-      var iso = month + "-" + dd;
-      if (iso < from || iso > to || (start && iso < start)) return;
-      if (isNum(snap.days[dd])) total += snap.days[dd];
-    });
-    return total;
-  }
-
   function applyCaps(total, s) {
     if (s.capPlusMinutes !== null && s.capPlusMinutes !== undefined && total > s.capPlusMinutes) total = s.capPlusMinutes;
     if (s.capMinusMinutes !== null && s.capMinusMinutes !== undefined && total < -Math.abs(s.capMinusMinutes)) total = -Math.abs(s.capMinusMinutes);
     return total;
+  }
+
+  /**
+   * Abweichung je Tag: eingefrorener minus neu gerechneter Beitrag, nur für
+   * Tage abgeschlossener Monate zwischen `from` und `to` (nur ≠ 0). Wer
+   * Tagessaldi aufsummiert (Verlauf in der Statistik, Saldo eines Zeitraums),
+   * zählt diese Werte dazu und landet so beim selben Zeitkonto wie die
+   * Kopfzeile. → { iso: Minuten }
+   */
+  function dayDeltas(records, settings, from, to, now, opts) {
+    var s = settings || {};
+    var start = s.carryOverFrom || null;
+    var out = {};
+    list(s).forEach(function (c) {
+      var first = maxISO(c.month + "-01", from);
+      var last = minISO(T.endOfMonth(c.month + "-01"), to);
+      if (first > last) return;
+      var live = dayContributions(records, s, first, last, now, opts);
+      var frozen = {};
+      Object.keys(c.snap.days || {}).forEach(function (dd) {
+        var iso = c.month + "-" + dd;
+        if (iso < first || iso > last || (start && iso < start) || !isNum(c.snap.days[dd])) return;
+        frozen[iso] = c.snap.days[dd];
+      });
+      Object.keys(Object.assign({}, live, frozen)).forEach(function (iso) {
+        var d = (frozen[iso] || 0) - (live[iso] || 0);
+        if (d) out[iso] = d;
+      });
+    });
+    return out;
+  }
+
+  /** Summe von dayDeltas() — um so viel weicht ein Zeitraum eingefroren ab. */
+  function frozenDelta(records, settings, from, to, now, opts) {
+    return sumValues(dayDeltas(records, settings, from, to, now, opts));
+  }
+
+  /**
+   * Saldo eines Zeitraums, wie ihn die Ansichten zeigen (`live` = Summe der
+   * Tagessaldi, z. B. range.totals.balance): ein ganzer abgeschlossener
+   * Monat mit seinem eingefrorenen Monatssaldo — wie Kalender, Rapport und
+   * Lohnmeldung —, sonst `live` plus die Abweichung abgeschlossener Tage.
+   */
+  function periodBalance(records, settings, from, to, live, now) {
+    var snap = get(settings, wholeMonth(from, to));
+    if (snap) return snap.balance;
+    return Math.round((live || 0) + frozenDelta(records, settings, from, to, now));
   }
 
   /**
@@ -237,6 +274,9 @@
    * Signatur und gleiches Ergebnis-Objekt, dazu:
    *   frozenDelta   eingefroren minus neu gerechnet (0 = keine Abweichung)
    *   closedMonths  wie viele Abschlüsse bis zum Stichtag eingerechnet sind
+   * Das ist die eine Quelle fürs Zeitkonto: Kopfzeile, Statistik, Fragen,
+   * Zeitschieber, Rückblick und die Vorschau beim Modellwechsel rechnen
+   * alle hierüber (bzw. über App.accountBalance), nie direkt mit der Engine.
    */
   function accountBalance(records, settings, uptoISO, now, opts) {
     var s = settings || {};
@@ -244,19 +284,10 @@
     if (!closed.length) return E.accountBalance(records, settings, uptoISO, now, opts);
 
     var upto = uptoISO || T.todayISO(now);
-    var start = s.carryOverFrom || null;
     // Kappung erst ganz am Schluss — sonst wirkte sie auf den Zwischenstand
     var raw = E.accountBalance(records, Object.assign({}, s, { capPlusMinutes: null, capMinusMinutes: null }), uptoISO, now, opts);
-    var delta = 0;
-    var count = 0;
-    closed.forEach(function (c) {
-      var first = c.month + "-01";
-      if (first > upto) return;
-      var last = minISO(T.endOfMonth(first), upto);
-      var live = sumValues(dayContributions(records, s, first, last, now, opts));
-      delta += frozenSum(c.snap, c.month, first, last, start) - live;
-      count++;
-    });
+    var count = closed.filter(function (c) { return c.month + "-01" <= upto; }).length;
+    var delta = count ? frozenDelta(records, s, closed[0].month + "-01", upto, now, opts) : 0;
 
     return Object.assign({}, raw, {
       minutes: Math.round(applyCaps(raw.minutes + delta, s)),
@@ -350,6 +381,18 @@
   /* ------------------------------------------------------------------ */
 
   /**
+   * Unter welcher Lohnart ein Tag gemeldet wird. Ferien, Krankheit, Unfall
+   * oder Militär auf einem Feiertag (Arbeitstag laut Modell) sind ein
+   * bezahlter Feiertag — so zählt sie auch das Kontingent (E.quotaUsage):
+   * wer über Auffahrt Ferien einträgt, bezahlt den Feiertag nicht mit
+   * einem Ferientag, und die Lohnbuchhaltung zieht ihn nicht ab.
+   */
+  function payrollKind(r) {
+    if (r.holiday && r.baseTarget > 0 && r.type !== "holiday" && ABSENCES.indexOf(r.type) >= 0) return "holiday";
+    return r.type;
+  }
+
+  /**
    * Friert einen Monat ein.
    * @param {Object} records   alle Tageseinträge (store.allDays())
    * @param {Object} settings  aktuelle Einstellungen
@@ -394,9 +437,11 @@
       snap.net += r.net || 0;
       snap.credited += r.credited || 0;
       if (r.recorded) snap.recordedDays++;
-      if (has(snap.absence, r.type)) snap.absence[r.type] += r.credited || 0;
-      if (ABSENCES.indexOf(r.type) >= 0 && r.target > 0) {
-        snap[r.type + "Days"] += isNum(r.absenceFactor) ? r.absenceFactor : 1;
+      var kind = payrollKind(r);
+      if (has(snap.absence, kind)) snap.absence[kind] += r.credited || 0;
+      if (ABSENCES.indexOf(kind) >= 0 && r.target > 0) {
+        // Ein Feiertag ist ein Tag — wie im Kontingent, auch als halbe Absenz
+        snap[kind + "Days"] += kind === "holiday" ? 1 : (isNum(r.absenceFactor) ? r.absenceFactor : 1);
       }
       if (r.net > 0) {
         var p = premiumsOf(r, s);
@@ -533,11 +578,15 @@
     dayContributions: dayContributions,
     liveMonthBalance: liveMonthBalance,
     frozenDay: frozenDay,
+    dayDeltas: dayDeltas,
+    frozenDelta: frozenDelta,
+    periodBalance: periodBalance,
     accountBalance: accountBalance,
     auditSince: auditSince,
     check: check,
     premiumsOf: premiumsOf,
     overtimeByDay: overtimeByDay,
+    payrollKind: payrollKind,
     buildSnapshot: buildSnapshot,
     codesOf: codesOf,
     payrollRows: payrollRows,
