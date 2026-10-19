@@ -3069,3 +3069,21 @@ body.mini-pip::before { display: none; }
 .rv-moment-text { flex: 1 1 auto; min-width: 0; line-height: 1.4; }
 .rv-moment-x { flex: none; }
 @media print { .rv-moment { display: none !important; } }
+
+/* ===== FEATURE: ask ===== */
+/* Frag dein Zeitkonto: Antworten in der Befehlspalette. Fett die Antwort,
+   darunter der Zusammenhang — beides darf umbrechen, nichts wird gekürzt. */
+.palette-item.answer { align-items: flex-start; gap: 12px; padding: 10px 11px 11px; }
+.palette-item.answer > .ic { margin-top: 1px; color: var(--ink-2); }
+.palette-item.answer.is-plus > .ic { color: var(--plus-ink); }
+.palette-item.answer.is-minus > .ic { color: var(--minus-ink); }
+.palette-item.answer .pa-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1 1 auto; }
+.palette-item.answer .pa-text b {
+  font-size: var(--fs-md);
+  font-weight: 750;
+  line-height: 1.35;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.palette-item.answer .pa-text .sub { font-size: var(--fs-xs); line-height: 1.4; color: var(--ink-3); overflow-wrap: anywhere; }

@@ -1081,15 +1081,21 @@
           list.appendChild(D.el("div.palette-group", { text: cmd.group }));
           lastGroup = cmd.group;
         }
-        var btn = D.el("button.palette-item" + (cmd.warn && !cmd.sub ? ".warn" : ""), {
+        /* Antworten (answer: true) zweizeilig: fett die Antwort, darunter der Zusammenhang */
+        var answer = !!cmd.answer;
+        var btn = D.el("button.palette-item" + (cmd.warn && !cmd.sub ? ".warn" : "") +
+          (answer ? ".answer" + (cmd.tone ? ".is-" + cmd.tone : "") : ""), {
           type: "button", role: "option",
           "aria-selected": i === index ? "true" : "false",
           html: D.icon(cmd.icon || "right") +
-            "<span>" + D.esc(cmd.label) +
-            (cmd.sub ? '<span class="sub' + (cmd.warn ? " warn" : "") + '"> · ' + D.esc(cmd.sub) + "</span>" : "") + "</span>" +
+            (answer
+              ? '<span class="pa-text"><b>' + D.esc(cmd.label) + "</b>" +
+                (cmd.sub ? '<span class="sub">' + D.esc(cmd.sub) + "</span>" : "") + "</span>"
+              : "<span>" + D.esc(cmd.label) +
+                (cmd.sub ? '<span class="sub' + (cmd.warn ? " warn" : "") + '"> · ' + D.esc(cmd.sub) + "</span>" : "") + "</span>") +
             (cmd.kbd ? "<kbd>" + D.esc(cmd.kbd) + "</kbd>" : "")
         });
-        btn.addEventListener("click", function () { close(); cmd.run(); });
+        btn.addEventListener("click", function () { choose(cmd); });
         btn.addEventListener("mousemove", function () {
           if (index === i) return;
           index = i;
@@ -1101,7 +1107,11 @@
 
     function filter() {
       var q = input.value.trim().toLowerCase();
-      if (!q) { filtered = all; index = 0; draw(); return; }
+      if (!q) {
+        /* Leer: alle Befehle; Erweiterungen dürfen hinten Vorschläge (late) anhängen */
+        var hints = ZK.Ext ? ZK.Ext.collect("palette.commands", "", { App: App }).filter(function (c) { return c && c.late; }) : [];
+        filtered = all.concat(hints); index = 0; draw(); return;
+      }
       var dates = dateCommands(input.value);
       var smart = smartCommands(input.value);
       if (ZK.Ext) smart = smart.concat(ZK.Ext.collect("palette.commands", input.value, { App: App }));
@@ -1109,19 +1119,34 @@
         .filter(function (x) { return x.s !== null; })
         .sort(function (a, b) { return a.s - b.s; })
         .map(function (x) { return x.c; });
-      filtered = dates
-        .concat(smart.filter(function (c) { return !c.late; }))
+      /* Antworten auf Fragen stehen zuoberst, noch vor dem Datumssprung */
+      var top = function (c) { return c.answer && !c.late; };
+      filtered = smart.filter(top)
+        .concat(dates)
+        .concat(smart.filter(function (c) { return !c.late && !top(c); }))
         .concat(scored)
         .concat(smart.filter(function (c) { return c.late; }));
       index = 0;
       draw();
     }
 
+    /* Ein Eintrag mit `fill` setzt nur den Suchtext ein (z. B. eine Beispielfrage) */
+    function choose(cmd) {
+      if (typeof cmd.fill === "string") {
+        input.value = cmd.fill;
+        filter();
+        input.focus();
+        return;
+      }
+      close();
+      cmd.run();
+    }
+
     input.addEventListener("input", filter);
     input.addEventListener("keydown", function (e) {
       if (e.key === "ArrowDown") { e.preventDefault(); index = Math.min(filtered.length - 1, index + 1); draw(); scrollToActive(); }
       else if (e.key === "ArrowUp") { e.preventDefault(); index = Math.max(0, index - 1); draw(); scrollToActive(); }
-      else if (e.key === "Enter") { e.preventDefault(); if (filtered[index]) { var cmd = filtered[index]; close(); cmd.run(); } }
+      else if (e.key === "Enter") { e.preventDefault(); if (filtered[index]) choose(filtered[index]); }
       else if (e.key === "Escape") { e.preventDefault(); close(); }
     });
 
@@ -1140,7 +1165,7 @@
       }
     }
 
-    draw();
+    filter();
     setTimeout(function () { input.focus(); }, 30);
   }
 
