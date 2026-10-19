@@ -3606,6 +3606,16 @@ body.mini-pip::before { display: none; }
   .cal-cell .rota-times { display: none; }
   .cal-cell .rota-badge { min-width: 15px; height: 15px; padding: 0 3px; font-size: 9px; }
   .rota-cal-notice .sub { display: none; }
+  /* Passt das Kürzel nicht mehr neben die Tageszahl (eigene Kürzel mit zwei
+     Zeichen), rückt es unter sie, statt am Zellrand abgeschnitten zu werden */
+  .cal-cell .d:has(.rota-badge) { flex-wrap: wrap; column-gap: 3px; row-gap: 3px; }
+}
+/* 320 px: Tageszahl und Kürzel brauchen zusammen mehr als die Zelle hat —
+   das Kürzel steht dann immer in einer eigenen Zeile, in jeder Zelle gleich */
+@media (max-width: 359px) {
+  .cal-cell .d:has(.rota-badge) { row-gap: 0; }
+  .cal-cell .d:has(.rota-badge)::after { content: ""; flex: 0 0 100%; order: 1; height: 0; }
+  .cal-cell .d .rota-badge { order: 2; margin-top: 4px; }
 }
 
 /* Konflikte: Sprünge zu den betroffenen Tagen */
