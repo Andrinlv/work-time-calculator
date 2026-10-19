@@ -2245,3 +2245,134 @@ body.mini-pip::before { display: none; }
   .mc-bar i { transition: none; }
   .mini-clock.flashing .mc-in { animation: none; }
 }
+
+/* ===== FEATURE: assist ===== */
+/* Lückenhilfe: ruhige Karte unter dem Hero, höchstens zwei Hinweise.
+   Live-Hinweise (Kommen, Pause, Gehen) in Info-Blau, vergangene Tage in
+   der Warnfarbe — beides nur als Symbolfläche, der Text bleibt neutral. */
+.assist-card { padding: var(--gap-4) var(--gap-5); }
+.assist-card .card-head { margin-bottom: var(--gap-3); }
+.assist-more { margin-left: auto; font-size: var(--fs-2xs); font-weight: 650; color: var(--ink-3); white-space: nowrap; }
+.assist-list { display: grid; gap: var(--gap-2); }
+.assist-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--gap-3);
+  padding: 10px 8px 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+}
+.assist-ic {
+  width: 34px; height: 34px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  flex: none;
+  background: var(--info-soft);
+  color: var(--info-ink);
+  border: 1px solid var(--info-line);
+}
+.assist-item.is-warn .assist-ic { background: var(--warn-soft); color: var(--warn-ink); border-color: var(--warn-line); }
+.assist-ic .ic { width: 16px; height: 16px; }
+.assist-main { display: flex; flex-wrap: wrap; align-items: center; gap: var(--gap-2) var(--gap-3); min-width: 0; }
+.assist-txt { flex: 1 1 15em; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.assist-title { font-size: var(--fs-md); font-weight: 800; letter-spacing: -.01em; color: var(--ink); line-height: 1.3; overflow-wrap: anywhere; }
+.assist-sub { font-size: var(--fs-xs); color: var(--ink-2); line-height: 1.45; overflow-wrap: anywhere; }
+.assist-basis { color: var(--ink-3); font-weight: 600; cursor: help; }
+.assist-acts { display: flex; flex-wrap: wrap; gap: var(--gap-2); margin-left: auto; }
+.assist-acts .btn { white-space: nowrap; }
+.assist-x { align-self: start; color: var(--ink-3); }
+
+/* Telefon: Symbol, Text und Schliessen oben, Knöpfe darunter über die
+   ganze Breite und gleich breit */
+@media (max-width: 640px) {
+  .assist-card { padding: var(--gap-4); }
+  .assist-item {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas: "ic txt x" "acts acts acts";
+    padding: 10px 6px 10px 10px;
+    gap: var(--gap-3) var(--gap-3);
+  }
+  .assist-main { display: contents; }
+  .assist-ic { grid-area: ic; width: 30px; height: 30px; align-self: start; }
+  .assist-txt { grid-area: txt; }
+  .assist-x { grid-area: x; }
+  .assist-acts { grid-area: acts; margin: 0 4px 0 0; }
+  .assist-acts .btn { flex: 1 1 auto; min-width: 0; white-space: normal; line-height: 1.2; text-align: center; justify-content: center; min-height: 36px; }
+}
+
+/* Vorschau „Wie üblich ausfüllen“ */
+.assist-lede { font-size: var(--fs-sm); color: var(--ink-2); line-height: 1.55; margin-bottom: var(--gap-3); }
+.assist-plan { display: grid; gap: 6px; }
+.assist-plan-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--gap-3);
+  padding: 9px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  font-size: var(--fs-xs);
+}
+.assist-plan-row.is-off { background: transparent; }
+.assist-plan-row.is-off .ap-info, .assist-plan-row.is-off .ap-net { opacity: .55; }
+.ap-info { min-width: 0; display: grid; gap: 3px; }
+.ap-top { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; }
+.ap-date { font-weight: 800; color: var(--ink); white-space: nowrap; }
+.ap-kind { font-size: var(--fs-3xs); padding: 1px 7px; }
+.ap-times { color: var(--ink-2); line-height: 1.45; overflow-wrap: anywhere; }
+.ap-net { font-weight: 800; color: var(--ink); white-space: nowrap; }
+
+/* Kalender: Knopf im Hinweis über dem Raster */
+.assist-calfix {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 4px 12px;
+  border-radius: var(--r-pill);
+  border: 1px solid transparent;
+  background: var(--surface-invert);
+  color: var(--ink-invert);
+  font: inherit;
+  font-size: var(--fs-xs);
+  font-weight: 750;
+  cursor: pointer;
+}
+.assist-calfix:hover { box-shadow: var(--shadow-sm); }
+.assist-calfix:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.assist-calfix .ic { width: 13px; height: 13px; }
+.assist-calnote .cal-fix-list { margin-top: 8px; }
+
+/* Einstellungen: übliche Zeiten je Wochentag */
+.assist-typ { margin-top: var(--gap-3); }
+.assist-typ .section-title { margin-bottom: var(--gap-2); }
+.assist-typ-row {
+  display: grid;
+  grid-template-columns: 2.6em auto minmax(0, 1fr);
+  align-items: baseline;
+  gap: 2px var(--gap-3);
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line-faint);
+  font-size: var(--fs-xs);
+}
+.assist-typ-row:last-child { border-bottom: 0; }
+.at-day { font-weight: 800; color: var(--ink); }
+.at-span { font-weight: 750; color: var(--ink); white-space: nowrap; }
+.at-lunch { color: var(--ink-2); min-width: 0; }
+.at-basis { grid-column: 2 / -1; color: var(--ink-3); font-size: var(--fs-2xs); }
+.assist-hidden {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--gap-2) var(--gap-3);
+  margin-top: var(--gap-3);
+  padding-top: var(--gap-3);
+  border-top: 1px solid var(--line-faint);
+  font-size: var(--fs-xs);
+  color: var(--ink-2);
+}
