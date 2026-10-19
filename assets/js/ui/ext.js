@@ -15,6 +15,7 @@
      week.row          Zeilen-Dekorierer
      header.actions    Knöpfe in der Kopfzeile
      palette.commands  collect(query) → [{icon, label, sub, run}]
+     settings.stampLink nach dem Stempel-Link (ctx: App, input)
    ========================================================================== */
 (function (root) {
   "use strict";
