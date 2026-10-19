@@ -666,6 +666,8 @@
       linkRow.appendChild(linkInput);
       linkRow.appendChild(copyBtn);
       inst.body.appendChild(linkRow);
+      /* QR-Code, Plakat und Bild hängen sich hier an (features/qr.js) */
+      if (ZK.Ext) ZK.Ext.render("settings.stampLink", inst.body, { App: App, input: linkInput });
       if (isIOS()) {
         inst.body.appendChild(D.el("p.safety-hint.mt-2", { text: I.t("set.stampLinkIos") }));
       }

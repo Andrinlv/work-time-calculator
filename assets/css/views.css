@@ -3183,3 +3183,163 @@ body.mini-pip::before { display: none; }
 .mh-first { margin-bottom: 0; }
 
 @media (prefers-reduced-motion: reduce) { .mh-scope { animation: none; } }
+
+/* ===== FEATURE: qr ===== */
+/* QR-Stempel-Plakat: Code im Stempel-Link-Block der Einstellungen, Plakat-
+   Vorschau im Dialog und das Druckblatt. Code und Plakat sind Papier und
+   bleiben in jedem Thema hell — Scanner erwarten dunkle Module auf hellem
+   Grund. Die Plakatmasse hängen an der Blattbreite (Container-Einheiten),
+   damit Vorschau, A4 und A5 dasselbe Bild ergeben. */
+.qr-tile, .qr-sheet {
+  --qr-paper: #FFFFFF;
+  --qr-ink: var(--brand-950);
+  --qr-ink-2: var(--brand-700);
+  --qr-line: var(--brand-200);
+}
+
+/* ---- Einstellungen --------------------------------------------------- */
+.qr-panel { display: grid; gap: var(--gap-3); margin-top: var(--gap-4); }
+.qr-panel .segmented { justify-self: start; max-width: 100%; }
+.qr-row { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--gap-4); align-items: center; }
+.qr-tile {
+  margin: 0;
+  line-height: 0;
+  background: var(--qr-paper);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  overflow: hidden;
+}
+.qr-tile .qr-svg { display: block; }
+.qr-side { display: grid; gap: var(--gap-2); min-width: 0; }
+.qr-what { font-size: var(--fs-sm); color: var(--ink-2); line-height: 1.45; margin-bottom: 2px; }
+/* Schmale Karte: Code mittig, Auswahl, Text und Knöpfe in voller Breite */
+@container (max-width: 400px) {
+  .qr-panel .segmented { justify-self: stretch; }
+  .qr-panel .segmented button { flex: 1 1 0; min-width: 0; }
+  .qr-row { grid-template-columns: minmax(0, 1fr); justify-items: center; }
+  .qr-side { width: 100%; }
+  .qr-what { text-align: center; }
+}
+
+/* ---- Dialog ---------------------------------------------------------- */
+.qr-dialog { display: grid; grid-template-columns: minmax(0, 15rem) minmax(0, 1fr); gap: var(--gap-5); align-items: start; }
+.qr-dialog-controls { display: grid; gap: var(--gap-4); }
+.qr-field .section-title { margin-bottom: var(--gap-2); }
+.qr-field .segmented { max-width: 100%; }
+.qr-tip { font-size: var(--fs-xs); color: var(--ink-3); line-height: 1.5; }
+.qr-preview {
+  display: flex;
+  justify-content: center;
+  padding: var(--gap-4);
+  background: var(--surface-3);
+  border-radius: var(--r-md);
+}
+/* Neben der Auswahl passt das ganze Blatt in die Dialoghöhe (Kopf, Fuss
+   und Abstände ≈ 240 px), auf dem Handy wird darunter gescrollt */
+.qr-preview .qr-sheet {
+  width: min(100%, 23rem, max(15rem, calc((min(86vh, 900px) - 240px) * .67)));
+  box-shadow: var(--shadow-md);
+  border-radius: 3px;
+}
+@media (max-width: 640px) {
+  .qr-dialog { grid-template-columns: minmax(0, 1fr); gap: var(--gap-4); }
+  .qr-preview { padding: var(--gap-3); }
+  .qr-preview .qr-sheet { width: min(100%, 23rem); }
+}
+
+/* ---- Plakat ---------------------------------------------------------- */
+.qr-sheet {
+  container-type: inline-size;
+  aspect-ratio: 190 / 277;
+  overflow: hidden;
+  background: var(--qr-paper);
+  color: var(--qr-ink);
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+.qr-sheet.is-a5 { aspect-ratio: 128 / 190; }
+.qr-sheet-in {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 6cqw 8cqw 5cqw;
+}
+.qr-sheet-head { align-self: stretch; display: flex; align-items: center; gap: 3.2cqw; }
+.qr-rings { flex: none; width: 10.5cqw; height: 10.5cqw; }
+.qr-rings circle { fill: none; stroke: var(--brand-500); stroke-width: 6.98; }
+.qr-rings .r2, .qr-rings .r3 { stroke: var(--brand-400); }
+.qr-rings .r4 { fill: var(--brand-500); stroke: none; }
+.qr-sheet-title { font-size: 5.6cqw; font-weight: 900; letter-spacing: -.02em; line-height: 1.1; }
+.qr-sheet-kind {
+  margin-top: 1cqw;
+  font-size: 2.7cqw;
+  font-weight: 800;
+  letter-spacing: .14em;
+  line-height: 1.2;
+  text-transform: uppercase;
+  color: var(--qr-ink-2);
+}
+.qr-sheet-code { width: 66cqw; margin-top: 4.5cqw; } /* = CODE_SHARE in features/qr.js */
+.qr-sheet-code .qr-svg { display: block; width: 100%; height: auto; }
+.qr-sheet-url {
+  max-width: 72cqw;
+  font-family: var(--font-mono);
+  font-size: 1.8cqw;
+  line-height: 1.3;
+  color: var(--qr-ink-2);
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+.qr-sheet-steps {
+  align-self: stretch;
+  list-style: none;
+  margin: 4cqw 0 0;
+  padding: 0;
+  display: grid;
+  gap: 1.6cqw;
+}
+.qr-sheet-steps li {
+  display: grid;
+  grid-template-columns: 5cqw minmax(0, 1fr);
+  gap: 2.4cqw;
+  align-items: center;
+  font-size: 2.75cqw;
+  font-weight: 650;
+  line-height: 1.35;
+}
+.qr-sheet-steps b {
+  width: 5cqw;
+  height: 5cqw;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--qr-ink);
+  color: var(--qr-paper);
+  font-size: 2.6cqw;
+  font-weight: 900;
+}
+.qr-sheet-ios {
+  align-self: stretch;
+  margin-top: auto;
+  padding: 2.2cqw 2.8cqw;
+  border: .3cqw solid var(--qr-line);
+  border-radius: 1.8cqw;
+  font-size: 2.05cqw;
+  line-height: 1.45;
+  color: var(--qr-ink-2);
+}
+.qr-sheet-ios b { color: var(--qr-ink); font-weight: 800; }
+.qr-sheet-foot { align-self: stretch; margin-top: 1.6cqw; font-size: 1.8cqw; line-height: 1.3; color: var(--qr-ink-2); }
+
+/* ---- Druck: nur das Blatt, solange der Plakat-Dialog offen ist -------- */
+.qr-print-host { display: none; }
+@media print {
+  html.qr-printing body > :not(.qr-print-host) { display: none !important; }
+  html.qr-printing body { overflow: visible !important; }
+  html.qr-printing .qr-print-host { display: flex; justify-content: center; }
+  .qr-print-host .qr-sheet { flex: none; aspect-ratio: auto; break-inside: avoid; }
+  /* bedruckbare Fläche bei 10 mm Rand, 1 mm Luft gegen eine Leerseite */
+  .qr-print-host .qr-sheet.is-a4 { width: 190mm; height: 276mm; }
+  .qr-print-host .qr-sheet.is-a5 { width: 128mm; height: 189mm; }
+}

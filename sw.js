@@ -45,6 +45,7 @@ const SHELL = [
   "./assets/js/core/whatif.js",
   "./assets/js/core/review.js",
   "./assets/js/core/ask.js",
+  "./assets/js/core/qr.js",
   "./assets/js/data/store.js",
   "./assets/js/data/exporters.js",
   "./assets/js/data/msauth.js",
@@ -70,6 +71,7 @@ const SHELL = [
   "./assets/js/ui/features/whatif.js",
   "./assets/js/ui/features/review.js",
   "./assets/js/ui/features/ask.js",
+  "./assets/js/ui/features/qr.js",
   "./assets/js/ui/app.js",
 
   "./assets/icons/icon.svg",
