@@ -18,16 +18,18 @@ const tpl = (id) => TPL.find((t) => t.id === id);
 /* 3-Schicht ab Montag, 5. Oktober 2026: KW 41 früh, KW 42 spät, KW 43 nacht */
 const THREE = { enabled: true, anchor: "2026-10-05", cycle: Rota.preset("three-shift").cycle, name: "3-Schicht" };
 
-function planOf(rota, from, to, records, holidays) {
+/* overrides: { iso: Vorlagen-id | "free" } — Abweichungen wie in den Einstellungen */
+function planOf(rota, from, to, overrides, holidays, records) {
   return Rota.plan(from, to, {
     rota: rota,
     templates: TPL,
+    override: (iso) => (overrides && overrides[iso]) || null,
     record: (iso) => (records && records[iso]) || null,
     holiday: (iso) => !!(holidays && holidays[iso])
   });
 }
-const idOf = (rota, iso, rec, holiday) => {
-  const p = Rota.dayPlan(iso, { rota: rota, templates: TPL, record: rec || null, holiday: holiday || null });
+const idOf = (rota, iso, override, holiday, rec) => {
+  const p = Rota.dayPlan(iso, { rota: rota, templates: TPL, override: override || null, record: rec || null, holiday: holiday || null });
   return Rota.hasShift(p) ? p.id : (p.free ? "free" : null);
 };
 
@@ -67,7 +69,7 @@ test("Jahreswechsel: der Rhythmus läuft über Silvester und Schaltjahre weiter"
 test("Ausgeschaltet oder unvollständig: kein Plan, auch keine Abweichung", () => {
   const off = Object.assign({}, THREE, { enabled: false });
   assert.equal(Rota.isActive(off), false);
-  assert.equal(Rota.dayPlan("2026-10-19", { rota: off, templates: TPL, record: { plan: "late" } }).source, null);
+  assert.equal(Rota.dayPlan("2026-10-19", { rota: off, templates: TPL, override: "late" }).source, null);
   assert.equal(Rota.isActive({ enabled: true, anchor: "2026-02-30", cycle: ["early"] }), false, "ungültiger Anker");
   assert.equal(Rota.isActive({ enabled: true, anchor: "2026-10-05", cycle: [] }), false, "leerer Rhythmus");
   assert.equal(Rota.isActive(null), false);
@@ -77,13 +79,24 @@ test("Ausgeschaltet oder unvollständig: kein Plan, auch keine Abweichung", () =
   assert.equal(Rota.normalize({}).skipHolidays, true, "Feiertage frei ist Standard");
 });
 
-test("Abweichung im Tagesdatensatz geht vor; „free“ heisst frei", () => {
-  assert.equal(idOf(THREE, "2026-10-19", { plan: "late" }), "late");
-  assert.equal(idOf(THREE, "2026-10-19", { plan: "free" }), "free");
-  assert.equal(idOf(THREE, "2026-10-24", { plan: "early" }), "early", "Einsatz am Samstag");
-  const p = Rota.dayPlan("2026-10-24", { rota: THREE, templates: TPL, record: { plan: "early" } });
+test("Abweichung für den Tag geht vor; „free“ heisst frei", () => {
+  assert.equal(idOf(THREE, "2026-10-19", "late"), "late");
+  assert.equal(idOf(THREE, "2026-10-19", "free"), "free");
+  assert.equal(idOf(THREE, "2026-10-24", "early"), "early", "Einsatz am Samstag");
+  const p = Rota.dayPlan("2026-10-24", { rota: THREE, templates: TPL, override: "early" });
   assert.equal(p.source, "override");
   assert.equal(Rota.dayPlan("2026-10-24", { rota: THREE, templates: TPL, record: {} }).source, "cycle");
+});
+
+test("Abweichung aus älteren Ständen (rec.plan) gilt, bis es eine in den Einstellungen gibt", () => {
+  assert.equal(idOf(THREE, "2026-10-19", null, null, { plan: "late" }), "late");
+  assert.equal(idOf(THREE, "2026-10-19", "early", null, { plan: "late" }), "early", "Einstellungen gehen vor");
+  assert.equal(idOf(THREE, "2026-10-19", null, null, { plan: null }), "night");
+  const s = Object.assign(R.defaultSettings(), { rota: THREE, [Rota.overrideKey("2026-10-24")]: "late" });
+  const p = Rota.dayPlanOf(s, "2026-10-24", null, null);
+  assert.equal(p.id, "late");
+  assert.equal(p.source, "override");
+  assert.equal(Rota.dayPlanOf(s, "2026-10-25").free, true);
 });
 
 test("Gelöschte Vorlage: geplant, aber keine Schicht", () => {
@@ -108,7 +121,7 @@ test("Feiertag: der Rhythmus pausiert nur, wenn so eingestellt; eine Abweichung 
   assert.equal(Rota.dayPlan("2026-10-19", { rota: THREE, templates: TPL, holiday: { name: "x" } }).off, "holiday");
   const keep = Object.assign({}, THREE, { skipHolidays: false });
   assert.equal(Rota.dayPlan("2026-10-19", { rota: keep, templates: TPL, holiday: { name: "x" } }).off, null);
-  assert.equal(Rota.dayPlan("2026-10-19", { rota: THREE, templates: TPL, holiday: true, record: { plan: "night" } }).off, null);
+  assert.equal(Rota.dayPlan("2026-10-19", { rota: THREE, templates: TPL, holiday: true, override: "night" }).off, null);
 });
 
 /* ---------------------------------------------------------------------- */
@@ -156,7 +169,7 @@ test("Zeitumstellung im Frühling: die Nachtschicht dauert eine Stunde weniger",
 
 test("Ruhezeit: Spät, dann Früh am Folgetag ist zu kurz; ein freier Tag dazwischen genügt", () => {
   // KW 42 spät: Di 13.10. auf Früh getauscht → Mo spät (bis 22:30) → Di 06:00 = 7 h 30
-  const recs = { "2026-10-13": { plan: "early" } };
+  const recs = { "2026-10-13": "early" };
   const entries = planOf(THREE, "2026-10-12", "2026-10-18", recs);
   const c = Rota.restConflicts(entries, 11);
   assert.equal(c.length, 1);
@@ -165,15 +178,15 @@ test("Ruhezeit: Spät, dann Früh am Folgetag ist zu kurz; ein freier Tag dazwis
     { from: "2026-10-12", to: "2026-10-13", rest: 450, need: 660, fromId: "late", toId: "early", overlap: false }
   );
   // Di frei statt früh: Mo spät → Mi spät, weit über 11 h
-  const free = planOf(THREE, "2026-10-12", "2026-10-18", { "2026-10-13": { plan: "free" } });
+  const free = planOf(THREE, "2026-10-12", "2026-10-18", { "2026-10-13": "free" });
   assert.equal(Rota.restConflicts(free, 11).length, 0);
   // Früh → Spät am nächsten Tag ist kein Problem (14:30 → 14:00 = 23 h 30)
-  const fwd = planOf(THREE, "2026-10-09", "2026-10-12", { "2026-10-09": { plan: "early" } });
+  const fwd = planOf(THREE, "2026-10-09", "2026-10-12", { "2026-10-09": "early" });
   assert.equal(Rota.restConflicts(fwd, 11).length, 0);
 });
 
 test("Ruhezeit: Mindestruhe aus den Einstellungen, 0 oder leer gilt als 11 h", () => {
-  const recs = { "2026-10-13": { plan: "early" } };
+  const recs = { "2026-10-13": "early" };
   const entries = planOf(THREE, "2026-10-12", "2026-10-13", recs);
   assert.equal(Rota.restConflicts(entries, 7).length, 0, "7 h genügen bei 7 h 30");
   assert.equal(Rota.restConflicts(entries, 8).length, 1);
@@ -224,7 +237,7 @@ test("Wochenstunden: 3-Schicht ergibt 40 / 40 / 37.5 h", () => {
 });
 
 test("Wochenstunden über der Höchstarbeitszeit", () => {
-  const recs = { "2026-10-10": { plan: "early" }, "2026-10-11": { plan: "early" } };
+  const recs = { "2026-10-10": "early", "2026-10-11": "early" };
   const w = Rota.weeklyLoad(planOf(THREE, "2026-10-05", "2026-10-11", recs), 45 * 60);
   assert.equal(w[0].net, 56 * 60);
   assert.equal(w[0].over, 11 * 60);
@@ -242,7 +255,7 @@ test("Wochenstunden über den Jahreswechsel: KW 53 von 2026 reicht bis 3. Januar
 
 test("Wochenstunden in der Woche der Zeitumstellung zählen die echte Nacht", () => {
   const r = { enabled: true, anchor: "2026-10-19", cycle: Rota.preset("three-shift").cycle.slice(14).concat(Rota.preset("three-shift").cycle.slice(0, 14)) };
-  const recs = { "2026-10-24": { plan: "night" } };
+  const recs = { "2026-10-24": "night" };
   const w = Rota.weeklyLoad(planOf(r, "2026-10-19", "2026-10-25", recs), 0);
   assert.equal(w[0].net, 5 * 450 + 510);
 });
@@ -338,11 +351,11 @@ test("Abweichung am Feiertag: die Schicht des Rhythmus braucht dann eine Abweich
   assert.equal(Rota.overrideFor(THREE, "2026-10-19", "free", { name: "x" }), null, "frei ist dann schon so");
   const keep = Object.assign({}, THREE, { skipHolidays: false });
   assert.equal(Rota.overrideFor(keep, "2026-10-19", "night", { name: "x" }), null, "Rhythmus läuft weiter");
-  const p = Rota.dayPlan("2026-10-19", { rota: THREE, templates: TPL, holiday: true, record: { plan: "night" } });
+  const p = Rota.dayPlan("2026-10-19", { rota: THREE, templates: TPL, holiday: true, override: "night" });
   assert.equal(Rota.hasShift(p), true);
 });
 
-test("Ein Tag, der nur die Planung trägt, darf beim Zurücksetzen weg", () => {
+test("Ein Tag, der nur die Planung trägt, darf beim Umziehen weg", () => {
   assert.equal(Rota.onlyPlan({ date: "2026-10-19", plan: "early", breaks: [], updatedAt: "x" }), true);
   assert.equal(Rota.onlyPlan({ date: "2026-10-19", plan: "early", location: "office", absenceFactor: 1, note: "" }), true);
   assert.equal(Rota.onlyPlan({ date: "2026-10-19", plan: "early", start: "06:00" }), false);
@@ -351,23 +364,123 @@ test("Ein Tag, der nur die Planung trägt, darf beim Zurücksetzen weg", () => {
   assert.equal(Rota.onlyPlan(null), false);
 });
 
-test("Rhythmus und Abweichung überleben Speichern, Laden und Sicherung", () => {
-  const backend = S.memoryBackend();
-  const a = S.createStore({ backend: backend, defaultSettings: R.defaultSettings });
-  a.load();
-  a.updateSettings({ rota: THREE });
-  a.setDay("2026-10-24", { plan: "early" });
-  a.flush();
-  const b = S.createStore({ backend: backend, defaultSettings: R.defaultSettings });
-  b.load();
-  assert.equal(b.getDay("2026-10-24").plan, "early");
-  assert.deepEqual(b.getSettings().rota, THREE);
+const newStore = (backend) => {
+  const st = S.createStore({ backend: backend || S.memoryBackend(), defaultSettings: R.defaultSettings, listen: false });
+  st.load();
+  return st;
+};
+const K = (iso) => Rota.overrideKey(iso);
 
-  const c = S.createStore({ backend: S.memoryBackend(), defaultSettings: R.defaultSettings });
-  c.load();
+test("Abweichung als Einstellung: setzen, zurück zum Rhythmus, Altes nach 60 Tagen weg", () => {
+  assert.equal(K("2026-10-24"), "rota:override:2026-10-24");
+  assert.equal(Rota.overrideDate("rota:override:2026-10-24"), "2026-10-24");
+  assert.equal(Rota.overrideDate("rota:override:kaputt"), null);
+  assert.equal(Rota.overrideDate("rota"), null);
+  const s = { rota: THREE, [K("2026-08-01")]: "late", [K("2026-08-20")]: "free", [K("2026-10-24")]: "early", [K("2026-11-02")]: undefined };
+  assert.deepEqual(Rota.overridesIn(s), { "2026-08-01": "late", "2026-08-20": "free", "2026-10-24": "early" });
+  assert.equal(Rota.overrideOf(s, "2026-10-24"), "early");
+  assert.equal(Rota.overrideOf(s, "2026-11-02"), null);
+  assert.equal(Rota.overrideOf(null, "2026-10-24"), null);
+  // Heute 19.10.: alles vor dem 20.08. ist älter als 60 Tage
+  assert.deepEqual(Rota.overridePatch(s, "2026-10-30", "night", "2026-10-19"), { [K("2026-08-01")]: undefined, [K("2026-10-30")]: "night" });
+  assert.deepEqual(Rota.overridePatch(s, "2026-10-24", null, "2026-10-19"), { [K("2026-08-01")]: undefined, [K("2026-10-24")]: undefined });
+  assert.deepEqual(Rota.overridePatch(s, "2026-10-25", null, "2026-09-25"), {}, "nichts zu tun");
+  assert.deepEqual(Rota.overridePatch({}, "2026-10-25", "free", "2026-10-19"), { [K("2026-10-25")]: "free" });
+});
+
+test("Abweichungen überleben Speichern, Laden, Rückgängig, Export und Import — ohne Tagesdatensatz", () => {
+  const backend = S.memoryBackend();
+  const a = newStore(backend);
+  a.updateSettings({ rota: THREE });
+  a.setDay("2026-10-15", { start: "08:00", end: "17:00" });
+  a.updateSettings(Rota.overridePatch(a.getSettings(), "2026-12-05", "late", "2026-10-16"));
+  a.updateSettings(Rota.overridePatch(a.getSettings(), "2026-10-24", "free", "2026-10-16"));
+  assert.equal(a.dayCount(), 1, "ein Plan zählt nicht als erfasster Tag");
+  assert.equal(a.diagnostics().days, 1);
+  assert.deepEqual(Object.keys(a.allDays()), ["2026-10-15"], "„Alle“ endet beim letzten erfassten Tag");
+  a.flush();
+
+  const b = newStore(backend);
+  assert.deepEqual(Rota.overridesIn(b.getSettings()), { "2026-12-05": "late", "2026-10-24": "free" });
+  assert.deepEqual(b.getSettings().rota, THREE);
+  // Zurück zum Rhythmus entfernt den Schlüssel ganz — auch nach dem Laden
+  b.updateSettings(Rota.overridePatch(b.getSettings(), "2026-10-24", null, "2026-10-16"));
+  assert.equal(Rota.overrideOf(b.getSettings(), "2026-10-24"), null);
+  b.flush();
+  assert.equal(Object.prototype.hasOwnProperty.call(newStore(backend).getSettings(), K("2026-10-24")), false);
+  // Rückgängig bringt die Abweichung zurück
+  b.undo();
+  assert.equal(Rota.overrideOf(b.getSettings(), "2026-10-24"), "free");
+
+  const c = newStore();
   c.importState(JSON.parse(JSON.stringify(b.exportState())), "replace");
-  assert.equal(c.getDay("2026-10-24").plan, "early");
-  assert.deepEqual(c.getSettings().rota, THREE);
+  assert.deepEqual(Rota.overridesIn(c.getSettings()), { "2026-12-05": "late", "2026-10-24": "free" });
+  assert.equal(c.dayCount(), 1);
+  const d = newStore();
+  d.setDay("2026-10-01", { start: "08:00", end: "17:00" });
+  d.importState(JSON.parse(JSON.stringify(b.exportState())), "merge");
+  assert.equal(Rota.overrideOf(d.getSettings(), "2026-12-05"), "late");
+});
+
+test("Zwei Fenster planen verschiedene Tage um: beide Abweichungen bleiben stehen", () => {
+  const backend = S.memoryBackend();
+  const a = newStore(backend);
+  a.updateSettings({ rota: THREE });
+  a.flush();
+  const b = newStore(backend);
+  a.updateSettings(Rota.overridePatch(a.getSettings(), "2026-10-20", "early", "2026-10-16"));
+  b.updateSettings(Rota.overridePatch(b.getSettings(), "2026-10-21", "free", "2026-10-16"));
+  a.flush();
+  b.flush();   // übernimmt den Stand von a und legt den eigenen Schlüssel darauf
+  assert.deepEqual(Rota.overridesIn(newStore(backend).getSettings()), { "2026-10-20": "early", "2026-10-21": "free" });
+  // Zurücksetzen im einen Fenster kommt im anderen an
+  a.load();
+  a.updateSettings(Rota.overridePatch(a.getSettings(), "2026-10-20", null, "2026-10-16"));
+  a.flush();
+  b.updateSettings({ rota: Object.assign({}, THREE, { name: "x" }) });
+  b.flush();
+  assert.deepEqual(Rota.overridesIn(b.getSettings()), { "2026-10-21": "free" });
+  assert.deepEqual(Rota.overridesIn(newStore(backend).getSettings()), { "2026-10-21": "free" });
+});
+
+test("Ältere Stände: Abweichungen ziehen aus den Tagen in die Einstellungen um", () => {
+  const days = {
+    "2026-10-24": { date: "2026-10-24", plan: "early", breaks: [], location: "office", absenceFactor: 1, updatedAt: "x" },
+    "2026-10-20": { date: "2026-10-20", plan: "late", start: "14:00", end: "22:30", breaks: [] },
+    "2026-10-21": { date: "2026-10-21", plan: "free", breaks: [] },
+    "2026-10-22": { date: "2026-10-22", plan: null, breaks: [] },
+    "2026-06-01": { date: "2026-06-01", plan: "night", breaks: [] },
+    "2026-09-10": { date: "2026-09-10", plan: "free", breaks: [] },
+    "2026-10-15": { date: "2026-10-15", start: "08:00", end: "17:00", breaks: [] }
+  };
+  const settings = { [K("2026-10-21")]: "night" };
+  const m = Rota.migrateRecords(days, settings, { today: "2026-10-16", locked: (iso) => iso < "2026-10-01" && iso >= "2026-09-01" });
+  assert.equal(m.count, 5, "gesperrter September bleibt, wie er ist");
+  assert.deepEqual(m.settings, { [K("2026-10-24")]: "early", [K("2026-10-20")]: "late" },
+    "eine Abweichung in den Einstellungen geht vor; älter als 60 Tage zieht nicht mehr um");
+  assert.deepEqual(m.days, {
+    "2026-10-24": null, "2026-10-20": { plan: undefined }, "2026-10-21": null, "2026-10-22": null, "2026-06-01": null
+  });
+  assert.equal(Rota.migrateRecords({ "2026-10-15": days["2026-10-15"] }, {}, {}).count, 0);
+
+  // Wie die Oberfläche es anwendet: still, ohne Rückgängig-Schritt
+  const backend = S.memoryBackend();
+  const st = newStore(backend);
+  st.setDays(days, { undo: false });
+  st.setGuard((iso) => iso >= "2026-09-01" && iso < "2026-10-01");
+  const mm = Rota.migrateRecords(st.allDays(), st.getSettings(), { today: "2026-10-16", locked: (iso) => st.isLocked(iso) });
+  st.updateSettings(mm.settings, { undo: false });
+  const res = st.setDays(mm.days, { undo: false });
+  assert.deepEqual(res.locked, []);
+  assert.equal(st.canUndo(), false);
+  assert.deepEqual(Object.keys(st.allDays()).sort(), ["2026-09-10", "2026-10-15", "2026-10-20"]);
+  st.flush();
+  const again = newStore(backend);
+  assert.equal("plan" in again.getDay("2026-10-20"), false);
+  assert.equal(again.getDay("2026-10-20").start, "14:00");
+  assert.deepEqual(Rota.overridesIn(again.getSettings()), { "2026-10-24": "early", "2026-10-20": "late", "2026-10-21": "free" });
+  assert.equal(Rota.migrateRecords(again.allDays(), again.getSettings(), { today: "2026-10-16", locked: (iso) => iso < "2026-10-01" }).count, 0,
+    "ein zweiter Durchlauf findet nichts mehr");
 });
 
 /* ---------------------------------------------------------------------- */
