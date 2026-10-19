@@ -184,6 +184,11 @@
     var detected = options.backend ? { backend: options.backend, full: false } : detectBackend();
     var backend = detected.backend;
     var defaults = options.defaultSettings || function () { return {}; };
+    /* Prüfer für die Einstellungen (R.sanitizeSettings): beim Laden und beim
+       Einlesen — eine Stelle, damit kaputte Werte aus einer Sicherung keine
+       Ansicht zum Absturz bringen. Er hängt auch an R.defaultSettings. */
+    var sanitize = options.sanitizeSettings ||
+      (typeof defaults.sanitize === "function" ? defaults.sanitize : function (x) { return x; });
     var clock = options.clock || function () { return Date.now(); };
 
     var state = null;
@@ -260,7 +265,7 @@
         if (!has(KNOWN_PARTS, k)) s[k] = parsed[k];
       });
       s.version = +parsed.version || 1;
-      s.settings = Object.assign(defaults(), isPlainObject(parsed.settings) ? parsed.settings : {});
+      s.settings = sanitize(Object.assign(defaults(), isPlainObject(parsed.settings) ? parsed.settings : {}));
       s.days = isPlainObject(parsed.days) ? parsed.days : {};
       s.achievements = Object.assign({ earned: {}, xp: 0, bestStreak: 0, seen: {} }, isPlainObject(parsed.achievements) ? parsed.achievements : {});
       s.meta = Object.assign(s.meta, isPlainObject(parsed.meta) ? parsed.meta : {});
@@ -835,7 +840,7 @@
         }
         out[k] = v;
       });
-      return out;
+      return sanitize(out, { partial: true });
     }
 
     function cleanAchievements(a) {

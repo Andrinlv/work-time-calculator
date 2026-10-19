@@ -45,8 +45,9 @@ test("Ohne Verlauf gilt das Modell der Einstellungen für alle Tage", () => {
   assert.deepEqual(s.modelHistory, [], "Standard: leerer Verlauf");
   assert.equal(R.baseTargetFor("2020-03-02", s, 1), 302);
   assert.equal(R.baseTargetFor("2030-03-04", s, 1), 302);
-  assert.equal(R.weeklyTargetMinutes(s), 1512);
-  assert.equal(R.weeklyTargetMinutes(s, "2026-11-02"), 1512);
+  // Wochensoll = Summe der Tagessollzeiten (5 × 302), nicht 60 % von 42 h (1512)
+  assert.equal(R.weeklyTargetMinutes(s), 1510);
+  assert.equal(R.weeklyTargetMinutes(s, "2026-11-02"), 1510);
   const m = R.modelFor("2026-11-02", s);
   assert.equal(m.workloadPercent, 60);
   assert.equal(m.maxWeeklyMinutes, s.maxWeeklyMinutes, "Wochenhöchstzeit kommt aus den Einstellungen");
@@ -76,7 +77,7 @@ test("80 % ab 01.11.: Oktober bleibt voll, November ist 80 %", () => {
   assert.equal(target(s, "2026-11-02"), P80);
   assert.equal(target(s, "2025-06-02"), FULL, "vor dem ersten Eintrag gilt der erste");
   assert.equal(R.weeklyTargetMinutes(s, "2026-10-01"), 2520);
-  assert.equal(R.weeklyTargetMinutes(s, "2026-12-01"), 2016);
+  assert.equal(R.weeklyTargetMinutes(s, "2026-12-01"), 5 * P80, "Summe der Tage, die das Soll tragen");
 });
 
 test("Monatssoll im Kalender: Wechsel mitten im Monat zählt Tag für Tag", () => {
@@ -421,8 +422,9 @@ test("Verlauf: Beschriftung der Abschnitte in allen Sprachen", () => {
   assert.equal(V.segmentWhen(tl[1], "2026-10-16"), "01.11. – 31.01.2027");
   assert.equal(V.segmentWhen(tl[2], "2026-10-16"), "ab 01.02.2027");
   assert.equal(V.segmentWhat(tl[0].model, fmt), "100 % · 42 h · Mo–Fr");
-  assert.equal(V.segmentWhat(tl[1].model, fmt), "80 % · 33 h 36 min · Mo–Fr");
-  assert.equal(V.segmentWhat(tl[2].model, fmt), "80 % · 26 h 53 min · Mo–Do");
+  // Wie die Woche: 5 × 6 h 43 = 33 h 35 (nicht 80 % von 42 h = 33 h 36)
+  assert.equal(V.segmentWhat(tl[1].model, fmt), "80 % · 33 h 35 min · Mo–Fr");
+  assert.equal(V.segmentWhat(tl[2].model, fmt), "80 % · 26 h 52 min · Mo–Do");
   I.LANGS.forEach((l) => {
     I.setLang(l);
     tl.forEach((seg) => {

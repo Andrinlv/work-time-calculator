@@ -109,3 +109,17 @@ test("Browsersprache wird für den ersten Start erkannt", () => {
   assert.equal(I.detect({ language: "en-GB" }), "en");
   assert.equal(I.detect({ languages: ["pt-BR"] }), "de");
 });
+
+test("Navigation: nur eigene Ansichten — „#/constructor“ ist keine Ansicht", () => {
+  const src = fs.readFileSync(path.join(__dirname, "../assets/js/ui/app.js"), "utf8");
+  const m = /function isView\(key\) \{[\s\S]*?\n  \}/.exec(src);
+  assert.ok(m, "app.js prüft Ansichten mit isView()");
+  const sandbox = { ZK: { Views: { today: { render() {} }, stats: { render() {} } } } };
+  vm.runInNewContext(m[0] + "\nthis.isView = isView;", sandbox);
+  ["today", "stats"].forEach((k) => assert.equal(sandbox.isView(k), true, k));
+  ["constructor", "toString", "__proto__", "hasOwnProperty", "valueOf", "nope", "", undefined].forEach((k) => {
+    assert.equal(sandbox.isView(k), false, String(k));
+  });
+  // Alle Stellen, die eine Ansicht aus Adresse oder Aufruf übernehmen, gehen über isView
+  assert.ok(!/ZK\.Views\[(m\[1\]|view|App\.view)\]\s*\)/.test(src.replace(m[0], "")), "keine Prototyp-Suche mehr in go/readHash/renderView");
+});

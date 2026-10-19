@@ -301,13 +301,11 @@
   /* Monatscheck                                                         */
   /* ------------------------------------------------------------------ */
 
-  /** Ab wann der Monatscheck Lücken meldet — wie der Monatscheck in „Werkzeuge“. */
-  function auditSince(records, settings) {
-    var keys = Object.keys(records || {}).filter(function (k) { return P.hasContent(records[k]); }).sort();
-    var first = keys.length ? keys[0] : null;
-    var from = (settings && settings.carryOverFrom) || null;
-    if (first && from && from > first) return from;
-    return first;
+  /** Ab wann der Monatscheck Lücken meldet — Engine.trackingStart, wie
+      Kalender, Statistik, Rapport und der Monatscheck in „Werkzeuge“.
+      meta: Store-Meta (App-Start), optional. */
+  function auditSince(records, settings, meta) {
+    return E.trackingStart(records, settings, meta || null);
   }
 
   /**

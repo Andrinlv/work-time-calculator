@@ -69,7 +69,30 @@
       "csv.note": "Notiz",
       "csv.hints": "Hinweise",
       "csv.factor": "Anteil",
-      "csv.breakTimes": "Pausenzeiten (* bezahlt)"
+      "csv.breakTimes": "Pausenzeiten (* bezahlt)",
+      "export.title": "ZEITKONTO · {from} bis {to}",
+      "export.net": "Netto",
+      "export.target": "Soll",
+      "export.actual": "Ist",
+      "export.balance": "Saldo",
+      "export.breaks": "Pausen",
+      "export.days": "Tage",
+      "export.daysLine": "{recorded} erfasst · {worked} gearbeitet",
+      "export.netOf": "{v} netto",
+      "csv.hint.invalid-start": "Kommen unlesbar",
+      "csv.hint.invalid-end": "Gehen unlesbar",
+      "csv.hint.presence-implausible": "Anwesenheit unplausibel",
+      "csv.hint.invalid-break": "Pause unvollständig",
+      "csv.hint.break-overlap": "Pausen überlappen",
+      "csv.hint.break-outside": "Pause ausserhalb der Anwesenheit",
+      "csv.hint.break-auto": "Pflichtpause abgezogen",
+      "csv.hint.break-short": "Pflichtpause zu kurz",
+      "csv.hint.missing-end": "Gehen fehlt",
+      "csv.hint.over-daily-max": "Tageshöchstzeit überschritten",
+      "csv.hint.rest-short": "Ruhezeit zu kurz",
+      "csv.hint.worked-on-holiday": "Am Feiertag gearbeitet",
+      "csv.hint.no-break": "Ohne Pause",
+      "csv.hint.absence-with-times": "Abwesenheit mit Arbeitszeit"
     },
     en: {
       "report.titleMonth": "Monthly report {month}",
@@ -125,7 +148,30 @@
       "csv.note": "Note",
       "csv.hints": "Notices",
       "csv.factor": "Share",
-      "csv.breakTimes": "Break times (* paid)"
+      "csv.breakTimes": "Break times (* paid)",
+      "export.title": "ZEITKONTO · {from} to {to}",
+      "export.net": "Net",
+      "export.target": "Target",
+      "export.actual": "Actual",
+      "export.balance": "Balance",
+      "export.breaks": "Breaks",
+      "export.days": "Days",
+      "export.daysLine": "{recorded} recorded · {worked} worked",
+      "export.netOf": "{v} net",
+      "csv.hint.invalid-start": "Clock-in unreadable",
+      "csv.hint.invalid-end": "Clock-out unreadable",
+      "csv.hint.presence-implausible": "Implausible presence",
+      "csv.hint.invalid-break": "Break incomplete",
+      "csv.hint.break-overlap": "Breaks overlap",
+      "csv.hint.break-outside": "Break outside presence",
+      "csv.hint.break-auto": "Mandatory break deducted",
+      "csv.hint.break-short": "Mandatory break too short",
+      "csv.hint.missing-end": "Clock-out missing",
+      "csv.hint.over-daily-max": "Daily maximum exceeded",
+      "csv.hint.rest-short": "Rest period too short",
+      "csv.hint.worked-on-holiday": "Worked on a public holiday",
+      "csv.hint.no-break": "No break",
+      "csv.hint.absence-with-times": "Absence with working time"
     },
     fr: {
       "report.titleMonth": "Rapport mensuel {month}",
@@ -181,7 +227,30 @@
       "csv.note": "Note",
       "csv.hints": "Remarques",
       "csv.factor": "Taux",
-      "csv.breakTimes": "Heures de pause (* payées)"
+      "csv.breakTimes": "Heures de pause (* payées)",
+      "export.title": "ZEITKONTO · du {from} au {to}",
+      "export.net": "Net",
+      "export.target": "Dû",
+      "export.actual": "Effectif",
+      "export.balance": "Solde",
+      "export.breaks": "Pauses",
+      "export.days": "Jours",
+      "export.daysLine": "saisis : {recorded} · travaillés : {worked}",
+      "export.netOf": "{v} net",
+      "csv.hint.invalid-start": "Arrivée illisible",
+      "csv.hint.invalid-end": "Départ illisible",
+      "csv.hint.presence-implausible": "Présence peu plausible",
+      "csv.hint.invalid-break": "Pause incomplète",
+      "csv.hint.break-overlap": "Pauses superposées",
+      "csv.hint.break-outside": "Pause hors présence",
+      "csv.hint.break-auto": "Pause obligatoire déduite",
+      "csv.hint.break-short": "Pause obligatoire trop courte",
+      "csv.hint.missing-end": "Départ manquant",
+      "csv.hint.over-daily-max": "Maximum journalier dépassé",
+      "csv.hint.rest-short": "Repos trop court",
+      "csv.hint.worked-on-holiday": "Travail un jour férié",
+      "csv.hint.no-break": "Sans pause",
+      "csv.hint.absence-with-times": "Absence avec temps de travail"
     },
     it: {
       "report.titleMonth": "Rapporto mensile {month}",
@@ -237,7 +306,30 @@
       "csv.note": "Nota",
       "csv.hints": "Avvisi",
       "csv.factor": "Quota",
-      "csv.breakTimes": "Orari pause (* pagate)"
+      "csv.breakTimes": "Orari pause (* pagate)",
+      "export.title": "ZEITKONTO · dal {from} al {to}",
+      "export.net": "Netto",
+      "export.target": "Dovuto",
+      "export.actual": "Effettivo",
+      "export.balance": "Saldo",
+      "export.breaks": "Pause",
+      "export.days": "Giorni",
+      "export.daysLine": "registrati: {recorded} · lavorati: {worked}",
+      "export.netOf": "{v} netto",
+      "csv.hint.invalid-start": "Entrata illeggibile",
+      "csv.hint.invalid-end": "Uscita illeggibile",
+      "csv.hint.presence-implausible": "Presenza poco plausibile",
+      "csv.hint.invalid-break": "Pausa incompleta",
+      "csv.hint.break-overlap": "Pause sovrapposte",
+      "csv.hint.break-outside": "Pausa fuori dalla presenza",
+      "csv.hint.break-auto": "Pausa obbligatoria dedotta",
+      "csv.hint.break-short": "Pausa obbligatoria troppo corta",
+      "csv.hint.missing-end": "Uscita mancante",
+      "csv.hint.over-daily-max": "Massimo giornaliero superato",
+      "csv.hint.rest-short": "Riposo troppo breve",
+      "csv.hint.worked-on-holiday": "Lavoro in un giorno festivo",
+      "csv.hint.no-break": "Senza pausa",
+      "csv.hint.absence-with-times": "Assenza con tempo di lavoro"
     }
   });
 
@@ -261,8 +353,13 @@
    * Zeilen und Summen des Rapports. Zukunft: nur geplante Tage, und die
    * zählen nicht in Soll/Ist/Saldo — sonst stünde im Oktober ein Soll von
    * 185 h neben einem Ist von 72 h.
+   * opts.since: Erfassungsbeginn (Engine.trackingStart). Ein leerer
+   * Arbeitstag davor ist keine Lücke und trägt kein Soll — wie im Kalender;
+   * null heisst: noch kein eigener Eintrag. Lücken nach Engine.isGap: ein
+   * Tag mit Kommen ohne Gehen ist offen (sum.open), keine Lücke.
    */
-  function buildRows(days, today) {
+  function buildRows(days, today, opts) {
+    var since = opts && Object.prototype.hasOwnProperty.call(opts, "since") ? opts.since : undefined;
     var rows = [];
     var sum = { target: 0, actual: 0, balance: 0, breaks: 0, open: 0, running: 0, gaps: 0, duty: 0, future: false, net: 0 };
     days.forEach(function (r) {
@@ -271,10 +368,12 @@
         if (r.recorded) rows.push({ r: r, planned: true });
         return;
       }
+      var untracked = !r.recorded && !r.incomplete && (since === null || (!!since && r.date < since));
+      if (untracked) return;
       if (r.target > 0) sum.duty++;
       if (!r.recorded && r.target === 0) return;
       rows.push({ r: r, planned: false });
-      if (!r.recorded && r.target > 0 && r.date < today) sum.gaps++;
+      if (ZK.Engine.isGap(r, today, since)) sum.gaps++;
       if (r.incomplete) sum.open++;
       // Der laufende Tag ist noch nicht abgerechnet — wie im Konto bleibt er
       // aus allen Summen draussen, sonst passt der Übertrag nicht.
@@ -325,24 +424,53 @@
     "requiredBreak", "autoBreak", "net", "netDecimal", "target", "credited", "balance", "balanceMin",
     "holiday", "note", "hints", "factor", "breakTimes"];
 
+  /* Hinweise der Engine, die die CSV-Spalte „Hinweise“ in Worten zeigt */
+  var HINT_CODES = ["invalid-start", "invalid-end", "presence-implausible", "invalid-break", "break-overlap",
+    "break-outside", "break-auto", "break-short", "missing-end", "over-daily-max", "rest-short",
+    "worked-on-holiday", "no-break", "absence-with-times"];
+
+  function weekdayNames() {
+    return [0, 1, 2, 3, 4, 5, 6].map(function (i) { return I.weekdayName(i, "short"); });
+  }
+
   function csvOptions(getRecord) {
     var headers = {};
     CSV_KEYS.forEach(function (k) { headers[k] = I.t("csv." + k); });
     var locations = {};
     ["office", "home", "field", "travel"].forEach(function (k) { locations[k] = I.t("loc." + k); });
+    var hints = {};
+    HINT_CODES.forEach(function (k) { hints[k] = I.t("csv.hint." + k); });
     return {
       labels: I.typeLabels(),
       onlyRecorded: false,
       headers: headers,
-      weekdays: [0, 1, 2, 3, 4, 5, 6].map(function (i) { return I.weekdayName(i, "short"); }),
+      weekdays: weekdayNames(),
       locationLabels: locations,
+      hintLabels: hints,
+      lang: I.getLang(),
       getRecord: getRecord
+    };
+  }
+
+  /** Texte für Textzusammenfassung und Kalenderdatei in der Sprache der Oberfläche. */
+  function exportOptions() {
+    var text = {};
+    ["title", "net", "target", "actual", "balance", "breaks", "days", "daysLine", "netOf"].forEach(function (k) {
+      text[k] = I.t("export." + k);
+    });
+    return {
+      labels: I.typeLabels(),
+      weekdays: weekdayNames(),
+      text: text,
+      calendarName: I.t("app.name"),
+      formatDate: function (iso) { return I.formatDate(iso, { day: "2-digit", month: "2-digit", year: "numeric" }); }
     };
   }
 
   var calc = {
     rangeKind: rangeKind, normalizeRange: normalizeRange, buildRows: buildRows,
-    overtimeLaw: overtimeLaw, groupMonths: groupMonths, csvOptions: csvOptions
+    overtimeLaw: overtimeLaw, groupMonths: groupMonths, csvOptions: csvOptions, exportOptions: exportOptions,
+    HINT_CODES: HINT_CODES
   };
 
   (ZK.Views = ZK.Views || {}).reports = { render: render, calc: calc };
@@ -439,10 +567,11 @@
     row.appendChild(quick);
     controls.appendChild(row);
 
-    var range = ZK.Insight
-      ? ZK.Insight.cached(App, "range|" + state.from + "|" + state.to, function () { return App.range(state.from, state.to); })
-      : App.range(state.from, state.to);
-    var built = buildRows(range.days, today);
+    /* Lücken ab Erfassungsbeginn — dieselbe Regel wie Statistik und Kalender */
+    var since = ZK.Insight ? ZK.Insight.trackingStart(App)
+      : ZK.Engine.trackingStart(App.store.allDays(), s, App.store.getMeta ? App.store.getMeta() : null);
+    var range = ZK.Insight ? ZK.Insight.range(App, state.from, state.to) : App.range(state.from, state.to, { since: since });
+    var built = buildRows(range.days, today, { since: since });
     var sum = built.sum;
 
     var actions = D.el("div.row.mt-4");
@@ -457,14 +586,14 @@
       D.toast(I.t("toast.exported"), { sub: "CSV" });
     }));
     actions.appendChild(button(I.t("report.exportIcs"), "calendar", "", function () {
-      var ics = ZK.Exporters.toICS(range.days, { labels: I.typeLabels(), calendarName: I.t("app.name") });
+      var ics = ZK.Exporters.toICS(range.days, exportOptions());
       D.download("zeitkonto_" + state.from + "_" + state.to + ".ics", ics, "text/calendar");
       App.markExport();
       D.toast(I.t("toast.exported"), { sub: "ICS" });
     }));
     actions.appendChild(button(I.t("report.exportJson"), "save", "", function () { App.exportJSON(); }));
     actions.appendChild(button(I.t("report.exportText"), "copy", "ghost", function () {
-      var txt = ZK.Exporters.toText(range, { labels: I.typeLabels() });
+      var txt = ZK.Exporters.toText(range, exportOptions());
       D.copyText(txt).then(function () { D.toast(I.t("common.copied")); })
         .catch(function () { showText(txt); });
     }));
@@ -705,7 +834,8 @@
     if ((r.type === "work" || (r.type === "free" && r.net > 0)) && !planned) {
       if (!r.recorded) return '<span class="rtag warn">' + D.esc(I.t("report.notRecorded")) + "</span>";
       // Arbeitstag: der Ort sagt mehr als ein Strich
-      label = r.location && r.location !== "office" ? I.t("loc." + r.location) : I.t("type.work");
+      // Unbekannter Ort (fremde Sicherung): lieber „Arbeit“ als ein roher Schlüssel
+      label = r.location && r.location !== "office" && ZK.Rules.LOCATIONS.indexOf(r.location) >= 0 ? I.t("loc." + r.location) : I.t("type.work");
       return '<span class="rwork">' + D.esc(label) + "</span>";
     }
     label = r.type === "holiday" && r.holiday ? r.holiday.name : I.t("type." + r.type);

@@ -978,3 +978,74 @@ test("Sperre aus dem anderen Fenster verwirft die offene Änderung und meldet si
   c.flush();
   assert.equal(JSON.parse(backend.getItem(S.KEY)).days["2026-10-05"].start, "08:00");
 });
+
+/* ---------------------------------------------------------------------- */
+/* Kaputte Einstellungen aus einer Sicherung (von Hand oder fremd)         */
+/* ---------------------------------------------------------------------- */
+
+const isObj = (v) => !!v && typeof v === "object" && !Array.isArray(v);
+
+test("Import: null in den Schichtvorlagen wird verworfen, die gültigen bleiben", () => {
+  const a = fresh();
+  const dump = a.exportState();
+  const state = dump.state || dump;
+  state.settings.shiftTemplates = [null, 5, "x", { id: 7, name: null, start: "25:99", end: null }].concat(state.settings.shiftTemplates);
+  const b = fresh();
+  b.importState(JSON.parse(JSON.stringify(dump)), "merge");
+  const list = b.getSettings().shiftTemplates;
+  assert.ok(Array.isArray(list));
+  assert.ok(list.every((t) => isObj(t) && typeof t.id === "string" && /^\d\d:\d\d$/.test(t.start) && /^\d\d:\d\d$/.test(t.end)));
+  assert.deepEqual(list.map((t) => t.id), ["office", "early", "late", "night"]);
+});
+
+test("Import: Schichtvorlagen als Objekt statt Liste lassen die bisherigen stehen", () => {
+  const b = fresh();
+  b.importState({ settings: { shiftTemplates: { a: 1 }, theme: 5, workloadPercent: 80 }, days: {} }, "merge");
+  const s = b.getSettings();
+  assert.equal(s.shiftTemplates.length, 4, "bisherige Vorlagen bleiben");
+  assert.equal(s.theme, "auto", "falscher Typ überschreibt nichts");
+  assert.equal(s.workloadPercent, 80, "Gültiges wird übernommen");
+});
+
+test("Import: kaputte Werte neuer Funktionen fallen weg statt die Ansichten zu stören", () => {
+  const b = fresh();
+  b.importState({
+    settings: {
+      rota: "x", modelHistory: [null, { from: "x" }, { from: "2026-05-01", weeklyTargets: "a" }],
+      payrollCodes: { normal: "1000", flex: 5 }, comfortBand: [1, 2], moments: { enabled: true, dismissed: null },
+      "closing:2026-07": "garbage", "closing:2026-08": { v: 1, balance: "x", days: null }
+    },
+    days: {}
+  }, "merge");
+  const s = b.getSettings();
+  assert.equal(s.rota, undefined);
+  assert.deepEqual(s.modelHistory, []);
+  assert.deepEqual(s.payrollCodes, { normal: "1000" });
+  assert.equal(s.comfortBand, undefined);
+  assert.deepEqual(s.moments, { enabled: true, dismissed: {} });
+  assert.equal(s["closing:2026-07"], undefined, "kein Objekt — kein Abschluss");
+  assert.ok(isObj(s["closing:2026-08"]), "Objekte bleiben, ihren Inhalt prüft ZK.Closing");
+});
+
+test("Laden: ein kaputter Speicherstand wird beim Start gesäubert", () => {
+  const backend = S.memoryBackend();
+  const settings = Object.assign(R.defaultSettings(), {
+    shiftTemplates: [null, { id: "x", start: "07:00", end: "15:00", name: "Früh" }],
+    workdays: "1,2", weeklyTargets: [1, 2], workloadPercent: -50, firstDayOfWeek: 9, roundStep: 7,
+    carryOverMinutes: "12", maxDailyMinutes: "abc", moments: 5, newerFeature: { keep: true }
+  });
+  backend.setItem("zeitkonto:v1", JSON.stringify({ version: 3, settings: settings, days: {}, meta: {} }));
+  const store = S.createStore({ backend: backend, defaultSettings: R.defaultSettings });
+  store.load();
+  const s = store.getSettings();
+  assert.deepEqual(s.shiftTemplates.map((t) => t.id), ["x"]);
+  assert.deepEqual(s.workdays, [1, 2, 3, 4, 5]);
+  assert.equal(s.weeklyTargets.length, 7);
+  assert.equal(s.workloadPercent, 100);
+  assert.equal(s.firstDayOfWeek, 1);
+  assert.equal(s.roundStep, 0);
+  assert.equal(s.carryOverMinutes, 0);
+  assert.equal(s.maxDailyMinutes, 600);
+  assert.equal(s.moments, undefined);
+  assert.deepEqual(s.newerFeature, { keep: true }, "Unbekanntes einer neueren Version bleibt");
+});

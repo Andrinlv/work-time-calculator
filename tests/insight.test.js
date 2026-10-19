@@ -348,3 +348,113 @@ test("Rapport: lange Zeiträume als Monatszeilen mit Monatssummen", () => {
   assert.equal(g[0].target + g[1].target, b.sum.target);
   assert.equal(g[0].actual + g[1].actual, b.sum.actual);
 });
+
+/* ---------------------------------------------------------------------- */
+/* Lücken: eine Definition für Statistik, Rapport, Kalender, Monatscheck   */
+/* ---------------------------------------------------------------------- */
+
+test("Lücken: Statistik, Rapport, Kalender und Monatscheck zählen gleich — ab Erfassungsbeginn, ohne offene Tage", () => {
+  global.self.ZK.Holidays = require("../assets/js/core/holidays.js");
+  require("../assets/js/ui/views/calendar.js");
+  const CW = global.self.ZK.CalWeek;
+  const P = require("../assets/js/core/planner.js");
+  const s = settings({ autoHolidays: false });
+  // Erfassung ab 01.09. — 12./13.10. leer, 14.10. Gehen vergessen
+  const recs = {};
+  T.rangeDays("2026-09-01", "2026-10-15").forEach((iso) => {
+    const wd = T.weekdayOf(iso);
+    if (wd === 0 || wd === 6 || iso === "2026-10-12" || iso === "2026-10-13") return;
+    recs[iso] = iso === "2026-10-14" ? { date: iso, start: "07:05", end: "", breaks: [] } : work(iso, "08:00", "17:00");
+  });
+  const since = E.trackingStart(recs, s, { createdAt: "2026-09-01T06:00:00Z" });
+  assert.equal(since, "2026-09-01");
+  assert.equal(CW.trackingStart(recs, s, { createdAt: "2026-08-20T06:00:00Z" }), E.trackingStart(recs, s, { createdAt: "2026-08-20T06:00:00Z" }));
+
+  const year = E.computeRange("2026-01-01", "2026-12-31", (iso) => recs[iso], s, NOW, { since: since });
+  const expected = ["2026-10-12", "2026-10-13"];
+  assert.deepEqual(year.totals.gaps, expected, "Statistik: nicht 168 Tage seit Januar");
+  assert.equal(year.totals.gapDays, 2);
+
+  const rep = RP.buildRows(year.days, TODAY, { since: since });
+  assert.equal(rep.sum.gaps, 2, "Rapport");
+  assert.equal(rep.sum.open, 1, "der 14.10. ist offen, nicht zusätzlich Lücke");
+  assert.ok(rep.rows.every((x) => x.r.date >= since), "vor dem Erfassungsbeginn keine Zeile „nicht erfasst“");
+  assert.equal(rep.sum.duty, year.days.filter((r) => r.date >= since && r.date <= TODAY && r.target > 0).length, "Soll-Tage erst ab Erfassungsbeginn");
+
+  const cal = CW.summarize(year.days, { today: TODAY, start: since, hasRecord: (iso) => !!recs[iso] });
+  assert.deepEqual(Array.from(cal.gaps), expected, "Kalender");
+  assert.deepEqual(Array.from(cal.incomplete), ["2026-10-14"]);
+
+  const audit = P.auditRange(year.days, TODAY, { since: since });
+  assert.equal(audit.issues.find((g) => g.code === "gap").count, 2, "Monatscheck");
+
+  assert.deepEqual(year.days.filter((r) => S.heatKind(r, TODAY, since) === "gap").map((r) => r.date), expected, "Jahresübersicht");
+  assert.equal(S.heatKind(year.days.find((r) => r.date === "2026-03-02"), TODAY, since), "off");
+
+  // Ohne eigenen Eintrag gibt es nirgends Lücken
+  const empty = E.computeRange("2026-10-01", "2026-10-15", () => undefined, s, NOW, { since: E.trackingStart({}, s, null) });
+  assert.equal(empty.totals.gapDays, 0);
+  assert.equal(RP.buildRows(empty.days, TODAY, { since: null }).sum.gaps, 0);
+});
+
+/* ---------------------------------------------------------------------- */
+/* Exporte in der Sprache der Oberfläche                                   */
+/* ---------------------------------------------------------------------- */
+
+test("Text- und Kalender-Export sprechen die Sprache der Oberfläche", () => {
+  const X = require("../assets/js/data/exporters.js");
+  const s = settings({ autoHolidays: false });
+  const recs = {
+    "2026-10-05": work("2026-10-05", "08:00", "16:30"),
+    "2026-10-06": { date: "2026-10-06", type: "vacation" }
+  };
+  const r = range(recs, "2026-10-05", "2026-10-09", s);
+  // „Netto“ und „Saldo“ sind auch italienisch — geprüft werden die rein deutschen Wörter
+  const german = /\b(Soll|Pausen|Tage|erfasst|gearbeitet|bis)\b/;
+  ["en", "fr", "it"].forEach((lang) => {
+    I.setLang(lang);
+    const o = RP.exportOptions();
+    const txt = X.toText(r, o);
+    assert.ok(!german.test(txt), lang + ": " + txt);
+    assert.ok(txt.indexOf(I.weekdayName(1, "short")) >= 0, lang + ": Wochentag übersetzt");
+    assert.ok(txt.indexOf(I.t("type.vacation")) >= 0, lang + ": Tagesart übersetzt");
+    assert.ok(txt.indexOf(I.formatDate("2026-10-05", { day: "2-digit", month: "2-digit", year: "numeric" })) >= 0, lang + ": Datum");
+    const ics = X.toICS(r.days, o).replace(/\r\n /g, "");
+    const lines = ics.split("\r\n").filter((l) => /^(SUMMARY|DESCRIPTION):/.test(l));
+    assert.ok(lines.length >= 2);
+    lines.forEach((l) => assert.ok(!german.test(l), lang + ": " + l));
+    assert.ok(ics.indexOf("DESCRIPTION:" + I.t("export.net") + " ") >= 0, lang);
+    assert.ok(ics.indexOf(" · " + I.t("export.target") + " ") >= 0, lang);
+    assert.ok(txt.indexOf(I.t("export.actual")) >= 0 && txt.indexOf(I.t("export.days")) >= 0, lang);
+  });
+  I.setLang("de");
+  const de = X.toText(r, RP.exportOptions());
+  assert.ok(de.indexOf("ZEITKONTO · 05.10.2026 bis 09.10.2026") === 0, de);
+  assert.ok(/Saldo\s+\+0:00|Saldo\s+−0:/.test(de));
+});
+
+test("CSV-Hinweise lesbar in jeder Sprache, mit „ · “ getrennt — und die Datei bleibt einlesbar", () => {
+  const X = require("../assets/js/data/exporters.js");
+  const s = settings({ autoHolidays: false });
+  const recs = {
+    "2026-10-05": { date: "2026-10-05", start: "07:00", end: "17:30", breaks: [] },        // Pflichtpause abgezogen
+    "2026-10-06": { date: "2026-10-06", start: "06:00", end: "", breaks: [] }              // Gehen fehlt
+  };
+  const days = range(recs, "2026-10-05", "2026-10-06", s).days;
+  assert.ok(RP.HINT_CODES.indexOf("break-auto") >= 0);
+  ["de", "en", "fr", "it"].forEach((lang) => {
+    I.setLang(lang);
+    const opts = RP.csvOptions((iso) => recs[iso]);
+    RP.HINT_CODES.forEach((code) => assert.ok(opts.hintLabels[code] && opts.hintLabels[code].indexOf("csv.") < 0, lang + ": " + code));
+    const csv = X.toCSV(days, opts);
+    assert.ok(csv.indexOf(I.t("csv.hint.break-auto")) >= 0, lang);
+    assert.ok(csv.indexOf(I.t("csv.hint.missing-end")) >= 0, lang);
+    assert.ok(!/;(break-auto|missing-end)\b/.test(csv), lang + ": keine rohen Codes");
+    const parsed = X.parseCSV(csv);
+    assert.equal(parsed.rows.length, 2, lang);
+    assert.equal(parsed.rows[0].start, "07:00");
+  });
+  I.setLang("de");
+  const busy = range({ "2026-10-05": { date: "2026-10-05", start: "06:00", end: "18:00", breaks: [] } }, "2026-10-05", "2026-10-05", s).days;
+  assert.ok(X.toCSV(busy, { hintLabels: { "break-auto": "A", "over-daily-max": "B" } }).indexOf(";A · B;") >= 0, "mehrere Hinweise mit „ · “");
+});

@@ -118,7 +118,8 @@
       "ins.set.bandMax": "Obergrenze",
       "ins.set.home": "Homeoffice-Grenze",
       "ins.set.homeHint": "Höchstanteil laut Vereinbarung. Leer = keine Grenze.",
-      "ins.set.foot": "Die Höchstarbeitszeit für die Überzeit (45 h oder 50 h) stellst du unter Arbeitsschutz ein."
+      "ins.set.foot": "Die Höchstarbeitszeit für die Überzeit (45 h oder 50 h) stellst du unter Arbeitsschutz ein.",
+      "ins.shiftsNoAvg": "Die Schichten wechseln: Ein Durchschnitt von Kommen und Gehen wäre irreführend, die Uhr zeigt die Verteilung."
     },
     en: {
       "ins.title": "Insights",
@@ -218,7 +219,8 @@
       "ins.set.bandMax": "Upper limit",
       "ins.set.home": "Home-office limit",
       "ins.set.homeHint": "Maximum share as agreed. Empty = no limit.",
-      "ins.set.foot": "Set the weekly maximum for overtime (45 h or 50 h) under Health & safety."
+      "ins.set.foot": "Set the weekly maximum for overtime (45 h or 50 h) under Health & safety.",
+      "ins.shiftsNoAvg": "Your shifts rotate: an average arrival or departure would mislead, so the clock shows the distribution."
     },
     fr: {
       "ins.title": "Observations",
@@ -318,7 +320,8 @@
       "ins.set.bandMax": "Limite supérieure",
       "ins.set.home": "Limite de télétravail",
       "ins.set.homeHint": "Part maximale convenue. Vide = aucune limite.",
-      "ins.set.foot": "La durée maximale pour le travail supplémentaire (45 h ou 50 h) se règle sous Protection des travailleurs."
+      "ins.set.foot": "La durée maximale pour le travail supplémentaire (45 h ou 50 h) se règle sous Protection des travailleurs.",
+      "ins.shiftsNoAvg": "Vos horaires alternent : une moyenne d’arrivée ou de départ induirait en erreur, l’horloge montre la répartition."
     },
     it: {
       "ins.title": "Osservazioni",
@@ -418,7 +421,8 @@
       "ins.set.bandMax": "Limite superiore",
       "ins.set.home": "Limite di telelavoro",
       "ins.set.homeHint": "Quota massima concordata. Vuoto = nessun limite.",
-      "ins.set.foot": "La durata massima per lo straordinario (45 h o 50 h) si imposta in Protezione dei lavoratori."
+      "ins.set.foot": "La durata massima per lo straordinario (45 h o 50 h) si imposta in Protezione dei lavoratori.",
+      "ins.shiftsNoAvg": "I tuoi turni cambiano: una media di entrata e uscita sarebbe fuorviante, l’orologio mostra la distribuzione."
     }
   });
 
@@ -710,7 +714,8 @@
     } else {
       right.appendChild(empty(I.t("ins.noFacts")));
     }
-    if (rh.nights) right.appendChild(D.el("p.chart-note", { text: I.tn("ins.nightsOut", rh.nights) }));
+    if (rh.shifts) right.appendChild(D.el("p.chart-note", { text: I.t("ins.shiftsNoAvg") }));
+    else if (rh.nights) right.appendChild(D.el("p.chart-note", { text: I.tn("ins.nightsOut", rh.nights) }));
     row.appendChild(right);
     c.body.appendChild(row);
     return c.node;

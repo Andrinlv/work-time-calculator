@@ -77,8 +77,9 @@
     return E.activeShiftDate(function (iso) { return store.getDay(iso); });
   };
 
-  App.range = function (from, to) {
-    return E.computeRange(from, to, function (iso) { return store.getDay(iso); }, App.settings());
+  /** opts geht an E.computeRange — { since: Erfassungsbeginn } für die Lücken. */
+  App.range = function (from, to, opts) {
+    return E.computeRange(from, to, function (iso) { return store.getDay(iso); }, App.settings(), undefined, opts);
   };
 
   /* ---- Kontostand, je Datenstand nur einmal gerechnet ----------------
@@ -192,8 +193,15 @@
   /* Navigation                                                          */
   /* ================================================================== */
 
+  /* Nur eigene Einträge von ZK.Views sind Ansichten — „#/constructor“ oder
+     „#/toString“ fänden sonst Object.prototype und hielten den Start an. */
+  function isView(key) {
+    return typeof key === "string" && Object.prototype.hasOwnProperty.call(ZK.Views, key) &&
+      !!ZK.Views[key] && typeof ZK.Views[key].render === "function";
+  }
+
   App.go = function (view, opts) {
-    if (!ZK.Views[view]) view = "today";
+    if (!isView(view)) view = "today";
     var fromDrawer = navIsOpen();
     App.view = view;
     if (opts && opts.date) App.date = opts.date;
@@ -230,7 +238,7 @@
   function readHash() {
     var m = /^#\/([a-z]+)(?:\/(\d{4}-\d{2}-\d{2}))?/.exec(location.hash || "");
     if (!m) return false;
-    if (ZK.Views[m[1]]) App.view = m[1];
+    if (isView(m[1])) App.view = m[1];
     if (!m[2] || !T.isValidISO(m[2])) return false;
     /* Kalender und Woche schreiben ihre Blätterposition in die Adresse.
        Die gilt nur für sie — sonst öffnete „Heute“ nach dem Neuladen auf
@@ -699,13 +707,13 @@
        zuerst sichern — vor dem Abriss, auch beim Wechsel der Ansicht.
        Löst das Sichern selbst ein Neuzeichnen aus, übernimmt das dieser
        Aufruf hier. */
-    var leaving = renderedView && ZK.Views[renderedView];
+    var leaving = renderedView && isView(renderedView) ? ZK.Views[renderedView] : null;
     if (leaving && typeof leaving.flush === "function") {
       flushingView = true;
       try { leaving.flush(); } catch (e) { if (root.console) console.error(e); }
       finally { flushingView = false; }
     }
-    var key = ZK.Views[App.view] ? App.view : "today";
+    var key = isView(App.view) ? App.view : "today";
     var refresh = renderedView === key && !!host.firstChild;
     var firstEver = renderedView === null;
     renderedView = key;

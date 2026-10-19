@@ -643,13 +643,166 @@
   /**
    * Wochensoll (Pensum-bereinigt). Ohne Datum das jüngste Modell (die
    * Felder der Einstellungen), mit Datum das Modell dieses Tages.
+   * Summe der je Tag gerundeten Sollzeiten — genau das, was die Tage über
+   * baseTargetFor tragen: 80 % von 8 h 24 sind 6 h 43 am Tag, also 33 h 35
+   * in der Woche (nicht 33 h 36 aus der gerundeten Wochensumme).
    */
   function weeklyTargetMinutes(settings, iso) {
     var s = settings || defaultSettings();
     var src = iso ? sourceFor(iso, s) : s;
-    var sum = (src.weeklyTargets || []).reduce(function (a, b) { return a + (b || 0); }, 0);
     // 0 % heisst 0 — gleiche Lesart wie baseTargetFor (früher galt 0 als 100 %).
-    return Math.round(sum * (pctOf(src) / 100));
+    var factor = pctOf(src) / 100;
+    return (src.weeklyTargets || []).reduce(function (a, b) { return a + Math.round((b || 0) * factor); }, 0);
+  }
+
+  /* ==================================================================== */
+  /* EINSTELLUNGEN SÄUBERN                                                 */
+  /* ==================================================================== */
+  /*
+     Eine von Hand bearbeitete oder fremde Sicherung kann alles enthalten:
+     null in einer Liste, eine Zahl als Text, ein Objekt statt einer Liste.
+     Damit keine Ansicht daran stolpert (und „Einstellungen“ mit Import und
+     Zurücksetzen immer erreichbar bleibt), prüft der Store an EINER Stelle —
+     beim Laden und beim Einlesen — mit sanitizeSettings(). Unbekannte
+     Schlüssel einer neueren Version bleiben unberührt.
+
+     opts.partial (Einlesen): nur vorhandene Schlüssel; Unbrauchbares fällt
+     weg, damit beim Zusammenführen der bisherige Wert bleibt.
+     Sonst (Laden): Unbrauchbares wird durch den Standardwert ersetzt.
+     Verändert `s` an Ort und Stelle und gibt es zurück.
+  */
+  var LOOSE_HHMM = /^([01]?\d|2[0-3]):[0-5]\d$/;
+  var ROUND_STEPS = [0, 1, 5, 6, 10, 15];
+  var ROUND_MODES = ["nearest", "up", "down"];
+
+  function isPlain(v) { return !!v && typeof v === "object" && !Array.isArray(v); }
+  function isTime(v) { return typeof v === "string" && LOOSE_HHMM.test(v.trim()); }
+
+  /** Schichtvorlage: Objekt mit Kennung, Kommen und Gehen — sonst null. */
+  function cleanTemplate(tpl) {
+    if (!isPlain(tpl)) return null;
+    var id = typeof tpl.id === "string" ? tpl.id.trim() : (isNum(tpl.id) ? String(tpl.id) : "");
+    if (!id || !isTime(tpl.start) || !isTime(tpl.end)) return null;
+    var out = Object.assign({}, tpl, {
+      id: id,
+      name: typeof tpl.name === "string" ? tpl.name : "",
+      start: tpl.start.trim(),
+      end: tpl.end.trim(),
+      breakStart: isTime(tpl.breakStart) ? tpl.breakStart.trim() : "",
+      breakEnd: isTime(tpl.breakEnd) ? tpl.breakEnd.trim() : ""
+    });
+    if (out.nameKey !== undefined && typeof out.nameKey !== "string") delete out.nameKey;
+    if (out.breakPaid !== undefined) out.breakPaid = out.breakPaid === true;
+    return out;
+  }
+
+  /* Prüfer je Schlüssel: Wert → bereinigter Wert oder undefined (unbrauchbar) */
+  var CHECKS = {
+    weeklyTargets: function (v) { return cleanTargets(v) || undefined; },
+    workdays: function (v) { return cleanDays(v) || undefined; },
+    workloadPercent: function (v) { return isNum(v) && v >= 0 && v <= 200 ? v : undefined; },
+    firstDayOfWeek: function (v) { return v === 0 || v === 1 ? v : undefined; },
+    roundStep: function (v) { return ROUND_STEPS.indexOf(v) >= 0 ? v : undefined; },
+    roundMode: function (v) { return ROUND_MODES.indexOf(v) >= 0 ? v : undefined; },
+    breakRuleset: function (v) { return typeof v === "string" && (BREAK_RULESETS[v] || v === "custom") ? v : undefined; },
+    customBreakTiers: function (v) {
+      if (!Array.isArray(v)) return undefined;
+      return v.filter(function (x) { return isPlain(x) && isNum(x.over) && isNum(x.require) && x.over >= 0 && x.require > 0; })
+        .map(function (x) { return { over: x.over, require: x.require }; });
+    },
+    defaultLunch: function (v) {
+      if (v === null) return null;
+      return isPlain(v) && (isTime(v.start) || v.start === "") && (isTime(v.end) || v.end === "") ? v : undefined;
+    },
+    maxDailyMinutes: positive,
+    minRestHours: positive,
+    maxWeeklyMinutes: positive,
+    carryOverMinutes: function (v) { return isNum(v) ? v : undefined; },
+    carryOverFrom: function (v) { return v === null || isISO(v) ? v : undefined; },
+    capPlusMinutes: nullableNumber,
+    capMinusMinutes: nullableNumber,
+    vacationDaysPerYear: function (v) { return v === null || (isNum(v) && v >= 0) ? v : undefined; },
+    vacationCarryDays: function (v) { return v === null || isNum(v) ? v : undefined; },
+    shiftTemplates: function (v) {
+      if (!Array.isArray(v)) return undefined;
+      var seen = {};
+      return v.map(cleanTemplate).filter(function (x) {
+        if (!x || seen[x.id]) return false;
+        seen[x.id] = true;
+        return true;
+      });
+    },
+    /* Arbeitsmodell ab Stichtag: nur Einträge, die historyOf() lesen kann */
+    modelHistory: function (v) {
+      if (!Array.isArray(v)) return undefined;
+      return v.filter(function (e) { return cleanEntry(e) !== null; });
+    },
+    /* Funktionen späterer Versionen: die Form muss stimmen, den Inhalt
+       prüfen ihre eigenen Module (Rota.normalize, Closing.isSnapshot …) */
+    rota: plainObject,
+    outlook: plainObject,
+    assistDismissed: plainObject,
+    payrollCodes: function (v) {
+      if (!isPlain(v)) return undefined;
+      var out = {};
+      Object.keys(v).forEach(function (k) { if (typeof v[k] === "string") out[k] = v[k]; });
+      return out;
+    },
+    comfortBand: function (v) {
+      if (v === false || v === null) return v;
+      if (!isPlain(v)) return undefined;
+      var out = Object.assign({}, v);
+      ["min", "max"].forEach(function (k) { if (out[k] !== undefined && out[k] !== null && !isNum(out[k])) delete out[k]; });
+      return out;
+    },
+    moments: function (v) {
+      if (!isPlain(v)) return undefined;
+      return Object.assign({}, v, {
+        enabled: v.enabled !== false,
+        dismissed: isPlain(v.dismissed) ? v.dismissed : {}
+      });
+    },
+    homeOfficeMaxPercent: nullableNumber
+  };
+
+  function positive(v) { return isNum(v) && v > 0 ? v : undefined; }
+  function nullableNumber(v) { return v === null || isNum(v) ? v : undefined; }
+  function plainObject(v) { return isPlain(v) ? v : undefined; }
+
+  function sanitizeSettings(s, opts) {
+    var partial = !!(opts && opts.partial);
+    if (!isPlain(s)) return partial ? {} : defaultSettings();
+    var defs = defaultSettings();
+    var badDays = false;
+    function bad(k) {
+      if (k === "workdays") badDays = true;
+      if (partial || !Object.prototype.hasOwnProperty.call(defs, k)) delete s[k];
+      else s[k] = defs[k];
+    }
+    Object.keys(s).forEach(function (k) {
+      var v = s[k];
+      if (v === undefined) return;
+      if (k.indexOf("closing:") === 0) {
+        // Abschluss eines Monats: nur ein Objekt kann ein Abschluss sein
+        if (!isPlain(v)) delete s[k];
+        return;
+      }
+      if (Object.prototype.hasOwnProperty.call(CHECKS, k)) {
+        var c = CHECKS[k](v);
+        if (c === undefined) bad(k);
+        else s[k] = c;
+        return;
+      }
+      var ref = defs[k];
+      if (ref === null || ref === undefined || v === null) return;
+      if (typeof ref === "number" ? !isNum(v)
+        : Array.isArray(ref) ? !Array.isArray(v)
+        : typeof ref === "object" ? !isPlain(v)
+        : typeof v !== typeof ref) bad(k);
+    });
+    // Arbeitstage unbrauchbar: aus den Sollzeiten ableiten, nicht stur Mo–Fr
+    if (badDays && !partial) s.workdays = daysWithTarget(cleanTargets(s.weeklyTargets)) || DEFAULT_WORKDAYS.slice();
+    return s;
   }
 
   /**
@@ -670,6 +823,10 @@
     return { minutes: minutes, days: days };
   }
 
+  /* Wer den Store mit R.defaultSettings anlegt, bekommt den Prüfer gleich
+     mit (store.createStore liest defaultSettings.sanitize). */
+  defaultSettings.sanitize = sanitizeSettings;
+
   return {
     DAY_TYPES: DAY_TYPES,
     DAY_TYPE_ORDER: DAY_TYPE_ORDER,
@@ -684,6 +841,7 @@
     nextBreakTier: nextBreakTier,
     weeklyPreset: weeklyPreset,
     defaultSettings: defaultSettings,
+    sanitizeSettings: sanitizeSettings,
     baseTargetFor: baseTargetFor,
     weeklyTargetMinutes: weeklyTargetMinutes,
     /* Arbeitsmodell ab Stichtag */

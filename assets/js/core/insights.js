@@ -24,12 +24,12 @@
    ========================================================================== */
 (function (root, factory) {
   if (typeof module === "object" && module.exports) {
-    module.exports = factory(require("./time.js"));
+    module.exports = factory(require("./time.js"), require("./engine.js"));
   } else {
     root.ZK = root.ZK || {};
-    root.ZK.Insights = factory(root.ZK.Time);
+    root.ZK.Insights = factory(root.ZK.Time, root.ZK.Engine);
   }
-})(typeof self !== "undefined" ? self : globalThis, function (T) {
+})(typeof self !== "undefined" ? self : globalThis, function (T, E) {
   "use strict";
 
   var DAY = 1440;
@@ -154,46 +154,46 @@
 
   /**
    * Verteilung von Kommen, Mittag und Gehen über 24 Stunden, Mittelwerte
-   * (ohne Nachtschichten — wie „Ankunft & Feierabend“) und die Aussagen.
+   * und die Aussagen. Ø Kommen und Ø Gehen kommen aus Engine.clockAverages
+   * — dieselben Zahlen wie die Kennzahlen der Statistik und der Rückblick:
+   * ohne Nachtschichten (`nights`), bei wechselnden Schichten keine
+   * (`shifts`, die Uhr zeigt dann nur die Verteilung).
    * @param {Array} days  berechnete Tage des Zeitraums
-   * @returns {{ bins, n, avg, nights, facts, regular }}
+   * @returns {{ bins, n, avg, nights, shifts, facts, regular }}
    */
   function rhythm(days) {
     var bins = { arrive: emptyBins(), lunch: emptyBins(), leave: emptyBins() };
     var n = { arrive: 0, lunch: 0, leave: 0 };
-    var day = { arrive: [], lunch: [], leave: [] };
-    var nights = 0;
+    var lunches = [];
 
     (days || []).forEach(function (r) {
       if (!isWorked(r)) return;
       var night = isNight(r);
-      if (night && r.complete) nights++;
       bins.arrive[Math.floor(tod(r.startTod) / BIN)]++;
       n.arrive++;
-      if (!night) day.arrive.push(r.startTod);
       var l = lunchOf(r);
       if (l !== null) {
         bins.lunch[Math.floor(l / BIN)]++;
         n.lunch++;
-        if (!night) day.lunch.push(l);
+        if (!night) lunches.push(l);
       }
       if (r.complete && r.endTl !== null) {
         bins.leave[Math.floor(tod(r.endTl) / BIN)]++;
         n.leave++;
-        if (!night) day.leave.push(r.endTl);
       }
     });
 
+    var clock = E.clockAverages(days);
     var avg = {
-      arrive: roundOrNull(mean(day.arrive)),
-      lunch: roundOrNull(mean(day.lunch)),
-      leave: roundOrNull(mean(day.leave))
+      arrive: clock.avgStart,
+      lunch: clock.shifts ? null : roundOrNull(mean(lunches)),
+      leave: clock.avgEnd
     };
     var regular = (days || []).filter(isRegular);
     return {
-      bins: bins, binMinutes: BIN, n: n, avg: avg, nights: nights,
+      bins: bins, binMinutes: BIN, n: n, avg: avg, nights: clock.nights, shifts: clock.shifts,
       regular: regular.length,
-      facts: rhythmFacts(regular)
+      facts: rhythmFacts(regular, days)
     };
   }
 
@@ -209,7 +209,7 @@
    *   { id: "longest", weekday, avg, minutes, n: [tag, übrige] }
    *   { id: "lunch", from, to, n }
    */
-  function rhythmFacts(regular) {
+  function rhythmFacts(regular, days) {
     var facts = [];
 
     ["arrive", "leave"].forEach(function (series) {
@@ -224,7 +224,7 @@
     if (trend) facts.push(trend);
     var home = homeFact(regular);
     if (home) facts.push(home);
-    var longest = longestFact(regular);
+    var longest = longestFact(days || regular);
     if (longest) facts.push(longest);
     var lunch = lunchFact(regular);
     if (lunch) facts.push(lunch);
@@ -320,18 +320,65 @@
     };
   }
 
+  /* ------------------------------------------------------------------ */
+  /* Längster Wochentag — eine Definition für Erkenntnisse und Rückblick  */
+  /* ------------------------------------------------------------------ */
+
+  /**
+   * Voller Arbeitstag für Netto-Vergleiche nach Wochentag: abgeschlossen,
+   * Tagesart Arbeit mit Soll. Ein halber Ferientag, ein Kurstag oder ein
+   * Samstagseinsatz ohne Soll würde den Schnitt seines Wochentags
+   * verzerren. Nachtschichten zählen — es geht um die Länge, nicht die Lage.
+   */
+  function isFullWorkday(r) {
+    return isWorked(r) && !!r.complete && r.type === "work" && r.target > 0;
+  }
+
+  /* Montag zuerst: Gleichstände bleiben nicht am Sonntag hängen */
+  var WEEK_ORDER = [1, 2, 3, 4, 5, 6, 0];
+
+  /**
+   * Ø netto je Wochentag über volle Arbeitstage — Grundlage für „deine
+   * längsten Tage“ (Erkenntnisse) und „Lieblingstag“ (Jahresrückblick).
+   * Ein Wochentag kommt nur mit genug Tagen in Frage: mindestens
+   * MIN.weekday und ein Viertel des häufigsten Wochentags.
+   * → { days: [{ weekday, count, total, avg, values }] (0 = So),
+   *     eligible: [Wochentag, …] (Montag zuerst), top, bottom }
+   */
+  function weekdayProfile(days) {
+    var list = [];
+    for (var d = 0; d < 7; d++) list.push({ weekday: d, count: 0, total: 0, avg: 0, values: [] });
+    (days || []).forEach(function (r) {
+      if (!isFullWorkday(r)) return;
+      var w = list[r.weekday];
+      w.count++;
+      w.total += r.net;
+      w.values.push(r.net);
+    });
+    var maxCount = 0;
+    list.forEach(function (w) {
+      w.avg = w.count ? Math.round(w.total / w.count) : 0;
+      if (w.count > maxCount) maxCount = w.count;
+    });
+    var minCount = Math.max(MIN.weekday, Math.ceil(maxCount / 4));
+    var eligible = WEEK_ORDER.filter(function (wd) { return list[wd].count >= minCount; });
+    var top = null, bottom = null;
+    eligible.forEach(function (wd) {
+      var m = list[wd].total / list[wd].count;
+      if (top === null || m > list[top].total / list[top].count) top = wd;
+      if (bottom === null || m < list[bottom].total / list[bottom].count) bottom = wd;
+    });
+    return { days: list, eligible: eligible, top: top, bottom: eligible.length > 1 ? bottom : null };
+  }
+
   /** Der Wochentag mit den längsten Tagen — klar länger als der Rest? */
-  function longestFact(regular) {
-    var g = [[], [], [], [], [], [], []];
-    regular.forEach(function (r) { if (r.complete) g[r.weekday].push(r.net); });
-    var ok = [];
-    for (var d = 0; d < 7; d++) if (g[d].length >= MIN.weekday) ok.push(d);
-    if (ok.length < 3) return null;
-    var top = ok[0];
-    ok.forEach(function (d) { if (mean(g[d]) > mean(g[top])) top = d; });
+  function longestFact(days) {
+    var p = weekdayProfile(days);
+    if (p.eligible.length < 3) return null;
+    var top = p.top;
     var rest = [];
-    ok.forEach(function (d) { if (d !== top) rest = rest.concat(g[d]); });
-    var w = welch(rest, g[top]);
+    p.eligible.forEach(function (d) { if (d !== top) rest = rest.concat(p.days[d].values); });
+    var w = welch(rest, p.days[top].values);
     if (w.diff < MIN_DIFF || w.t < T_SEARCH) return null;
     return {
       id: "longest", weekday: top, avg: Math.round(w.mb), minutes: Math.round(w.diff),
@@ -670,6 +717,8 @@
     welch: welch,
     quantile: quantile,
     isRegular: isRegular,
+    isFullWorkday: isFullWorkday,
+    weekdayProfile: weekdayProfile,
     isSettled: isSettled,
     lunchOf: lunchOf,
     rhythm: rhythm,

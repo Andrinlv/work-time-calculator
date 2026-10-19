@@ -858,15 +858,10 @@
   /* 4 · Monatscheck                                                       */
   /* ==================================================================== */
 
-  /** Ab wann gibt es überhaupt etwas zu prüfen? Erster Eintrag bzw. Kontobeginn. */
+  /** Ab wann gibt es überhaupt etwas zu prüfen? Erfassungsbeginn wie im
+      Kalender und in der Statistik (Engine.trackingStart). */
   function auditSince(App) {
-    var keys = Object.keys(App.store.allDays() || {}).filter(function (k) {
-      return P.hasContent(App.store.getDay(k));
-    }).sort();
-    var first = keys.length ? keys[0] : null;
-    var from = App.settings().carryOverFrom || null;
-    if (first && from && from > first) return from;
-    return first;
+    return ZK.Engine.trackingStart(App.store.allDays(), App.settings(), App.store.getMeta ? App.store.getMeta() : null);
   }
 
   function auditCard(App) {

@@ -40,40 +40,14 @@
     return res.startTod !== null && res.startTod !== undefined && res.endTod === null && !res.complete;
   }
 
-  function isoOf(dateLike) {
-    var d = new Date(dateLike);
-    return isNaN(d.getTime()) ? null : T.todayISO(d);
-  }
-
   /**
-   * Ab wann fehlende Arbeitstage als Lücke gelten. Vor dem ersten eigenen
-   * Eintrag (bzw. dem Start der App) gibt es nichts zu vermissen — sonst
-   * sieht jemand gleich nach dem Einrichten elf rote Striche. Der Kontostart
-   * (carryOverFrom) ist die Untergrenze. Ohne jeden eigenen Eintrag: keine Lücken.
-   * Aus Outlook übernommene Abwesenheiten zählen nicht als „angefangen“, auch
-   * Datensätze nicht, die nur einen Ort (Homeoffice-Termin) oder einen Plan
-   * tragen — gestempelte Tage dagegen immer (wie ZK.Assist.trackingStartOf).
+   * Ab wann fehlende Arbeitstage als Lücke gelten — Engine.trackingStart,
+   * dieselbe Regel wie in Statistik, Rapport, Monatscheck und Lückenhilfe:
+   * erster eigener Eintrag bzw. Start der App, frühestens Kontobeginn.
+   * Ohne jeden eigenen Eintrag: keine Lücken.
    */
   function trackingStart(days, settings, meta) {
-    var first = null;
-    Object.keys(days || {}).forEach(function (iso) {
-      var rec = days[iso];
-      if (!rec || !T.isValidISO(iso) || !ownEntry(rec)) return;
-      if (first === null || iso < first) first = iso;
-    });
-    if (!first) return null;
-    var created = meta && meta.createdAt ? isoOf(meta.createdAt) : null;
-    var begin = created && created < first ? created : first;
-    var from = settings && settings.carryOverFrom && T.isValidISO(settings.carryOverFrom) ? settings.carryOverFrom : null;
-    if (from && from > begin) begin = from;
-    return begin;
-  }
-
-  function ownEntry(rec) {
-    if (String(rec.start || "").trim() || String(rec.end || "").trim()) return true;
-    if (rec.source === "outlook") return false;
-    return !!(rec.type || (rec.breaks && rec.breaks.length) || String(rec.note || "").trim() ||
-      (rec.targetOverride !== null && rec.targetOverride !== undefined));
+    return ZK.Engine.trackingStart(days, settings, meta);
   }
 
   /** running | incomplete | recorded | gap | empty */
@@ -81,7 +55,7 @@
     if (isProvisional(res)) return "running";
     if (isIncomplete(res)) return "incomplete";
     if (res.recorded) return "recorded";
-    if (res.target > 0 && res.date < today && start && res.date >= start) return "gap";
+    if (ZK.Engine.isGap(res, today, start || null)) return "gap";
     return "empty";
   }
 

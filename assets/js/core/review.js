@@ -5,9 +5,13 @@
    die kleinen Hinweise auf „Heute“. Gerechnet wird ausschliesslich mit der
    Engine und mit denselben Definitionen wie in der Statistik — eine Zahl
    im Rückblick darf nie anders lauten als dort:
-     · Netto, gearbeitete Tage, Ø pro Tag, frühester Beginn, spätester
-       Feierabend und längster Tag: computeRange() vom 1.1. bis heute
-       (vergangene Jahre bis 31.12.), wie „Statistik · Jahr“
+     · Netto, gearbeitete Tage, Ø pro Tag, Ø Beginn und Feierabend
+       (Engine.clockAverages: ohne Nachtschichten, keine bei wechselnden
+       Schichten), frühester Beginn, spätester Feierabend und längster
+       Tag: computeRange() vom 1.1. bis heute (vergangene Jahre bis
+       31.12.), wie „Statistik · Jahr“
+     · Lieblingstag: Insights.weekdayProfile, wie „deine längsten Tage“
+       in den Erkenntnissen
      · erfasste Tage: nur Tage mit eigenem Eintrag (ein automatischer
        Feiertag ist keine Erfassung)
      · Ferientage: quotaUsage().vacationTaken („bezogen“ im Kontingent)
@@ -23,12 +27,12 @@
   /* Den Monatsabschluss erst beim Rechnen holen: closing.js lädt nach dieser Datei */
   if (typeof module === "object" && module.exports) {
     module.exports = factory(require("./time.js"), require("./rules.js"), require("./engine.js"), require("./planner.js"),
-      function () { return require("./closing.js"); });
+      function () { return require("./closing.js"); }, require("./insights.js"));
   } else {
     root.ZK = root.ZK || {};
-    root.ZK.Review = factory(root.ZK.Time, root.ZK.Rules, root.ZK.Engine, root.ZK.Planner, function () { return root.ZK.Closing; });
+    root.ZK.Review = factory(root.ZK.Time, root.ZK.Rules, root.ZK.Engine, root.ZK.Planner, function () { return root.ZK.Closing; }, root.ZK.Insights);
   }
-})(typeof self !== "undefined" ? self : globalThis, function (T, R, E, P, closing) {
+})(typeof self !== "undefined" ? self : globalThis, function (T, R, E, P, closing, X) {
   "use strict";
 
   /* Ab so vielen erfassten Tagen lohnt sich ein Rückblick. */
@@ -253,7 +257,7 @@
       longest: null,        // { minutes, date }
       earlyStarts: 0,       // Beginn vor 07:00
       lateEnds: 0,          // Feierabend ab 19:00 (auch am Folgetag)
-      weekdays: [],         // 0 = So … 6 = Sa: { weekday, count, total, avg }
+      weekdays: [],         // 0 = So … 6 = Sa: { weekday, count, total, avg } — volle Arbeitstage
       favoriteWeekday: null,
       shortestWeekday: null,
       months: [],           // 0 … 11: { month, net, credited, value, target, balance, days, future }
@@ -298,9 +302,6 @@
       if (!(r.net > 0)) return;
 
       mo.days++;
-      var wd = st.weekdays[r.weekday];
-      wd.count++;
-      wd.total += r.net;
       // Gleiche Reihenfolge wie Engine/Statistik: der erste Tag gewinnt bei Gleichstand
       if (!st.longest || r.net > st.longest.minutes) st.longest = { minutes: r.net, date: r.date };
       if (r.startTod !== null && (!st.earliest || r.startTod < st.earliest.minutes)) st.earliest = { minutes: r.startTod, date: r.date };
@@ -313,23 +314,19 @@
     });
     st.empty = st.recordedDays === 0;
 
-    /* Wochentage: Ø netto wie „Durchschnitt nach Wochentag“. Ein einzelner
-       Samstagseinsatz soll weder Lieblings- noch kürzester Tag werden —
-       nur Wochentage mit genug Tagen kommen in Frage. */
-    var maxCount = 0;
+    /* Wochentage: Ø netto voller Arbeitstage — dieselbe Grundlage wie
+       „deine längsten Tage“ in den Erkenntnissen. Ein Samstagseinsatz, ein
+       halber Ferientag oder ein Kurstag soll weder Lieblings- noch
+       kürzester Tag werden; nur Wochentage mit genug Tagen kommen in Frage. */
+    var profile = X.weekdayProfile(range.days);
     st.weekdays.forEach(function (w) {
-      w.avg = w.count ? Math.round(w.total / w.count) : 0;
-      if (w.count > maxCount) maxCount = w.count;
+      var p = profile.days[w.weekday];
+      w.count = p.count;
+      w.total = p.total;
+      w.avg = p.avg;
     });
-    var minCount = Math.max(3, Math.ceil(maxCount / 4));
-    var eligible = st.weekdays.filter(function (w) { return w.count >= minCount; });
-    // Montag zuerst, damit Gleichstände nicht am Sonntag hängen bleiben
-    eligible.sort(function (a, b) { return ((a.weekday + 6) % 7) - ((b.weekday + 6) % 7); });
-    eligible.forEach(function (w) {
-      if (!st.favoriteWeekday || w.avg > st.favoriteWeekday.avg) st.favoriteWeekday = w;
-      if (!st.shortestWeekday || w.avg < st.shortestWeekday.avg) st.shortestWeekday = w;
-    });
-    if (eligible.length < 2) st.shortestWeekday = null;
+    st.favoriteWeekday = profile.top === null ? null : st.weekdays[profile.top];
+    st.shortestWeekday = profile.bottom === null ? null : st.weekdays[profile.bottom];
 
     st.months.forEach(function (mo) {
       var first = year + "-" + (mo.month < 9 ? "0" : "") + (mo.month + 1) + "-01";

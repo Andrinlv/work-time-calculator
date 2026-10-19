@@ -1967,7 +1967,7 @@
 .qe-card .chip.mono { font-size: var(--fs-2xs); }
 
 /* Schnellerfassung in der Befehlspalette: Hinweis, dass erst geprüft wird */
-.palette-item .sub.warn { color: var(--warn); }
+.palette-item .sub.warn { color: var(--warn-ink); }
 .palette-item.warn .ic { color: var(--warn); }
 
 /* ---- Gleitzeit-Planer ----------------------------------------------- */
@@ -2824,7 +2824,11 @@ body.mini-pip::before { display: none; }
 @keyframes rv-fill { from { width: 0 } to { width: 100% } }
 
 .rv-modal .modal-body { padding: 0 12px; display: flex; flex-direction: column; overflow: hidden; }
-.rv-modal .modal-foot { padding: 10px 12px calc(10px + env(safe-area-inset-bottom, 0px)); border-top: 0; background: transparent; flex-wrap: nowrap; }
+.rv-modal .modal-foot { padding: 10px 12px calc(10px + env(safe-area-inset-bottom, 0px)); border-top: 0; background: transparent; }
+/* Passen die Knöpfe nicht in eine Zeile (lange Beschriftungen wie im
+   Italienischen), bricht „Teilen“ in eine zweite Zeile um — rechtsbündig,
+   statt links über den Dialogrand hinauszuschieben. */
+.rv-modal .modal-foot { flex-wrap: wrap; row-gap: 6px; }
 .rv-navbtns { display: flex; gap: 6px; }
 .rv-copy .short, .rv-share .short { display: none; }
 .rv-share, .rv-copy { white-space: nowrap; }
@@ -2997,12 +3001,54 @@ body.mini-pip::before { display: none; }
   .rv-copy .long, .rv-share .long { display: none; }
   .rv-share .short { display: inline; }
 }
-/* Handy quer: wenig Höhe — Kopf und Fuss schmal */
+/* Handy quer: wenig Höhe — Kopf, Fuss und Karte rücken zusammen. Die
+   Knöpfe zeigen ihre Kurzform (eine Zeile), Wert und Datum einer Zeile
+   stehen nebeneinander, der Einleitungssatz nutzt die ganze Breite. */
 @media (max-height: 500px) and (orientation: landscape) {
   .modal.rv-modal { height: calc(100dvh - 16px); }
+  .rv-progress { padding-top: calc(8px + env(safe-area-inset-top, 0px)); }
   .rv-modal .modal-head { padding-top: 4px; padding-bottom: 4px; }
-  .rv-modal .modal-foot { padding-top: 6px; padding-bottom: 6px; }
+  /* „Dein Jahr · 3 von 9“ in einer Zeile */
+  .rv-modal .modal-head > div:first-child { display: flex; align-items: baseline; gap: 10px; }
+  .rv-modal .modal-head .sub { margin-top: 0; white-space: nowrap; }
+  .rv-modal .modal-foot { padding-top: 6px; padding-bottom: 6px; flex-wrap: nowrap; }
+  .rv-copy { padding: 0; width: 40px; min-width: 40px; }
+  .rv-copy .long, .rv-share .long { display: none; }
+  .rv-share .short { display: inline; }
+  .rv-card { padding: min(10px, 3cqh) 18px min(8px, 2.4cqh); gap: min(6px, 1.8cqh); }
+  .rv-lead { max-width: none; margin-top: 4px; }
+  .rv-unit { font-size: max(11px, min(6.4cqi, 3.6cqh)); }
+  .rv-rows > div { padding: 3px 0; }
+  .rv-rows dd { display: flex; align-items: baseline; gap: 8px; }
+  .rv-rows dd b { font-size: 15px; }
+  .rv-rows dd span { order: -1; margin-top: 0; }
 }
+/* Sehr niedrig (kleines Handy quer): die Zierringe des Titelblatts weichen
+   dem Inhalt — oben rechts stehen sie ohnehin. */
+@media (max-height: 360px) and (orientation: landscape) {
+  .rv-rings-hero { display: none; }
+}
+/* Rollt eine Karte trotzdem, zeigt ein Verlauf am unteren Rand, dass es
+   weitergeht. Er hängt an der Rollposition der Karte: Passt alles, gibt es
+   keine Zeitachse und damit keinen Verlauf; ganz unten blendet er aus. */
+@supports (animation-timeline: scroll()) {
+  @media (max-height: 500px) and (orientation: landscape) {
+    .rv-card::after {
+      content: "";
+      position: sticky;
+      bottom: 0;
+      flex: none;
+      height: 22px;
+      margin-top: calc(-22px - min(6px, 1.8cqh));
+      background: linear-gradient(to bottom, transparent, var(--rv-bg2));
+      pointer-events: none;
+      opacity: 0;
+      animation: rv-more linear both;
+      animation-timeline: scroll(nearest block);
+    }
+  }
+}
+@keyframes rv-more { 0%, 80% { opacity: 1 } 100% { opacity: 0 } }
 
 /* ---- Einstieg in der Statistik --------------------------------------------- */
 .rv-entry {
