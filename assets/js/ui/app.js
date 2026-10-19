@@ -645,6 +645,12 @@
     if (breakWarnedAt === tier.over) return;         // je Stufe nur einmal
     breakWarnedAt = tier.over;
 
+    // Ist das Fenster nicht vorne, zusätzlich als Systembenachrichtigung
+    if (!pageInFront() && ZK.BreakTimer) {
+      App.notify(ZK.BreakTimer.notice("breakDue", {
+        iso: iso, now: Date.now(), inMin: minutesToTier, req: tier.require
+      }, { t: I.t, dur: function (m) { return T.formatDuration(m, "hm"); } }));
+    }
     D.toast(I.t("toast.breakDue", {
       v: T.formatDuration(Math.max(1, minutesToTier), "hm"),
       req: T.formatDuration(tier.require, "hm")
@@ -1404,41 +1410,198 @@
   };
 
   /* ================================================================== */
-  /* Erinnerung an den Feierabend                                        */
+  /* Erinnerungen und Benachrichtigungen                                 */
   /* ================================================================== */
 
+  var LEAVE_TAG = "zeitkonto-feierabend";
   var reminderTimer = null;
   var reminderFiredFor = null;
+  var reminderSnooze = null;     // { iso, at } nach „+15 min“
+  var reminderToast = null;
+  var reminderShown = false;     // Systembenachrichtigung steht noch
 
   App.scheduleReminder = function () {
     clearTimeout(reminderTimer);
+    reminderTimer = null;
+    // Der Pausen-Timer hängt am selben Takt: nach jeder Änderung abgleichen
+    if (ZK.BreakTimer && ZK.BreakTimer.sync) {
+      try { ZK.BreakTimer.sync(App); } catch (e) { if (root.console) console.error(e); }
+    }
     var s = App.settings();
-    if (!s.reminderEnabled) return;
-    if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
-
     var iso = App.activeStampDate();
     var res = App.day(iso);
+    if (!res.running) endLeaveReminder();          // gegangen: Erinnerung erledigt
+    if (!s.reminderEnabled) return;
     if (!res.running || res.recommendedLeaveTl === null) return;
 
-    // 0 heisst „genau zur Zeit“, nur ein fehlender Wert fällt auf 10 zurück
-    var lead = s.reminderLeadMinutes == null ? 10 : s.reminderLeadMinutes;
-    var fireAt = res.recommendedLeaveTl - lead;
-    var nowMin = T.nowMinutesFloat() + (res.overnight ? T.DAY : 0);
-    var deltaMin = fireAt - nowMin;
-    if (deltaMin <= 0 || deltaMin > 16 * 60) return;
-    if (reminderFiredFor === iso) return;
-
-    reminderTimer = setTimeout(function () {
-      reminderFiredFor = iso;
-      try {
-        new Notification(I.t("app.name"), {
-          body: I.t("toast.goalReached") + " " + I.t("day.recommendedLeave") + " " + res.recommendedLeave,
-          tag: "zeitkonto-feierabend"
-        });
-      } catch (e) { /* Benachrichtigung ist optional */ }
-      D.toast(I.t("toast.goalReached"), { tone: "plus", icon: "bell" });
-    }, deltaMin * 60 * 1000);
+    var delay;
+    if (reminderSnooze && reminderSnooze.iso === iso) {
+      delay = Math.max(0, reminderSnooze.at - Date.now());
+    } else {
+      if (reminderFiredFor === iso) return;
+      // 0 heisst „genau zur Zeit“, nur ein fehlender Wert fällt auf 10 zurück
+      var lead = s.reminderLeadMinutes == null ? 10 : s.reminderLeadMinutes;
+      var fireAt = res.recommendedLeaveTl - lead;
+      var nowMin = T.nowMinutesFloat() + (res.overnight ? T.DAY : 0);
+      var deltaMin = fireAt - nowMin;
+      if (deltaMin <= 0 || deltaMin > 16 * 60) return;
+      delay = deltaMin * 60 * 1000;
+    }
+    reminderTimer = setTimeout(function () { fireLeaveReminder(iso); }, delay);
   };
+
+  /* Ohne Erlaubnis für Systembenachrichtigungen bleibt die Meldung in der
+     App. Gerechnet wird beim Auslösen neu — eine Pause dazwischen schiebt
+     den Feierabend. */
+  function fireLeaveReminder(iso) {
+    reminderTimer = null;
+    reminderFiredFor = iso;
+    reminderSnooze = null;
+    var res = App.day(iso);
+    if (!res.running || res.recommendedLeaveTl === null) return;
+    var nowTl = T.nowMinutesFloat() + (res.overnight ? T.DAY : 0);
+    var leaveTl = ZK.TodayState.leave(res, nowTl).leaveTl;
+    var inMin = Math.max(0, Math.ceil(leaveTl - nowTl));
+    var leave = T.formatHHMM(leaveTl);
+    var front = pageInFront();
+
+    if (App.settings().soundEnabled && ZK.BreakTimer && ZK.BreakTimer.chime) ZK.BreakTimer.chime();
+    if (!front && ZK.BreakTimer) {
+      reminderShown = true;
+      App.notify(ZK.BreakTimer.notice("leave", { iso: iso, now: Date.now(), leave: leave, inMin: inMin }, { t: I.t, dur: App.fmt }));
+    }
+    if (reminderToast) reminderToast();
+    reminderToast = D.toast(I.t("day.recommendedLeave") + " " + leave, {
+      sub: inMin > 0 ? I.t("bt.leaveSoon", { v: App.fmt(inMin) }) : I.t("toast.goalReached"),
+      tone: "plus", icon: "bell", duration: 15000,
+      sticky: !front,              // wer gerade woanders ist, findet sie bei der Rückkehr
+      action: { label: I.t("day.stampOut"), onClick: function () { App.stamp("out"); } },
+      onDismiss: function () { reminderToast = null; }
+    });
+  }
+
+  function endLeaveReminder() {
+    reminderSnooze = null;
+    if (reminderToast) { reminderToast(); reminderToast = null; }
+    if (reminderShown) { reminderShown = false; App.closeNotice(LEAVE_TAG); }
+  }
+
+  /** „+15 min“ an der Feierabend-Erinnerung */
+  function snoozeLeave(iso, minutes) {
+    reminderSnooze = { iso: iso, at: Date.now() + minutes * 60000 };
+    if (reminderToast) { reminderToast(); reminderToast = null; }
+    App.scheduleReminder();
+    D.toast(I.t("bt.snoozed", { n: minutes }), { icon: "bell" });
+  }
+
+  /* ---- Systembenachrichtigungen ---------------------------------------
+     Chrome auf Android kennt new Notification() nicht („Illegal
+     constructor“): dort geht es nur über den Serviceworker
+     (registration.showNotification) — der trägt auch die Knöpfe „Gehen
+     stempeln“ und „+15 min“, und sw.js reicht einen Klick hierher zurück.
+     Ohne Serviceworker auf dem Desktop die klassische Notification (ohne
+     Knöpfe), sonst bleibt es bei der Meldung in der App. Ohne Push-Server
+     gilt alles nur, solange die App offen ist (auch im Hintergrund-Tab). */
+  var pageNotices = {};
+
+  function swActive() {
+    // Firefox im privaten Fenster wirft schon beim Zugriff
+    try { return "serviceWorker" in navigator && !!navigator.serviceWorker.controller; } catch (e) { return false; }
+  }
+
+  /** Sieht man das Fenster gerade? Dann genügt die Meldung in der App. */
+  function pageInFront() {
+    if (document.visibilityState && document.visibilityState !== "visible") return false;
+    try { return typeof document.hasFocus !== "function" || document.hasFocus(); } catch (e) { return true; }
+  }
+
+  /**
+   * n: { tag, title, body, actions: [{ action, title }], data } — siehe
+   * ZK.BreakTimer.notice. → Promise<"sw" | "page" | "none">
+   */
+  App.notify = function (n) {
+    var api = typeof Notification !== "undefined";
+    var via = !ZK.BreakTimer ? "none" : ZK.BreakTimer.channel({
+      api: api,
+      permission: api ? Notification.permission : "unsupported",
+      sw: swActive(),
+      mobile: !!((navigator.userAgentData && navigator.userAgentData.mobile) || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || ""))
+    });
+    var opts = {
+      body: n.body || "", tag: n.tag, renotify: true, data: n.data || {},
+      icon: "assets/icons/icon-192.png", lang: I.getLang()
+    };
+    if (via === "sw") {
+      opts.actions = n.actions || [];
+      return navigator.serviceWorker.ready
+        .then(function (reg) { return reg.showNotification(n.title, opts); })
+        .then(function () { return "sw"; }, function () { return "none"; });
+    }
+    if (via === "page") {
+      try {
+        var note = new Notification(n.title, opts);
+        pageNotices[n.tag] = note;
+        note.onclick = function () {
+          try { root.focus(); } catch (e) { /* egal */ }
+          note.close();
+          App.handleNotificationAction("", n.data);
+        };
+        return Promise.resolve("page");
+      } catch (e) { /* Android ohne Serviceworker: „Illegal constructor“ */ }
+    }
+    return Promise.resolve("none");
+  };
+
+  /** Erledigte Benachrichtigung zurückziehen (Pause beendet, gegangen). */
+  App.closeNotice = function (tag) {
+    var note = pageNotices[tag];
+    if (note) {
+      delete pageNotices[tag];
+      try { note.close(); } catch (e) { /* schon zu */ }
+    }
+    if (!swActive()) return;
+    navigator.serviceWorker.ready
+      .then(function (reg) { return reg.getNotifications ? reg.getNotifications({ tag: tag }) : []; })
+      .then(function (list) { list.forEach(function (x) { x.close(); }); })
+      .catch(function () { /* nichts zu schliessen */ });
+  };
+
+  /**
+   * Knopf oder Klick aus einer Benachrichtigung. Erst prüfen, ob er noch
+   * passt (ZK.BreakTimer.route) — eine alte Meldung darf nicht stempeln.
+   * info: { kind, date } aus der Benachrichtigung.
+   */
+  App.handleNotificationAction = function (action, info) {
+    info = info || {};
+    var iso = App.activeStampDate();
+    var res = App.day(iso);
+    var BT = ZK.BreakTimer;
+    var r = BT ? BT.route(action, info, { date: iso, running: !!res.running, onBreak: !!(res.running && res.openBreak) }) : { open: true };
+    if (r.snooze) {
+      // „+15 min“ holt die App nicht nach vorne und wechselt keine Ansicht
+      if (r.kind === "break") { if (BT.snoozeBreak) BT.snoozeBreak(r.snooze); }
+      else snoozeLeave(iso, r.snooze);
+      return;
+    }
+    if (App.view !== "today" || App.date !== iso) App.setDate(iso, { view: "today" });
+    if (r.stamp) App.stamp(r.stamp);               // mit „Rückgängig“ in der Meldung
+    else if (r.skip) D.toast(I.t("bt.skip." + r.skip), { tone: "warn", icon: "info" });
+  };
+
+  /* Nachrichten von sw.js: ein Knopf in einer Benachrichtigung wurde
+     gedrückt. Ein frisch geöffnetes Fenster startet erst noch. */
+  try {
+    if ("serviceWorker" in navigator && navigator.serviceWorker && navigator.serviceWorker.addEventListener) {
+      navigator.serviceWorker.addEventListener("message", function (e) {
+        var d = e.data;
+        if (!d || d.type !== "notification-action") return;
+        (function run() {
+          if (!App.booted) { setTimeout(run, 120); return; }
+          App.handleNotificationAction(String(d.action || ""), { kind: d.kind, date: d.date });
+        })();
+      });
+    }
+  } catch (e) { /* ohne Serviceworker keine Knöpfe — die Meldungen in der App bleiben */ }
 
   /* ================================================================== */
   /* Outlook                                                             */
@@ -1489,10 +1652,20 @@
   };
 
   App.requestNotifications = function () {
-    if (typeof Notification === "undefined") return Promise.resolve("unsupported");
-    return Notification.requestPermission().then(function (p) {
-      App.scheduleReminder();
-      return p;
+    if (typeof Notification === "undefined" || !Notification.requestPermission) return Promise.resolve("unsupported");
+    return new Promise(function (resolve) {
+      var done = false;
+      function finish(p) {
+        if (done) return;
+        done = true;
+        App.scheduleReminder();
+        resolve(p || Notification.permission);
+      }
+      try {
+        // Ältere Safari kennen nur den Rückruf, neuere Browser nur das Promise
+        var r = Notification.requestPermission(finish);
+        if (r && typeof r.then === "function") r.then(finish, function () { finish("denied"); });
+      } catch (e) { finish("denied"); }
     });
   };
 

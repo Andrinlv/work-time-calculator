@@ -72,6 +72,7 @@ const SHELL = [
   "./assets/js/ui/features/review.js",
   "./assets/js/ui/features/ask.js",
   "./assets/js/ui/features/qr.js",
+  "./assets/js/ui/features/breaktimer.js",
   "./assets/js/ui/app.js",
 
   "./assets/icons/icon.svg",
@@ -231,4 +232,51 @@ self.addEventListener("message", (event) => {
   if (event.data === "version" && event.source) {
     event.source.postMessage({ type: "version", version: CACHE_VERSION });
   }
+});
+
+/* ---------------------------------------------------------------------- */
+/* Benachrichtigungen: Klick und Knöpfe                                     */
+/* ---------------------------------------------------------------------- */
+/* Ohne Push-Server zeigt nur die offene App Benachrichtigungen an. Ein
+   Klick holt sie nach vorne und meldet die gewählte Aktion; die App prüft
+   dann, ob sie noch passt (Pause schon beendet? anderer Tag?). Ist kein
+   Fenster mehr offen, öffnen die ausdrücklichen Stempel-Knöpfe einen
+   Direktlink (#/stamp/…) — der stempelt sofort, deshalb nur für Knöpfe und
+   nur, solange die Meldung frisch ist. Ein Klick auf die Meldung selbst
+   öffnet bloss „Heute“, „+15 min“ wird dem neuen Fenster nachgereicht. */
+const STAMP_LINKS = { "stamp-out": "#/stamp/out", "end-break": "#/stamp/break", "start-break": "#/stamp/break" };
+const NOTICE_FRESH_MS = 6 * 60 * 60 * 1000;
+
+function noticeLink(action, data, now) {
+  const at = data && typeof data.at === "number" ? data.at : 0;
+  const fresh = at > 0 && now - at <= NOTICE_FRESH_MS && now >= at - 60000;
+  return STAMP_LINKS[action] && fresh ? STAMP_LINKS[action] : "#/today";
+}
+
+function handleNoticeClick(action, data) {
+  const msg = { type: "notification-action", action: action, kind: data.kind || "", date: data.date || "" };
+  const scope = self.registration.scope;
+  return self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((list) => {
+    // Nur Fenster dieser App — auf github.io teilen sich Projekte den Ursprung
+    const mine = list.filter((c) => c.url && c.url.indexOf(scope) === 0);
+    const client = mine.filter((c) => c.focused)[0] ||
+      mine.filter((c) => c.visibilityState === "visible")[0] || mine[0];
+    if (client) {
+      // „+15 min“ erledigt sich im Hintergrund, alles andere holt die App nach vorne
+      if (action === "snooze" || typeof client.focus !== "function") { client.postMessage(msg); return; }
+      return client.focus().then((c) => (c || client).postMessage(msg), () => client.postMessage(msg));
+    }
+    if (!self.clients.openWindow) return;
+    const url = new URL("./index.html" + noticeLink(action, data, Date.now()), scope).href;
+    return self.clients.openWindow(url).then((c) => {
+      if (c && action === "snooze") c.postMessage(msg);
+    });
+  });
+}
+
+self.addEventListener("notificationclick", (event) => {
+  const notification = event.notification;
+  const data = (notification && notification.data) || {};
+  if (notification) notification.close();
+  event.waitUntil(handleNoticeClick(event.action || "", data).catch(() => {}));
 });

@@ -3342,4 +3342,80 @@ body.mini-pip::before { display: none; }
   /* bedruckbare Fläche bei 10 mm Rand, 1 mm Luft gegen eine Leerseite */
   .qr-print-host .qr-sheet.is-a4 { width: 190mm; height: 276mm; }
   .qr-print-host .qr-sheet.is-a5 { width: 128mm; height: 189mm; }
+
+/* ===== FEATURE: breaktimer ===== */
+/* Pausen-Timer: kompakte Karte in „Heute“ (Ring, Countdown, Dauer-Chips),
+   die Meldung „Pause ist um“ mit zwei Knöpfen und die Karte „Signale“ in
+   den Einstellungen. Die Karte ist bewusst flach — der Hero bleibt vorne. */
+.bt-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas: "ring main side";
+  align-items: center;
+  gap: var(--gap-3) var(--gap-4);
+  padding: var(--gap-4) var(--gap-5);
+}
+.bt-ring { grid-area: ring; position: relative; width: 52px; height: 52px; }
+.bt-ring svg { display: block; width: 100%; height: 100%; transform: rotate(-90deg); }
+.bt-ring circle { fill: none; stroke-width: 4; }
+.bt-ring .bt-track { stroke: var(--ring-track); }
+.bt-ring .bt-arc { stroke: var(--warn); stroke-linecap: round; transition: stroke-dashoffset 1s linear; }
+.bt-ring .ic { position: absolute; inset: 0; margin: auto; width: 20px; height: 20px; color: var(--warn-ink); }
+.bt-main { grid-area: main; min-width: 0; display: grid; gap: 2px; }
+.bt-label {
+  font-size: var(--fs-2xs);
+  font-weight: 800;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.bt-value {
+  font-size: var(--fs-2xl);
+  font-weight: 800;
+  line-height: 1.1;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.bt-sub, .bt-missing { font-size: var(--fs-xs); font-weight: 600; color: var(--ink-3); line-height: 1.4; }
+.bt-missing { color: var(--warn-ink); }
+.bt-side { grid-area: side; display: flex; justify-content: flex-end; min-width: 0; }
+.bt-chips button { white-space: nowrap; }
+.bt-acts { display: flex; flex-wrap: wrap; gap: var(--gap-2); justify-content: flex-end; }
+
+/* Zeit ist um: warm getönt, der Ring voll */
+.bt-card.is-over { border-color: var(--warn-line); background: var(--warn-soft); }
+.bt-card.is-over .bt-label, .bt-card.is-over .bt-value { color: var(--warn-ink); }
+.bt-card.is-over .bt-ring .bt-track { stroke: var(--warn-line); }
+
+@media (max-width: 699px) {
+  .bt-card {
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-areas: "ring main" "side side";
+    padding: var(--gap-4);
+  }
+  .bt-value { font-size: var(--fs-xl); }
+  .bt-side { justify-content: stretch; }
+  .bt-chips { display: flex; width: 100%; }
+  .bt-chips button { flex: 1 1 0; min-width: 0; min-height: 36px; padding-inline: 6px; }
+  /* Zeit um: nur noch „+5 min“ — der passt neben den Text */
+  .bt-card.is-over { grid-template-columns: auto minmax(0, 1fr) auto; grid-template-areas: "ring main side"; }
+  .bt-acts .btn { min-height: 40px; }
+}
+
+/* Meldung „Pause ist um“: Knöpfe in eigener Zeile unter dem Text, das X bleibt oben */
+.toast.bt-toast { flex-wrap: wrap; row-gap: 8px; }
+.toast.bt-toast .body { flex: 1 1 calc(100% - 64px); }
+.toast.bt-toast .act:not(.close) { order: 2; padding: 6px 12px; }
+.toast.bt-toast .act:not(.close):first-of-type { margin-left: 27px; }
+.toast.bt-toast .act.close { order: 1; }
+
+/* Einstellungen: Stand der Benachrichtigungen, ehrlicher Hinweis, Probe */
+.setting-row .info span.bt-ok { color: var(--plus-ink); font-weight: 700; }
+.setting-row .info span.bt-no { color: var(--warn-ink); font-weight: 700; }
+.bt-honest { margin-top: var(--gap-3); }
+.bt-honest .bt-ios { margin-top: 6px; }
+.bt-test { margin-top: var(--gap-3); }
+
+@media (prefers-reduced-motion: reduce) {
+  .bt-ring .bt-arc { transition: none; }
 }

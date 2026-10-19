@@ -59,13 +59,13 @@ function makeServer(files) {
   return server;
 }
 
-function loadWorker(source, caches, server) {
+function loadWorker(source, caches, server, clients) {
   const handlers = {};
   const state = { skipped: false, claimed: false, updates: 0 };
   const self = {
     location: { href: SCOPE + "sw.js", origin: new URL(SCOPE).origin },
     registration: { scope: SCOPE, update() { state.updates++; return Promise.resolve(); } },
-    clients: { claim() { state.claimed = true; return Promise.resolve(); } },
+    clients: Object.assign({ claim() { state.claimed = true; return Promise.resolve(); } }, clients || {}),
     skipWaiting() { state.skipped = true; return Promise.resolve(); },
     addEventListener(type, fn) { handlers[type] = fn; }
   };
@@ -88,7 +88,14 @@ function loadWorker(source, caches, server) {
     });
     return Promise.all(waits).then(() => (responded ? responded.then((r) => r && r.text()) : "(Netz direkt)"));
   }
-  return { state, install: () => lifecycle("install"), activate: () => lifecycle("activate"), request };
+  /** Klick auf eine Benachrichtigung bzw. einen ihrer Knöpfe */
+  function click(action, data) {
+    const waits = [];
+    const notification = { data: data || {}, closed: false, close() { this.closed = true; } };
+    handlers.notificationclick({ action: action || "", notification, waitUntil(p) { waits.push(p); } });
+    return Promise.all(waits).then(() => ({ notification, waited: waits.length }));
+  }
+  return { state, install: () => lifecycle("install"), activate: () => lifecycle("activate"), request, click };
 }
 
 function site(version) {
@@ -170,6 +177,110 @@ test("Beim Aufräumen bleiben fremde Caches auf demselben Ursprung unberührt", 
   await w.activate();
   assert.deepEqual([...caches.stores.keys()].sort(), ["anderes-projekt-v1", "zeitkonto-v4.0"]);
   assert.equal(w.state.claimed, true);
+});
+
+/* ---------------------------------------------------------------------- */
+/* Benachrichtigungen: Klick und Knöpfe                                     */
+/* ---------------------------------------------------------------------- */
+
+/** Fenster-Attrappe: merkt sich Fokus und Nachrichten. */
+function windowClient(url, extra) {
+  const c = Object.assign({
+    url, focused: false, visibilityState: "hidden", messages: [], focusCalls: 0,
+    focus() { c.focusCalls++; c.focused = true; return Promise.resolve(c); },
+    postMessage(msg) { c.messages.push(JSON.parse(JSON.stringify(msg))); }   // wie structuredClone, ohne fremde Prototypen
+  }, extra || {});
+  return c;
+}
+
+/** clients-Attrappe: matchAll liefert die Fenster, openWindow merkt sich die Adressen. */
+function makeClients(windows) {
+  const opened = [];
+  const log = { opened, queries: [] };
+  return {
+    log,
+    api: {
+      matchAll(opts) { log.queries.push(JSON.parse(JSON.stringify(opts))); return Promise.resolve(windows.slice()); },
+      openWindow(url) { const c = windowClient(url); opened.push(c); return Promise.resolve(c); }
+    }
+  };
+}
+
+function swWith(clients) {
+  return loadWorker(withVersion(SW_SOURCE, "5.0"), makeCaches(), makeServer(site("5.0")), clients.api);
+}
+
+const FRESH = () => ({ kind: "leave", date: "2026-10-16", at: Date.now() - 60000 });
+
+test("Knopf in der Benachrichtigung: offenes Fenster nach vorne, Aktion als Nachricht", async () => {
+  const stats = windowClient(SCOPE + "index.html#/stats");
+  const clients = makeClients([stats]);
+  const sw = swWith(clients);
+  const r = await sw.click("stamp-out", FRESH());
+  assert.equal(r.waited, 1, "der Worker wartet, bis das Fenster benachrichtigt ist");
+  assert.equal(r.notification.closed, true, "Meldung schliesst sich auch bei einem Knopf");
+  assert.equal(stats.focusCalls, 1);
+  assert.deepEqual(stats.messages, [{ type: "notification-action", action: "stamp-out", kind: "leave", date: "2026-10-16" }]);
+  assert.equal(clients.log.opened.length, 0, "kein zweites Fenster, kein Direktlink");
+  assert.deepEqual(clients.log.queries[0], { type: "window", includeUncontrolled: true });
+});
+
+test("Mehrere Fenster: das sichtbare bekommt die Aktion, fremde Projekte auf demselben Ursprung nie", async () => {
+  const other = windowClient("https://example.test/anderes/index.html", { focused: true, visibilityState: "visible" });
+  const hidden = windowClient(SCOPE + "index.html#/week");
+  const visible = windowClient(SCOPE + "#/today", { visibilityState: "visible" });
+  const sw = swWith(makeClients([other, hidden, visible]));
+  await sw.click("end-break", { kind: "break", date: "2026-10-16", at: Date.now() });
+  assert.equal(other.messages.length + other.focusCalls, 0);
+  assert.equal(hidden.messages.length, 0);
+  assert.equal(visible.messages[0].action, "end-break");
+  assert.equal(visible.messages[0].kind, "break");
+});
+
+test("„+15 min“ erledigt sich im Hintergrund — das Fenster springt nicht nach vorne", async () => {
+  const win = windowClient(SCOPE + "index.html#/today");
+  const sw = swWith(makeClients([win]));
+  await sw.click("snooze", FRESH());
+  assert.equal(win.focusCalls, 0);
+  assert.equal(win.messages[0].action, "snooze");
+});
+
+test("Kein Fenster offen: Stempel-Knöpfe öffnen den Direktlink, solange die Meldung frisch ist", async () => {
+  const cases = [["stamp-out", "#/stamp/out"], ["end-break", "#/stamp/break"], ["start-break", "#/stamp/break"]];
+  for (const [action, hash] of cases) {
+    const clients = makeClients([]);
+    await swWith(clients).click(action, FRESH());
+    assert.equal(clients.log.opened.length, 1, action);
+    assert.equal(clients.log.opened[0].url, SCOPE + "index.html" + hash, action);
+    assert.equal(clients.log.opened[0].messages.length, 0, "der Link stempelt — nicht noch einmal per Nachricht");
+  }
+});
+
+test("Kein Fenster offen: alte Meldung oder Klick auf den Text öffnet nur „Heute“ — nie ein Stempel", async () => {
+  const stale = { kind: "leave", date: "2026-10-15", at: Date.now() - 7 * 3600 * 1000 };
+  const future = { kind: "leave", date: "2026-10-16", at: Date.now() + 3600 * 1000 };
+  for (const [action, data] of [["stamp-out", stale], ["end-break", future], ["stamp-out", {}], ["", FRESH()], ["unbekannt", FRESH()]]) {
+    const clients = makeClients([]);
+    await swWith(clients).click(action, data);
+    assert.equal(clients.log.opened[0].url, SCOPE + "index.html#/today", action + " " + JSON.stringify(data));
+    assert.equal(clients.log.opened[0].messages.length, 0);
+  }
+});
+
+test("Kein Fenster offen und „+15 min“: App öffnen und die Erinnerung nachreichen", async () => {
+  const clients = makeClients([]);
+  await swWith(clients).click("snooze", FRESH());
+  const win = clients.log.opened[0];
+  assert.equal(win.url, SCOPE + "index.html#/today");
+  assert.deepEqual(win.messages, [{ type: "notification-action", action: "snooze", kind: "leave", date: "2026-10-16" }]);
+});
+
+test("Fokus verweigert oder Meldung ohne Daten: die Aktion kommt trotzdem an", async () => {
+  const win = windowClient(SCOPE + "index.html", { focus() { return Promise.reject(new Error("not allowed")); } });
+  const sw = swWith(makeClients([win]));
+  const r = await sw.click("stamp-out", undefined);
+  assert.equal(r.notification.closed, true);
+  assert.deepEqual(win.messages, [{ type: "notification-action", action: "stamp-out", kind: "", date: "" }]);
 });
 
 /* ---------------------------------------------------------------------- */
