@@ -108,10 +108,12 @@
     return !!r && r.type === "vacation" && r.absenceFactor >= 1 && r.baseTarget > 0 && !r.holiday;
   }
 
-  function averageDayTarget(s) {
-    var targets = (s.weeklyTargets || []).filter(function (v) { return v > 0; });
+  /* Mit dem Arbeitsmodell, das am Stichtag galt (Pensum ab Stichtag) */
+  function averageDayTarget(s, iso) {
+    var m = R.modelFor(iso, s);
+    var targets = (m.weeklyTargets || []).filter(function (v) { return v > 0; });
     if (!targets.length) return 0;
-    return Math.round(R.weeklyTargetMinutes(s) / targets.length);
+    return Math.round(R.weeklyTargetMinutes(m) / targets.length);
   }
 
   /* ------------------------------------------------------------------ */
@@ -245,7 +247,7 @@
       balanceStart: 0,
       balanceEnd: 0,
       balanceDelta: 0,
-      dayTarget: averageDayTarget(s),
+      dayTarget: averageDayTarget(s, until),
       balanceDays: 0,
       compare: { lugano: 0, glacier: 0, crossings: 0, km: 0 }
     };

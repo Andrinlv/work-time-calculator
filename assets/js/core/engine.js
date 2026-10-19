@@ -11,6 +11,11 @@
 
    VERTRAG FÜRS UI (Ansichten verlassen sich darauf)
    --------------------------------------------------------------------------
+   Sollzeit eines Tages: R.baseTargetFor(datum, settings) mit dem Arbeits-
+   modell, das an DIESEM Tag galt (settings.modelHistory, siehe rules.js).
+   Gutschriften für Feiertage und Absenzen, Lücken, Kontingente und alle
+   Summen folgen daraus — wer ab November 80 % arbeitet, verändert weder
+   Soll noch Saldo der Tage davor. Wochen- und Periodenverträge: R.contractFor.
    computeDay(record, ctx) liefert u. a.:
      provisional       true, solange der Tag läuft — Netto und Saldo sind
                        dann ein Zwischenstand, kein abgerechneter Wert.

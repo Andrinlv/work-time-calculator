@@ -30,7 +30,11 @@
 
     var range = App.range(start, end);
     var totals = range.totals;
-    var weekTarget = R.weeklyTargetMinutes(s);
+    /* Vertrag dieser Woche, Tag für Tag mit dem damals gültigen Modell —
+       wechselt es mitten in der Woche, zählt jeder Tag anteilig. */
+    var contract = R.contractFor(start, end, s);
+    var weekTarget = contract.minutes;
+    var maxWeekly = R.modelFor(start, s).maxWeeklyMinutes;
     var tStart = CW.trackingStart(App.store.allDays(), s, App.store.getMeta ? App.store.getMeta() : null);
     var sum = CW.summarize(range.days, { today: today, start: tStart, hasRecord: App.hasRecord });
 
@@ -83,11 +87,11 @@
       totals.autoDeducted ? I.t("week.autoSub", { v: App.fmt(totals.autoDeducted) }) : "");
     host.appendChild(kpis);
 
-    if (s.maxWeeklyMinutes && sum.net > s.maxWeeklyMinutes) {
+    if (maxWeekly && sum.net > maxWeekly) {
       var warn = D.el("div.notice.warn.mb-4");
       warn.innerHTML = D.icon("alert") + "<div><strong>" +
-        D.esc(I.t("warn.over-weekly-max", { v: App.fmt(sum.net - s.maxWeeklyMinutes) })) +
-        "</strong><div class='sub'>" + D.esc(I.t("set.compliance") + " · " + I.t("week.maxWeeklySub", { v: App.fmt(s.maxWeeklyMinutes) })) + "</div></div>";
+        D.esc(I.t("warn.over-weekly-max", { v: App.fmt(sum.net - maxWeekly) })) +
+        "</strong><div class='sub'>" + D.esc(I.t("set.compliance") + " · " + I.t("week.maxWeeklySub", { v: App.fmt(maxWeekly) })) + "</div></div>";
       host.appendChild(warn);
     }
 
@@ -295,7 +299,7 @@
       };
     }), {
       height: 210,
-      reference: Math.round(weekTarget / ((s.workdays || [1, 2, 3, 4, 5]).length || 5)),
+      reference: Math.round(weekTarget / (contract.days || 5)),
       referenceLabel: I.t("day.target"),
       valueFormat: function (v) { return App.fmt(v); },
       tickFormat: function (v) { return T.formatDuration(v, "clock"); },

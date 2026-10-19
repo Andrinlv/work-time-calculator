@@ -205,13 +205,7 @@
 
   /** Welche Vorlage entspricht diesen Wochensollzeiten? Sonst „custom“. */
   function matchPreset(weeklyTargets, workdays) {
-    var days = (workdays && workdays.length) ? workdays : [1, 2, 3, 4, 5];
-    var targets = (weeklyTargets || []).join(",");
-    for (var i = 0; i < R.MODEL_PRESETS.length; i++) {
-      var p = R.MODEL_PRESETS[i];
-      if (p.weekly && R.weeklyPreset(p.weekly, days).join(",") === targets) return p.key;
-    }
-    return "custom";
+    return R.matchPreset(weeklyTargets, workdays);
   }
 
   (ZK.Views = ZK.Views || {}).settings = {
@@ -230,7 +224,10 @@
     checkShift: checkShift,
     cleanShift: cleanShift,
     renameShift: renameShift,
-    matchPreset: matchPreset
+    matchPreset: matchPreset,
+    scopeFrom: scopeFrom,
+    segmentWhen: segmentWhen,
+    segmentWhat: segmentWhat
   };
 
   /* ==================================================================== */
@@ -313,37 +310,33 @@
     /* Arbeitsmodell                                                     */
     /* ================================================================ */
     var model = section(I.t("set.model"));
-    var workdays = s.workdays || [1, 2, 3, 4, 5];
+    /* Die Felder zeigen das jüngste Modell (die Werte oben in den
+       Einstellungen). Jede Änderung läuft über scope.change(): wer schon
+       Tage erfasst hat, wählt, ab wann sie gilt — siehe modelScope(). */
+    var scope = modelScope(App, { refresh: refreshModel });
+    var workdaysNow = function () { return App.settings().workdays || [1, 2, 3, 4, 5]; };
     var currentPreset = R.MODEL_PRESETS.filter(function (p) { return p.key === (s.modelPreset || "42"); })[0] || R.MODEL_PRESETS[0];
 
-    var presetRow = rowSelect(I.t("set.preset"), presetNote(currentPreset, workdays), R.MODEL_PRESETS.map(function (p) {
+    var presetRow = rowSelect(I.t("set.preset"), presetNote(currentPreset, workdaysNow()), R.MODEL_PRESETS.map(function (p) {
       return [p.key, presetLabel(p)];
     }), currentPreset.key, function (v) {
-      var preset = R.MODEL_PRESETS.filter(function (p) { return p.key === v; })[0];
-      var patch = { modelPreset: v };
-      if (preset && preset.weekly) patch.weeklyTargets = R.weeklyPreset(preset.weekly, workdays);
-      App.store.updateSettings(patch);
-      showPreset(v);
-      refreshWeekdays();
-      App.renderChrome();
+      scope.change({ modelPreset: v });
     });
     model.body.appendChild(presetRow.row);
 
     function showPreset(key) {
       var p = R.MODEL_PRESETS.filter(function (x) { return x.key === key; })[0] || R.MODEL_PRESETS[0];
       presetRow.select.value = p.key;
-      if (presetRow.hint) presetRow.hint.textContent = presetNote(p, workdays);
+      if (presetRow.hint) presetRow.hint.textContent = presetNote(p, workdaysNow());
     }
 
-    model.body.appendChild(rowNumber(I.t("set.workload"), I.t("set.workloadHint"), {
+    var workloadRow = rowNumber(I.t("set.workload"), I.t("set.workloadHint"), {
       min: 1, max: 200, step: 1, suffix: "%",
       read: function () { return App.settings().workloadPercent || 100; },
-      write: function (v) {
-        App.store.updateSettings({ workloadPercent: v });
-        updateWeeklyTotal();
-        App.renderChrome();
-      }
-    }));
+      write: function (v) { scope.change({ workloadPercent: v }); }
+    });
+    var workloadInput = workloadRow.querySelector("input");
+    model.body.appendChild(workloadRow);
 
     var wdRow = D.el("div.weekday-block");
     var wdTitleId = "set-wd-" + (++uid);
@@ -374,13 +367,9 @@
           flash(input);
           return;
         }
-        current[wd] = mins;
-        var preset = matchPreset(current, workdays);
-        App.store.updateSettings({ weeklyTargets: current, modelPreset: preset });
         input.value = T.formatDuration(mins, "clock");
-        showPreset(preset);
-        updateWeeklyTotal();
-        App.renderChrome();
+        if (mins === (current[wd] || 0)) return;
+        scope.change({ weekday: wd, minutes: mins });
       });
       wdInputs[wd] = input;
       field.appendChild(input);
@@ -390,18 +379,28 @@
     var weeklyTotal = D.el("p.weekday-total");
     wdRow.appendChild(weeklyTotal);
     model.body.appendChild(wdRow);
+    model.body.appendChild(scope.node);
     updateWeeklyTotal();
 
-    function refreshWeekdays() {
+    /* Nach jeder Änderung (auch Rückgängig): alle Felder auf den Stand
+       des jüngsten Modells — „Individuell“ und Arbeitstage folgen daraus. */
+    function refreshModel() {
       var st = App.settings();
+      showPreset(st.modelPreset || "42");
+      workloadInput.value = String(st.workloadPercent || 100);
       order.forEach(function (wd) { wdInputs[wd].value = T.formatDuration((st.weeklyTargets || [])[wd] || 0, "clock"); });
       updateWeeklyTotal();
+      App.renderChrome();
     }
     function updateWeeklyTotal() {
       var st = App.settings();
+      var tl = R.modelTimeline(st);
+      var from = tl[tl.length - 1].from;
       weeklyTotal.innerHTML = "<b>" + D.esc(I.t("set.weeklyTotal")) + ":</b> " +
         D.esc(T.formatDuration(R.weeklyTargetMinutes(st), "clock")) +
-        " · " + D.esc(I.t("set.workload")) + " " + (st.workloadPercent || 100) + " %";
+        " · " + D.esc(I.t("set.workload")) + " " + (st.workloadPercent || 100) + " %" +
+        /* Ein geplantes Modell: die Felder zeigen schon die Zukunft */
+        (from && from > T.todayISO() ? " · " + D.esc(I.t("set.mh.since", { date: modelDate(from) })) : "");
     }
     grid.appendChild(model.node);
 
@@ -1093,6 +1092,574 @@
 
     function toolBtn(icon, label, disabled) {
       return D.el("button.btn.icon.sm.ghost", { type: "button", "aria-label": label, "data-tip": label, html: D.icon(icon), disabled: disabled });
+    }
+  }
+
+  /* ==================================================================== */
+  /* Arbeitsmodell ab Stichtag                                             */
+  /* ==================================================================== */
+  /* Ab 1. November 80 %? Die Vergangenheit behält das Modell, das damals
+     galt. Früher rechnete jede Änderung an Pensum oder Sollzeiten still
+     die ganze Geschichte samt Saldo neu. Jetzt fragt die Karte, ab wann
+     die Änderung gilt, und zeigt den Verlauf (R.modelTimeline). */
+
+  I.add({
+    de: {
+      "set.mh.ask": "Ab wann gilt das?",
+      "set.mh.askHint": "Vergangene Tage behalten das Modell, das damals galt.",
+      "set.mh.today": "Ab heute",
+      "set.mh.nextMonth": "Ab 1. des nächsten Monats",
+      "set.mh.date": "Ab Datum …",
+      "set.mh.dateLabel": "Stichtag",
+      "set.mh.all": "Rückwirkend für alle Tage",
+      "set.mh.allSub": "Wie bisher — rechnet auch vergangene Salden neu",
+      "set.mh.unchanged": "Saldo bis gestern bleibt {v}",
+      "set.mh.changed": "Saldo bis gestern: {a} → {b}",
+      "set.mh.done": "Fertig",
+      "set.mh.discard": "Verwerfen",
+      "set.mh.discarded": "Änderung verworfen",
+      "set.mh.appliedFrom": "Arbeitsmodell gilt ab {date}",
+      "set.mh.appliedAll": "Arbeitsmodell gilt für alle Tage",
+      "set.mh.history": "Verlauf des Arbeitsmodells",
+      "set.mh.historyHint": "Jeder Tag rechnet mit dem Modell, das damals galt.",
+      "set.mh.until": "bis {date}",
+      "set.mh.since": "ab {date}",
+      "set.mh.span": "{from} – {to}",
+      "set.mh.summary": "{pct} % · {week} · {days}",
+      "set.mh.now": "heute",
+      "set.mh.planned": "geplant",
+      "set.mh.edit": "Abschnitt bearbeiten",
+      "set.mh.remove": "Abschnitt entfernen",
+      "set.mh.removed": "Abschnitt entfernt",
+      "set.mh.saved": "Abschnitt gespeichert",
+      "set.mh.from": "Gültig ab",
+      "set.mh.firstHint": "Gilt für alle Tage vor dem {date}.",
+      "set.mh.errDate": "Bitte ein gültiges Datum eingeben.",
+      "set.mh.errTaken": "An diesem Tag beginnt schon ein Abschnitt.",
+      "set.mh.errTarget": "Sollzeit zwischen 0:00 und 24:00 eingeben."
+    },
+    en: {
+      "set.mh.ask": "From when does this apply?",
+      "set.mh.askHint": "Past days keep the model that applied at the time.",
+      "set.mh.today": "From today",
+      "set.mh.nextMonth": "From the 1st of next month",
+      "set.mh.date": "From a date …",
+      "set.mh.dateLabel": "Effective date",
+      "set.mh.all": "Retroactively for all days",
+      "set.mh.allSub": "As before — recalculates past balances too",
+      "set.mh.unchanged": "Balance up to yesterday stays {v}",
+      "set.mh.changed": "Balance up to yesterday: {a} → {b}",
+      "set.mh.done": "Done",
+      "set.mh.discard": "Discard",
+      "set.mh.discarded": "Change discarded",
+      "set.mh.appliedFrom": "Work model applies from {date}",
+      "set.mh.appliedAll": "Work model applies to all days",
+      "set.mh.history": "Work model history",
+      "set.mh.historyHint": "Each day is calculated with the model that applied at the time.",
+      "set.mh.until": "until {date}",
+      "set.mh.since": "from {date}",
+      "set.mh.span": "{from} – {to}",
+      "set.mh.summary": "{pct} % · {week} · {days}",
+      "set.mh.now": "today",
+      "set.mh.planned": "planned",
+      "set.mh.edit": "Edit period",
+      "set.mh.remove": "Remove period",
+      "set.mh.removed": "Period removed",
+      "set.mh.saved": "Period saved",
+      "set.mh.from": "Valid from",
+      "set.mh.firstHint": "Applies to all days before {date}.",
+      "set.mh.errDate": "Please enter a valid date.",
+      "set.mh.errTaken": "Another period already starts on this day.",
+      "set.mh.errTarget": "Enter a target between 0:00 and 24:00."
+    },
+    fr: {
+      "set.mh.ask": "À partir de quand ?",
+      "set.mh.askHint": "Les jours passés gardent le modèle alors en vigueur.",
+      "set.mh.today": "Dès aujourd’hui",
+      "set.mh.nextMonth": "Dès le 1er du mois prochain",
+      "set.mh.date": "Dès une date …",
+      "set.mh.dateLabel": "Date d’effet",
+      "set.mh.all": "Rétroactivement pour tous les jours",
+      "set.mh.allSub": "Comme avant — recalcule aussi les soldes passés",
+      "set.mh.unchanged": "Le solde jusqu’à hier reste {v}",
+      "set.mh.changed": "Solde jusqu’à hier : {a} → {b}",
+      "set.mh.done": "Terminé",
+      "set.mh.discard": "Annuler",
+      "set.mh.discarded": "Modification annulée",
+      "set.mh.appliedFrom": "Modèle de travail en vigueur dès le {date}",
+      "set.mh.appliedAll": "Modèle de travail appliqué à tous les jours",
+      "set.mh.history": "Historique du modèle de travail",
+      "set.mh.historyHint": "Chaque jour est calculé avec le modèle alors en vigueur.",
+      "set.mh.until": "jusqu’au {date}",
+      "set.mh.since": "dès le {date}",
+      "set.mh.span": "{from} – {to}",
+      "set.mh.summary": "{pct} % · {week} · {days}",
+      "set.mh.now": "aujourd’hui",
+      "set.mh.planned": "prévu",
+      "set.mh.edit": "Modifier la période",
+      "set.mh.remove": "Supprimer la période",
+      "set.mh.removed": "Période supprimée",
+      "set.mh.saved": "Période enregistrée",
+      "set.mh.from": "Valable dès le",
+      "set.mh.firstHint": "S’applique à tous les jours avant le {date}.",
+      "set.mh.errDate": "Veuillez saisir une date valide.",
+      "set.mh.errTaken": "Une autre période commence déjà ce jour-là.",
+      "set.mh.errTarget": "Saisir un temps dû entre 0:00 et 24:00."
+    },
+    it: {
+      "set.mh.ask": "Da quando vale?",
+      "set.mh.askHint": "I giorni passati mantengono il modello allora in vigore.",
+      "set.mh.today": "Da oggi",
+      "set.mh.nextMonth": "Dal 1° del mese prossimo",
+      "set.mh.date": "Da una data …",
+      "set.mh.dateLabel": "Data di decorrenza",
+      "set.mh.all": "Retroattivo per tutti i giorni",
+      "set.mh.allSub": "Come finora — ricalcola anche i saldi passati",
+      "set.mh.unchanged": "Il saldo fino a ieri resta {v}",
+      "set.mh.changed": "Saldo fino a ieri: {a} → {b}",
+      "set.mh.done": "Fatto",
+      "set.mh.discard": "Annulla",
+      "set.mh.discarded": "Modifica annullata",
+      "set.mh.appliedFrom": "Modello di lavoro valido dal {date}",
+      "set.mh.appliedAll": "Modello di lavoro applicato a tutti i giorni",
+      "set.mh.history": "Cronologia del modello di lavoro",
+      "set.mh.historyHint": "Ogni giorno si calcola con il modello allora in vigore.",
+      "set.mh.until": "fino al {date}",
+      "set.mh.since": "dal {date}",
+      "set.mh.span": "{from} – {to}",
+      "set.mh.summary": "{pct} % · {week} · {days}",
+      "set.mh.now": "oggi",
+      "set.mh.planned": "previsto",
+      "set.mh.edit": "Modifica periodo",
+      "set.mh.remove": "Rimuovi periodo",
+      "set.mh.removed": "Periodo rimosso",
+      "set.mh.saved": "Periodo salvato",
+      "set.mh.from": "Valido dal",
+      "set.mh.firstHint": "Vale per tutti i giorni prima del {date}.",
+      "set.mh.errDate": "Inserisci una data valida.",
+      "set.mh.errTaken": "Un altro periodo inizia già in questo giorno.",
+      "set.mh.errTarget": "Inserisci ore dovute tra 0:00 e 24:00."
+    }
+  });
+
+  /** Stichtag zur Wahl „Ab wann gilt das?“ — null heisst rückwirkend für alle Tage. */
+  function scopeFrom(kind, today, date) {
+    if (kind === "all") return null;
+    if (kind === "month") return T.addMonths(T.startOfMonth(today), 1);
+    if (kind === "date") return T.isValidISO(date) ? date : today;
+    return today;
+  }
+
+  /** 01.11.2026 */
+  function modelDate(iso) {
+    return I.formatDate(iso, { day: "2-digit", month: "2-digit", year: "numeric" });
+  }
+
+  /** Kurz im laufenden Jahr (31.10.), sonst mit Jahr. */
+  function shortModelDate(iso, today) {
+    if (String(iso).slice(0, 4) !== String(today).slice(0, 4)) return modelDate(iso);
+    return I.formatDate(iso, { day: "2-digit", month: "2-digit" });
+  }
+
+  /** „bis 31.10.“ · „01.11. – 30.11.“ · „ab 01.12.“ */
+  function segmentWhen(seg, today) {
+    if (seg.from && seg.to) return I.t("set.mh.span", { from: shortModelDate(seg.from, today), to: shortModelDate(seg.to, today) });
+    if (seg.from) return I.t("set.mh.since", { date: shortModelDate(seg.from, today) });
+    if (seg.to) return I.t("set.mh.until", { date: shortModelDate(seg.to, today) });
+    return "";
+  }
+
+  /** „80 % · 33 h 36 min · Mo–Fr“ */
+  function segmentWhat(model, fmt) {
+    return I.t("set.mh.summary", {
+      pct: model.workloadPercent,
+      week: fmt(R.weeklyTargetMinutes(model)),
+      days: dayRange(model.workdays && model.workdays.length ? model.workdays : [1, 2, 3, 4, 5])
+    });
+  }
+
+  function penIcon() {
+    if (D.ICONS && !D.ICONS.pen) D.ICONS.pen = '<path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16v4z"/><path d="M13.5 6.5l4 4"/>';
+    return D.icon("pen");
+  }
+
+  /**
+   * Stichtag-Frage und Verlauf für die Karte „Arbeitsmodell“.
+   * change(c) übernimmt eine Änderung sofort — standardmässig ab heute —
+   * und blendet die Frage ein. Weitere Änderungen sammeln sich im selben
+   * Durchgang; ein Wechsel der Antwort rechnet alle vom Ausgangsstand aus
+   * neu. So genügt eine Antwort für Pensum und fünf Wochentage, und es
+   * geht nichts verloren, wenn man die Ansicht ohne „Fertig“ verlässt.
+   * hooks.refresh(): Felder der Karte neu befüllen.
+   */
+  function modelScope(App, hooks) {
+    var E = ZK.Engine;
+    var node = D.el("div.mh");
+    var panel = D.el("div.mh-scope", { hidden: true });
+    var history = D.el("div.mh-history");
+    node.appendChild(panel);
+    node.appendChild(history);
+    var name = "mh-" + (++uid);
+    var batch = null;   // { base, changes, kind, date }
+    var impactEl = null;
+
+    drawHistory();
+    return { node: node, change: change };
+
+    function today() { return T.todayISO(); }
+
+    /* Frühester erfasster Tag: Anker, wenn der Verlauf neu entsteht */
+    function since() {
+      var keys = Object.keys(App.store.allDays()).sort();
+      var first = keys[0] || null;
+      var carry = App.settings().carryOverFrom;
+      if (carry && (!first || carry < first)) first = carry;
+      return first;
+    }
+
+    function snapshot(s) {
+      return JSON.parse(JSON.stringify({
+        modelHistory: s.modelHistory || [],
+        modelPreset: s.modelPreset,
+        weeklyTargets: s.weeklyTargets,
+        workloadPercent: s.workloadPercent,
+        workdays: s.workdays
+      }));
+    }
+
+    /* Fragen lohnt sich erst mit einer Vergangenheit: erfasste Tage vor
+       heute oder schon ein Verlauf. Beim ersten Einrichten gilt alles. */
+    function shouldAsk() {
+      var s = App.settings();
+      if ((s.modelHistory || []).length) return true;
+      var t = today();
+      return Object.keys(App.store.allDays()).some(function (iso) { return iso < t; });
+    }
+
+    function balanceUntilYesterday(settings) {
+      return E.accountBalance(App.store.allDays(), settings, T.addDays(today(), -1)).minutes;
+    }
+
+    function impactText(before, after) {
+      return before === after
+        ? I.t("set.mh.unchanged", { v: App.fmtSigned(after) })
+        : I.t("set.mh.changed", { a: App.fmtSigned(before), b: App.fmtSigned(after) });
+    }
+
+    function change(c) {
+      var s = App.settings();
+      if (c.modelPreset === "custom") {
+        // Nur eine Beschriftung: rechnet nichts um, also auch keine Frage
+        var tl = R.modelTimeline(s);
+        App.store.updateSettings(R.changeModel(s, c, tl[tl.length - 1].from));
+        hooks.refresh();
+        return;
+      }
+      if (!batch && !shouldAsk()) {
+        App.store.updateSettings(R.changeModel(s, c, null));
+        hooks.refresh();
+        drawHistory();
+        return;
+      }
+      var first = !batch;
+      if (first) batch = { base: snapshot(s), changes: [], kind: "today", date: today() };
+      batch.changes.push(c);
+      if (first) drawPanel();
+      applyBatch();
+      if (first && panel.scrollIntoView) {
+        try { panel.scrollIntoView({ block: "nearest", behavior: "smooth" }); } catch (e) { panel.scrollIntoView(false); }
+      }
+    }
+
+    function baseSettings() { return Object.assign({}, App.settings(), batch.base); }
+
+    function applyBatch() {
+      var from = scopeFrom(batch.kind, today(), batch.date);
+      var opts = { since: since() };
+      var cur = baseSettings();
+      var patch = {};
+      batch.changes.forEach(function (c) {
+        patch = R.changeModel(Object.assign({}, cur, patch), c, from, opts);
+      });
+      App.store.updateSettings(patch);
+      hooks.refresh();
+      drawHistory();
+      drawImpact();
+    }
+
+    function drawImpact() {
+      if (!impactEl || !batch) return;
+      var before = balanceUntilYesterday(baseSettings());
+      var after = balanceUntilYesterday(App.settings());
+      impactEl.className = "notice mh-impact " + (before === after ? "plus" : "warn");
+      impactEl.innerHTML = D.icon(before === after ? "check" : "alert") + "<div>" + D.esc(impactText(before, after)) + "</div>";
+    }
+
+    function endBatch() {
+      batch = null;
+      impactEl = null;
+      panel.hidden = true;
+      D.clear(panel);
+    }
+
+    /* Gezielt zurück auf einen Stand statt App.undo(): der Speicher fasst
+       schnelle Änderungen derselben Felder zu einem Schritt zusammen. */
+    function restore(snap) {
+      App.store.updateSettings(snap);
+      if (node.isConnected) { endBatch(); hooks.refresh(); drawHistory(); }
+      App.afterChange();
+    }
+
+    function drawPanel() {
+      D.clear(panel);
+      panel.hidden = false;
+      var t = today();
+      var titleId = name + "-ask";
+      panel.setAttribute("role", "group");
+      panel.setAttribute("aria-labelledby", titleId);
+      panel.appendChild(D.el("div.mh-scope-head", {
+        html: D.icon("calendar") + "<div><b id='" + titleId + "'>" + D.esc(I.t("set.mh.ask")) + "</b>" +
+          "<span>" + D.esc(I.t("set.mh.askHint")) + "</span></div>"
+      }));
+
+      var group = D.el("div.mh-options", { role: "radiogroup", "aria-labelledby": titleId });
+      var long = { weekday: "short", day: "2-digit", month: "2-digit", year: "numeric" };
+      var dateInput = D.el("input.input.mh-date", {
+        type: "date", value: batch.date, "aria-label": I.t("set.mh.dateLabel"), hidden: batch.kind !== "date"
+      });
+      var radios = [];
+      [
+        ["today", I.t("set.mh.today"), I.formatDate(t, long)],
+        ["month", I.t("set.mh.nextMonth"), I.formatDate(scopeFrom("month", t), long)],
+        ["date", I.t("set.mh.date"), null],
+        ["all", I.t("set.mh.all"), I.t("set.mh.allSub")]
+      ].forEach(function (o) {
+        var id = name + "-" + o[0];
+        var row = D.el("div.mh-opt" + (batch.kind === o[0] ? ".is-on" : ""));
+        var radio = D.el("input", { type: "radio", name: name, id: id, value: o[0], checked: batch.kind === o[0] });
+        var label = D.el("label", { "for": id });
+        label.appendChild(radio);
+        label.appendChild(D.el("span.mh-opt-text", {
+          html: "<b>" + D.esc(o[1]) + "</b>" + (o[2] ? "<small>" + D.esc(o[2]) + "</small>" : "")
+        }));
+        row.appendChild(label);
+        if (o[0] === "date") row.appendChild(dateInput);
+        radio.addEventListener("change", function () {
+          if (!radio.checked) return;
+          pick(o[0]);
+          if (o[0] === "date") dateInput.focus();
+        });
+        radios.push({ kind: o[0], radio: radio, row: row });
+        group.appendChild(row);
+      });
+      dateInput.addEventListener("change", function () {
+        if (!T.isValidISO(dateInput.value)) { dateInput.value = batch.date; flash(dateInput); return; }
+        batch.date = dateInput.value;
+        pick("date");
+      });
+      panel.appendChild(group);
+
+      impactEl = D.el("div.notice.mh-impact", { role: "status", "aria-live": "polite" });
+      panel.appendChild(impactEl);
+
+      var actions = D.el("div.mh-actions");
+      var discard = D.el("button.btn.sm.ghost", { type: "button", text: I.t("set.mh.discard") });
+      var done = D.el("button.btn.sm.primary", { type: "button", html: D.icon("check") + "<span>" + D.esc(I.t("set.mh.done")) + "</span>" });
+      discard.addEventListener("click", function () {
+        var base = batch.base;
+        endBatch();
+        App.store.updateSettings(base);
+        hooks.refresh();
+        drawHistory();
+        D.toast(I.t("set.mh.discarded"), { icon: "refresh" });
+      });
+      done.addEventListener("click", function () {
+        var b = batch;
+        var from = scopeFrom(b.kind, today(), b.date);
+        var before = balanceUntilYesterday(Object.assign({}, App.settings(), b.base));
+        var after = balanceUntilYesterday(App.settings());
+        endBatch();
+        drawHistory();
+        D.toast(from ? I.t("set.mh.appliedFrom", { date: modelDate(from) }) : I.t("set.mh.appliedAll"), {
+          sub: impactText(before, after),
+          action: { label: I.t("common.undo"), onClick: function () { restore(b.base); } }
+        });
+      });
+      actions.appendChild(discard);
+      actions.appendChild(done);
+      panel.appendChild(actions);
+
+      function pick(kind) {
+        batch.kind = kind;
+        dateInput.hidden = kind !== "date";
+        radios.forEach(function (r) {
+          r.radio.checked = r.kind === kind;
+          r.row.classList.toggle("is-on", r.kind === kind);
+        });
+        applyBatch();
+      }
+    }
+
+    function drawHistory() {
+      D.clear(history);
+      var tl = R.modelTimeline(App.settings());
+      history.hidden = tl.length < 2;
+      if (tl.length < 2) return;
+      var t = today();
+      var titleId = name + "-hist";
+      history.appendChild(D.el("div.weekday-head", {
+        html: "<b id='" + titleId + "'>" + D.esc(I.t("set.mh.history")) + "</b>" +
+          "<span>" + D.esc(I.t("set.mh.historyHint")) + "</span>"
+      }));
+      var list = D.el("ol.mh-list", { "aria-labelledby": titleId });
+      tl.forEach(function (seg, i) {
+        var isNow = (!seg.from || seg.from <= t) && (!seg.to || seg.to >= t);
+        var planned = !!seg.from && seg.from > t;
+        var whenText = segmentWhen(seg, t);
+        var item = D.el("li.mh-item" + (isNow ? ".is-now" : "") + (planned ? ".is-planned" : ""));
+        var main = D.el("div.mh-main");
+        var when = D.el("div.mh-when", { html: "<span>" + D.esc(whenText) + "</span>" });
+        if (isNow) when.appendChild(D.el("span.tag.info", { text: I.t("set.mh.now") }));
+        else if (planned) when.appendChild(D.el("span.tag", { text: I.t("set.mh.planned") }));
+        main.appendChild(when);
+        main.appendChild(D.el("div.mh-what", { text: segmentWhat(seg.model, App.fmt) }));
+        item.appendChild(main);
+
+        var tools = D.el("div.mh-tools");
+        var edit = D.el("button.btn.icon.sm.ghost", {
+          type: "button", html: penIcon(), "data-tip": I.t("set.mh.edit"),
+          "aria-label": I.t("set.mh.edit") + " · " + whenText
+        });
+        var del = D.el("button.btn.icon.sm.ghost", {
+          type: "button", html: D.icon("trash"), "data-tip": I.t("set.mh.remove"),
+          "aria-label": I.t("set.mh.remove") + " · " + whenText
+        });
+        edit.addEventListener("click", function () { editSegment(i); });
+        del.addEventListener("click", function () { removeSegment(i); });
+        tools.appendChild(edit);
+        tools.appendChild(del);
+        item.appendChild(tools);
+        list.appendChild(item);
+      });
+      history.appendChild(list);
+    }
+
+    /* Patch speichern, Felder nachführen, Meldung mit Rückgängig */
+    function commit(patch, title) {
+      var before = snapshot(App.settings());
+      var a = balanceUntilYesterday(App.settings());
+      App.store.updateSettings(patch);
+      var b = balanceUntilYesterday(App.settings());
+      hooks.refresh();
+      drawHistory();
+      D.toast(title, {
+        sub: impactText(a, b),
+        action: { label: I.t("common.undo"), onClick: function () { restore(before); } }
+      });
+    }
+
+    function removeSegment(index) {
+      endBatch();
+      var patch = R.removeModelEntry(App.settings(), index, { since: since() });
+      if (patch) commit(patch, I.t("set.mh.removed"));
+    }
+
+    function editSegment(index) {
+      endBatch();
+      var s = App.settings();
+      var tl = R.modelTimeline(s);
+      var seg = tl[index];
+      if (!seg) return;
+      var body = D.el("div.mh-edit");
+
+      var fromInput = null;
+      if (index > 0) {
+        var ff = D.el("div.field");
+        var fid = name + "-from";
+        ff.appendChild(D.el("label", { text: I.t("set.mh.from"), "for": fid }));
+        fromInput = D.el("input.input", { type: "date", id: fid, value: seg.from });
+        ff.appendChild(fromInput);
+        body.appendChild(ff);
+      } else {
+        body.appendChild(D.el("p.card-hint.mh-first", { text: I.t("set.mh.firstHint", { date: modelDate(tl[1].from) }) }));
+      }
+
+      var pf = D.el("div.field");
+      var pid = name + "-pct";
+      pf.appendChild(D.el("label", { text: I.t("set.workload"), "for": pid }));
+      var pctWrap = D.el("div.input-wrap");
+      var pctInput = D.el("input.input.mono.num", {
+        type: "text", id: pid, inputmode: "numeric", autocomplete: "off",
+        value: String(seg.model.workloadPercent), title: I.t("set.range", { min: 1, max: 200 })
+      });
+      pctWrap.appendChild(pctInput);
+      pctWrap.appendChild(D.el("span.suffix", { text: "%", "aria-hidden": "true" }));
+      pf.appendChild(pctWrap);
+      body.appendChild(pf);
+
+      var wdId = name + "-wd";
+      var block = D.el("div.weekday-block");
+      block.appendChild(D.el("div.weekday-head", {
+        html: "<b id='" + wdId + "'>" + D.esc(I.t("set.weekdayTargets")) + "</b><span>" + D.esc(I.t("set.weekdayHint")) + "</span>"
+      }));
+      var wdGrid = D.el("div.weekday-grid", { role: "group", "aria-labelledby": wdId });
+      var order = s.firstDayOfWeek === 0 ? [0, 1, 2, 3, 4, 5, 6] : [1, 2, 3, 4, 5, 6, 0];
+      var inputs = {};
+      order.forEach(function (wd) {
+        var field = D.el("div.field");
+        var id = wdId + "-" + wd;
+        field.appendChild(D.el("label", { text: I.weekdayName(wd, "short"), "for": id }));
+        inputs[wd] = D.el("input.input.mono", {
+          type: "text", id: id, inputmode: "numeric", autocomplete: "off",
+          value: T.formatDuration(seg.model.weeklyTargets[wd] || 0, "clock"),
+          "aria-label": I.weekdayName(wd, "long")
+        });
+        field.appendChild(inputs[wd]);
+        wdGrid.appendChild(field);
+      });
+      block.appendChild(wdGrid);
+      body.appendChild(block);
+      var err = D.el("div.row-error", { role: "alert" });
+      body.appendChild(err);
+
+      var cancel = D.el("button.btn", { type: "button", text: I.t("common.cancel") });
+      var save = D.el("button.btn.primary", { type: "button", text: I.t("common.save") });
+      var m = D.modal({
+        title: I.t("set.mh.edit"),
+        sub: segmentWhen(seg, today()),
+        body: body,
+        footer: [cancel, save]
+      });
+      cancel.addEventListener("click", function () { m.close(); });
+      save.addEventListener("click", function () {
+        var problem = null, focusNode = null;
+        D.qsa(".invalid", body).forEach(function (n) { n.classList.remove("invalid"); });
+        function fail(n, key) { n.classList.add("invalid"); if (!problem) { problem = key; focusNode = n; } }
+
+        var from;
+        if (fromInput) {
+          from = fromInput.value;
+          if (!T.isValidISO(from)) fail(fromInput, "set.mh.errDate");
+          else if (tl.some(function (x, i) { return i !== index && x.from === from; })) fail(fromInput, "set.mh.errTaken");
+        }
+        var pct = readNumber(pctInput.value, { min: 1, max: 200, step: 1 });
+        if (!pct.ok || pct.clamped) fail(pctInput, "set.range");
+        var targets = [0, 0, 0, 0, 0, 0, 0];
+        order.forEach(function (wd) {
+          var raw = String(inputs[wd].value).trim();
+          var v = raw ? T.parseDuration(raw) : null;
+          if (v === null || v < 0 || v > 24 * 60) fail(inputs[wd], "set.mh.errTarget");
+          else targets[wd] = v;
+        });
+        if (problem) {
+          err.textContent = I.t(problem, { min: 1, max: 200 });
+          if (focusNode) focusNode.focus();
+          return;
+        }
+        var patch = R.editModelEntry(App.settings(), index, { from: from, workloadPercent: pct.value, weeklyTargets: targets }, { since: since() });
+        m.close();
+        if (patch) commit(patch, I.t("set.mh.saved"));
+      });
     }
   }
 

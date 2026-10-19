@@ -602,8 +602,11 @@
     var monthly = period.bucket === "month";
     var groups = groupBars(days, period.bucket);
     var multiYear = monthly && groups.length && groups[0].key.slice(0, 4) !== groups[groups.length - 1].key.slice(0, 4);
+    /* Wochensoll des Modells am Anfang und am Ende — wechselt es im
+       Zeitraum, zeigt die Unterzeile beide Werte. */
+    var wtFrom = R.weeklyTargetMinutes(s, period.from), wtTo = R.weeklyTargetMinutes(s, period.until);
     var weekCard = card(I.t(monthly ? "stats.monthlyHours" : "stats.weeklyHours"),
-      monthly ? "" : I.t("week.target") + " " + App.fmt(R.weeklyTargetMinutes(s)));
+      monthly ? "" : I.t("week.target") + " " + (wtFrom === wtTo ? App.fmt(wtTo) : App.fmt(wtFrom) + " → " + App.fmt(wtTo)));
     var weekHost = D.el("div");
     weekCard.body.appendChild(weekHost);
     host.appendChild(weekCard.node);
