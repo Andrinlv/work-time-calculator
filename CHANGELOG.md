@@ -104,11 +104,36 @@ Alle nennenswerten Änderungen an Zeitkonto. Das Format folgt lose
 - **Sprachen:** Browsersprache wird beim ersten Start erkannt; letzte fest
   verdrahtete deutsche Texte übersetzt; Feiertagsnamen und „KW" lokalisiert.
 
+### Schlussprüfung vor der Freigabe
+
+Vier unabhängige Prüfungen (Darstellung, Abläufe samt Update, Rechenlogik,
+Sicherheit/Tempo) mit Gegenprüfung jedes Befunds. Behoben wurde unter anderem:
+
+- **Erster Start nach dem Update** von 1.0/1.2 lief mit einer Mischung aus alten
+  und neuen Programmdateien. Jede Datei trägt jetzt die Version in der Adresse
+  (`?v=1.3.0`); der erste Aufruf nach dem Deploy ist fehlerfrei, die Daten bleiben.
+- **Ein Zeitkonto überall:** Kopfzeile, Statistik, Zeitschieber, Jahresrückblick,
+  Fragen und Pensum-Vorschau rechnen abgeschlossene Monate gleich. Nichts bietet
+  mehr Änderungen an abgeschlossenen Tagen an.
+- **Lückenhilfe kennt den Schichtplan** und schlägt die geplante Schicht vor;
+  Planabweichungen einzelner Tage zählen nicht mehr als erfasster Tag.
+- **Veraltete Benachrichtigungen stempeln nicht mehr blind**; erledigte werden
+  zurückgezogen.
+- Pausen-Timer zeichnet einmal statt sechzigmal pro Sekunde; Stempeln ist wieder
+  so schnell wie in 1.2.
+- Lohnmeldung zählt Ferien an Feiertagen als Feiertag; Durchschnittszeiten und
+  „nicht erfasste Tage" sind in allen Ansichten gleich definiert; Text- und
+  Kalender-Export in der App-Sprache; kaputte Einstellungen in einer Sicherung
+  legen keine Ansicht mehr lahm.
+
 ### Technik
 
 - **Erweiterungspunkte** (`ZK.Ext`): neue Funktionen hängen sich in Ansichten ein,
   ohne sie umzubauen; ein Fehler bleibt in seiner Erweiterung.
-- Serviceworker-Version auf v1.3.0. Tests: von 178 auf über 700.
+- Serviceworker-Version auf v1.3.0. Tests: von 178 auf über 800, darunter eine
+  Klammerprüfung aller Stylesheets und ein Versionsabgleich zwischen App,
+  Serviceworker, `package.json`, README und `index.html`.
+- `dist/zeitkonto.html` neu gebaut (44 Skripte, ohne externe Abhängigkeiten).
 
 ## [1.2.0] — 2026-08-14
 

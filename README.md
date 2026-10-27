@@ -301,7 +301,7 @@ erreichbar und lässt sich von dort installieren.
 ## Entwicklung
 
 ```bash
-npm test      # über 700 Tests: Rechenkern, Recht, Daten, Funktionen, Stylesheets
+npm test      # über 800 Tests: Rechenkern, Recht, Daten, Funktionen, Stylesheets
 npm run build # Icons erzeugen + Einzeldatei bauen
 npm start     # lokaler Server
 ```
