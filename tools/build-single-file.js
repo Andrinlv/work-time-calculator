@@ -20,8 +20,13 @@ const DIST = path.join(ROOT, "dist");
 const SOURCE = path.join(ROOT, "index.html");
 const TARGET = path.join(DIST, "zeitkonto.html");
 
+/** Pfad ohne Versionsangabe: index.html bindet Dateien als „…/app.js?v=1.3.0“ ein. */
+function bare(ref) {
+  return String(ref).split(/[?#]/)[0];
+}
+
 function read(rel) {
-  return fs.readFileSync(path.join(ROOT, rel), "utf8");
+  return fs.readFileSync(path.join(ROOT, bare(rel)), "utf8");
 }
 
 function readBase64(rel) {
@@ -42,13 +47,13 @@ function build() {
 
   /* ---- Stylesheets einbetten ---------------------------------------- */
   html = html.replace(/[ \t]*<link rel="stylesheet" href="([^"]+)"[^>]*>\n?/g, (_, href) => {
-    cssFiles.push(href);
+    cssFiles.push(bare(href));
     return "";
   });
 
   /* ---- Skripte einbetten -------------------------------------------- */
   html = html.replace(/[ \t]*<script src="([^"]+)"><\/script>\n?/g, (_, src) => {
-    jsFiles.push(src);
+    jsFiles.push(bare(src));
     return "";
   });
 
@@ -104,7 +109,7 @@ function build() {
   const leftovers = [];
   if (/<link rel="stylesheet"/.test(html)) leftovers.push("nicht eingebettetes Stylesheet");
   if (/<script src=/.test(html)) leftovers.push("nicht eingebettetes Skript");
-  if (/(src|href)="(?!data:|#)[^"]*\.(png|svg|js|css|webmanifest)"/.test(html)) {
+  if (/(src|href)="(?!data:|#)[^"]*\.(png|svg|js|css|webmanifest)(?:[?#][^"]*)?"/.test(html)) {
     leftovers.push("externer Dateiverweis");
   }
   if (leftovers.length) {
@@ -116,4 +121,4 @@ function build() {
 }
 
 if (require.main === module) build();
-module.exports = { build };
+module.exports = { build, bare };

@@ -168,6 +168,36 @@ test("Eine in index.html neu eingebundene Datei landet auch ohne SHELL-Eintrag i
   assert.equal(await w.request(SCOPE, "navigate"), files["index.html"], "offline aus dem Cache");
 });
 
+test("Dateien mit Versionsangabe (?v=) kommen offline aus dem Cache, eine neue Datei wird mit ?v= gefunden", async () => {
+  const caches = makeCaches();
+  const files = site("3.1");
+  files["index.html"] = '<html>3.1<link rel="stylesheet" href="assets/css/views.css?v=3.1" />' +
+    '<script src="assets/js/ui/views/neu.js?v=3.1"></script><script src="./assets/js/ui/app.js?v=3.1#x"></script></html>';
+  files["assets/js/ui/views/neu.js"] = "3.1:neu";
+  const server = makeServer(files);
+  const w = loadWorker(withVersion(SW_SOURCE, "3.1"), caches, server);
+  await w.install();
+  const keys = [...caches.stores.get("zeitkonto-v3.1").keys()];
+  assert.ok(keys.includes(SCOPE + "assets/js/ui/views/neu.js"), "die neue Datei — einmal, ohne ?v=");
+  assert.ok(!keys.some((k) => /[?#]/.test(k)), "keine Einträge mit Versionsangabe: " + keys.filter((k) => /[?#]/.test(k)));
+  server.online = false;
+  assert.equal(await w.request("assets/js/ui/views/neu.js?v=3.1"), "3.1:neu");
+  assert.ok((await w.request("assets/js/ui/app.js?v=3.1")).startsWith("3.1:"));
+  assert.ok((await w.request("assets/css/views.css?v=3.1")).startsWith("3.1:"));
+});
+
+test("Verlangt die Seite eine andere Version (?v=), kommt die Datei vom Netz — nie aus diesem Cache", async () => {
+  const caches = makeCaches();
+  const server = makeServer(site("3.2"));
+  const w = loadWorker(withVersion(SW_SOURCE, "3.2"), caches, server);
+  await w.install();
+  server.files = site("3.3");
+  assert.ok((await w.request("assets/js/ui/app.js?v=3.3")).startsWith("3.3:"), "fremde Version: Netz");
+  assert.ok((await w.request("assets/js/ui/app.js?v=3.2")).startsWith("3.2:"), "eigene Version: Cache");
+  assert.ok((await w.request("assets/js/ui/app.js")).startsWith("3.2:"), "ohne Angabe: Cache");
+  assert.ok((await w.request("assets/js/ui/app.js?foo=1")).startsWith("3.2:"), "andere Parameter: Cache");
+});
+
 test("Beim Aufräumen bleiben fremde Caches auf demselben Ursprung unberührt", async () => {
   const caches = makeCaches();
   await caches.open("anderes-projekt-v1");
@@ -220,7 +250,9 @@ test("Knopf in der Benachrichtigung: offenes Fenster nach vorne, Aktion als Nach
   assert.equal(r.waited, 1, "der Worker wartet, bis das Fenster benachrichtigt ist");
   assert.equal(r.notification.closed, true, "Meldung schliesst sich auch bei einem Knopf");
   assert.equal(stats.focusCalls, 1);
-  assert.deepEqual(stats.messages, [{ type: "notification-action", action: "stamp-out", kind: "leave", date: "2026-10-16" }]);
+  assert.equal(stats.messages.length, 1);
+  assert.deepEqual(stats.messages[0], { type: "notification-action", action: "stamp-out", kind: "leave", date: "2026-10-16", at: stats.messages[0].at });
+  assert.ok(stats.messages[0].at > 0, "mit dem Zeitpunkt der Meldung — die App prüft das Alter");
   assert.equal(clients.log.opened.length, 0, "kein zweites Fenster, kein Direktlink");
   assert.deepEqual(clients.log.queries[0], { type: "window", includeUncontrolled: true });
 });
@@ -245,21 +277,32 @@ test("„+15 min“ erledigt sich im Hintergrund — das Fenster springt nicht n
   assert.equal(win.messages[0].action, "snooze");
 });
 
-test("Kein Fenster offen: Stempel-Knöpfe öffnen den Direktlink, solange die Meldung frisch ist", async () => {
-  const cases = [["stamp-out", "#/stamp/out"], ["end-break", "#/stamp/break"], ["start-break", "#/stamp/break"]];
-  for (const [action, hash] of cases) {
+test("Kein Fenster offen: Stempel-Knöpfe öffnen den geprüften Link — nie einen Direktlink, der sofort stempelt", async () => {
+  for (const action of ["stamp-out", "end-break", "start-break"]) {
     const clients = makeClients([]);
-    await swWith(clients).click(action, FRESH());
+    const data = FRESH();
+    await swWith(clients).click(action, data);
     assert.equal(clients.log.opened.length, 1, action);
-    assert.equal(clients.log.opened[0].url, SCOPE + "index.html" + hash, action);
-    assert.equal(clients.log.opened[0].messages.length, 0, "der Link stempelt — nicht noch einmal per Nachricht");
+    assert.equal(clients.log.opened[0].url, SCOPE + "index.html#/notify/" + action + "/2026-10-16/" + data.at, action);
+    assert.ok(!/#\/stamp/.test(clients.log.opened[0].url), "nie #/stamp/…");
+    assert.equal(clients.log.opened[0].messages.length, 0, "der Link trägt alles — keine zweite Nachricht");
   }
 });
 
-test("Kein Fenster offen: alte Meldung oder Klick auf den Text öffnet nur „Heute“ — nie ein Stempel", async () => {
+test("Kein Fenster offen: auch eine alte Meldung geht über den geprüften Link — die App lehnt sie ab und sagt es", async () => {
   const stale = { kind: "leave", date: "2026-10-15", at: Date.now() - 7 * 3600 * 1000 };
-  const future = { kind: "leave", date: "2026-10-16", at: Date.now() + 3600 * 1000 };
-  for (const [action, data] of [["stamp-out", stale], ["end-break", future], ["stamp-out", {}], ["", FRESH()], ["unbekannt", FRESH()]]) {
+  const clients = makeClients([]);
+  await swWith(clients).click("stamp-out", stale);
+  assert.equal(clients.log.opened[0].url, SCOPE + "index.html#/notify/stamp-out/2026-10-15/" + stale.at);
+});
+
+test("Kein Fenster offen: Meldung ohne Tag oder Zeitpunkt oder Klick auf den Text öffnet nur „Heute“", async () => {
+  const cases = [
+    ["stamp-out", {}], ["end-break", { date: "2026-10-16" }], ["stamp-out", { at: Date.now() }],
+    ["stamp-out", { date: "16.10.2026", at: Date.now() }], ["stamp-out", { date: "2026-10-16", at: "1" }],
+    ["", FRESH()], ["unbekannt", FRESH()]
+  ];
+  for (const [action, data] of cases) {
     const clients = makeClients([]);
     await swWith(clients).click(action, data);
     assert.equal(clients.log.opened[0].url, SCOPE + "index.html#/today", action + " " + JSON.stringify(data));
@@ -272,7 +315,8 @@ test("Kein Fenster offen und „+15 min“: App öffnen und die Erinnerung nachr
   await swWith(clients).click("snooze", FRESH());
   const win = clients.log.opened[0];
   assert.equal(win.url, SCOPE + "index.html#/today");
-  assert.deepEqual(win.messages, [{ type: "notification-action", action: "snooze", kind: "leave", date: "2026-10-16" }]);
+  assert.equal(win.messages.length, 1);
+  assert.deepEqual(win.messages[0], { type: "notification-action", action: "snooze", kind: "leave", date: "2026-10-16", at: win.messages[0].at });
 });
 
 test("Fokus verweigert oder Meldung ohne Daten: die Aktion kommt trotzdem an", async () => {
@@ -280,19 +324,41 @@ test("Fokus verweigert oder Meldung ohne Daten: die Aktion kommt trotzdem an", a
   const sw = swWith(makeClients([win]));
   const r = await sw.click("stamp-out", undefined);
   assert.equal(r.notification.closed, true);
-  assert.deepEqual(win.messages, [{ type: "notification-action", action: "stamp-out", kind: "", date: "" }]);
+  assert.deepEqual(win.messages, [{ type: "notification-action", action: "stamp-out", kind: "", date: "", at: 0 }]);
 });
 
 /* ---------------------------------------------------------------------- */
 /* Release-Disziplin                                                        */
 /* ---------------------------------------------------------------------- */
 
+const APP_VERSION = /var APP_VERSION = "([^"]+)"/.exec(fs.readFileSync(path.join(ROOT, "assets/js/ui/app.js"), "utf8"))[1];
+const INDEX = fs.readFileSync(path.join(ROOT, "index.html"), "utf8");
+
 test("CACHE_VERSION passt zur App-Version — sonst bleibt nach dem Deploy die alte im Cache", () => {
   const cache = /CACHE_VERSION = "zeitkonto-v([^"]+)"/.exec(SW_SOURCE)[1];
-  const app = /var APP_VERSION = "([^"]+)"/.exec(fs.readFileSync(path.join(ROOT, "assets/js/ui/app.js"), "utf8"))[1];
   const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8")).version;
-  assert.equal(cache, app, "sw.js CACHE_VERSION und app.js APP_VERSION");
-  assert.equal(app, pkg, "app.js APP_VERSION und package.json");
+  assert.equal(cache, APP_VERSION, "sw.js CACHE_VERSION und app.js APP_VERSION");
+  assert.equal(APP_VERSION, pkg, "app.js APP_VERSION und package.json");
+  const readme = /^\s*◯ ●\s+Version (\S+)\s*$/m.exec(fs.readFileSync(path.join(ROOT, "README.md"), "utf8"));
+  assert.ok(readme, "README: Kopf mit „Version x.y.z“");
+  assert.equal(readme[1], APP_VERSION, "README-Kopf und app.js APP_VERSION");
+});
+
+test("index.html bindet jedes Skript und Stylesheet mit ?v=<App-Version> ein", () => {
+  // Ältere Serviceworker (1.0–1.2) liefern Dateien aus ihrem Cache, die Seite
+  // nach einem Deploy aber vom Netz. Nur mit neuer Adresse holen sie auch
+  // die neuen Skripte — sonst läuft der erste Aufruf mit gemischten Dateien.
+  const refs = [];
+  const re = /<(?:script|link)\b[^>]*\s(?:src|href)="((?:\.\/)?assets\/[^"]+\.(?:js|css)(?:\?[^"]*)?)"/g;
+  let m;
+  while ((m = re.exec(INDEX))) refs.push(m[1]);
+  assert.ok(refs.length > 40, "alle Skripte und Stylesheets gefunden");
+  refs.forEach((ref) => {
+    const v = /\?v=([^&#"]+)$/.exec(ref);
+    assert.ok(v, ref + " ohne ?v=");
+    assert.equal(v[1], APP_VERSION, ref);
+  });
+  assert.ok(!/(?:src|href)="(?:\.\/)?assets\/[^"]+\.(?:js|css)"/.test(INDEX), "keine Datei ohne Versionsangabe");
 });
 
 test("Jede Datei in SHELL existiert — sonst scheitert jede künftige Installation", () => {
@@ -301,8 +367,8 @@ test("Jede Datei in SHELL existiert — sonst scheitert jede künftige Installat
   const shell = (SW_SOURCE.match(/"\.\/[^"]*"/g) || []).map((q) => q.slice(3, -1));
   assert.ok(shell.length > 30);
   shell.filter(Boolean).forEach((f) => assert.ok(fs.existsSync(path.join(ROOT, f)), f + " existiert nicht"));
-  const html = fs.readFileSync(path.join(ROOT, "index.html"), "utf8");
-  const re = /\s(?:src|href)="(?:\.\/)?(assets\/[^"?#]+)"/g;
-  let m;
-  while ((m = re.exec(html))) assert.ok(fs.existsSync(path.join(ROOT, m[1])), "index.html bindet " + m[1] + " ein, die Datei fehlt");
+  const re = /\s(?:src|href)="(?:\.\/)?(assets\/[^"?#]+)(?:[?#][^"]*)?"/g;
+  let m, n = 0;
+  while ((m = re.exec(INDEX))) { n++; assert.ok(fs.existsSync(path.join(ROOT, m[1])), "index.html bindet " + m[1] + " ein, die Datei fehlt"); }
+  assert.ok(n > 40, "die Prüfung findet die Dateien auch mit Versionsangabe");
 });

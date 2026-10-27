@@ -8,7 +8,7 @@ die Feiertage deines Kantons. Alles bleibt auf deinem Gerät.
 
 ```
   ◯ ◯      ZEITKONTO
-  ◯ ●      Version 1.2.0
+  ◯ ●      Version 1.3.0
 ```
 
 ---

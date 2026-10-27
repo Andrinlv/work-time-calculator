@@ -607,7 +607,7 @@ test("Onboarding: neue Frage in allen vier Sprachen", () => {
 test("Skripte eingebunden: Logik nach dem Planer, Oberfläche vor dem App-Start, offline verfügbar", () => {
   const root = path.join(__dirname, "..");
   const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
-  const at = (f) => html.indexOf('<script src="' + f + '"></script>');
+  const at = (f) => html.search(new RegExp('<script src="' + f.replace(/\./g, "\\.") + '(\\?v=[^"]*)?"></script>'));
   assert.ok(at("assets/js/core/rota.js") > at("assets/js/core/planner.js"));
   assert.ok(at("assets/js/core/rota.js") < at("assets/js/ui/onboarding.js"), "das Onboarding nutzt die Vorlagen");
   assert.ok(at("assets/js/ui/features/rota.js") > at("assets/js/ui/views/settings.js"));

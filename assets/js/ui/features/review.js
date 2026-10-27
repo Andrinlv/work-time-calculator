@@ -1321,10 +1321,47 @@
     return !cfg || cfg.enabled !== false;
   }
 
-  function currentMoment(App) {
-    return cached(App, "moment", function () {
-      return RV.moment({ records: App.store.allDays(), settings: App.settings() });
+  /* Der Moment geht über die ganze Geschichte (Rekord-Serie) — auf einem
+     Handy mit Jahren an Daten ein spürbarer Brocken, und „Heute“ fragt ihn
+     bei jedem Stempeln neu ab. Gestempelt wird aber fast immer heute, und
+     vom heutigen Tag zählt für den Moment nur: erfasst oder nicht (Serie),
+     wird gearbeitet oder nicht. Gerechnet wird deshalb neu, wenn sich ein
+     anderer Tag oder eine Einstellung ändert, der Tag wechselt — oder sich
+     an diesen beiden Lesarten von heute (und gestern: Nachtschicht) etwas
+     ändert. */
+  var momentMemo = { key: null, value: null };
+  var otherRev = 0;
+  var watchedStore = null;
+
+  function watchOthers(App) {
+    if (watchedStore === App.store || !App.store || !App.store.subscribe) return;
+    watchedStore = App.store;
+    App.store.subscribe(function (evt) {
+      if (!evt || evt.type === "achievements" || evt.type === "error") return;
+      if (evt.type === "day" && evt.date === T.todayISO()) return;
+      otherRev++;
     });
+  }
+
+  function momentKey(App) {
+    var records = App.store.allDays(), s = App.settings(), today = T.todayISO();
+    var r = ZK.Engine.computeDay(records[today] || { date: today }, { settings: s, isToday: true });
+    var runs = RV._streakRuns(records, s, T.addDays(today, -1), today);
+    return [otherRev, today, RV._works(r) ? 1 : 0, JSON.stringify(runs)].join("|");
+  }
+
+  function currentMoment(App) {
+    if (!App.store || !App.store.subscribe || !ZK.Engine || !RV._streakRuns || !RV._works) {
+      return cached(App, "moment", function () {
+        return RV.moment({ records: App.store.allDays(), settings: App.settings() });
+      });
+    }
+    watchOthers(App);
+    var key = momentKey(App);
+    if (momentMemo.key !== key) {
+      momentMemo = { key: key, value: RV.moment({ records: App.store.allDays(), settings: App.settings() }) };
+    }
+    return momentMemo.value;
   }
 
   ZK.Ext.register("today.cards", {
@@ -1365,8 +1402,25 @@
         });
         node.appendChild(x);
       }
-      sync(ctx.App, ctx.iso);
-      return { update: function (c) { sync(c.App, c.iso); } };
+      /* Beim Start zuerst die App zeigen: Die erste Rechnung über die ganze
+         Geschichte folgt gleich nach dem ersten Bild, noch unter dem
+         ausblendenden Ladebild. Bis dahin wie ohne Moment. Danach kommt er
+         aus dem Zwischenspeicher. */
+      var deferred = !ctx.App.booted && momentMemo.key === null && typeof root.requestAnimationFrame === "function";
+      function syncSoon(App, iso) {
+        if (!deferred) { sync(App, iso); return; }
+        host.hidden = !host.children.length;
+      }
+      if (deferred) {
+        root.requestAnimationFrame(function () {
+          setTimeout(function () {
+            deferred = false;
+            if (document.contains(host)) sync(ctx.App, ctx.iso);
+          }, 0);
+        });
+      }
+      syncSoon(ctx.App, ctx.iso);
+      return { update: function (c) { syncSoon(c.App, c.iso); } };
     }
   });
 

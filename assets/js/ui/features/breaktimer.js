@@ -355,11 +355,45 @@
     };
   }
 
+  /* Wie lange ein Knopf in einer Benachrichtigung stempeln darf. Ohne
+     Push-Server bleibt eine Meldung in der Leiste, auch wenn die App, die
+     sie gezeigt hat, längst ersetzt ist (Tab verworfen, Update). */
+  var NOTICE_FRESH_MS = 6 * 60 * 60 * 1000;
+
+  /** Meldung zu alt — oder angeblich aus der Zukunft (Uhr verstellt)? at, now: ms */
+  function outdated(at, now) {
+    if (!(at > 0) || !(now > 0)) return false;
+    return now - at > NOTICE_FRESH_MS || at - now > 60000;
+  }
+
   /**
-   * Was ein Knopf in einer Benachrichtigung in der offenen App auslöst —
-   * erst nachdem geprüft ist, ob er noch passt.
-   *   info:  { kind, date } aus der Benachrichtigung
-   *   state: { date (aktiver Stempeltag), running, onBreak }
+   * Zeitpunkt (ms) der jüngsten Stempelzeit eines Tages — Kommen, Gehen,
+   * Pausen, auf der Zeitachse des Tages (Nachtschicht: nach Mitternacht
+   * am Folgetag). 0 ohne Kommen. Liegt er nach einer Meldung, ist seither
+   * gestempelt worden: Die Meldung beschreibt einen alten Stand.
+   */
+  function stampedAt(iso, rec) {
+    var base = T.fromISO(iso);
+    var anchor = rec ? T.parseHHMM(rec.start) : null;
+    if (!base || anchor === null) return 0;
+    var last = anchor;
+    var times = [rec.end];
+    (rec.breaks || []).forEach(function (b) { if (b) times.push(b.start, b.end); });
+    times.forEach(function (v) {
+      var m = T.parseHHMM(v);
+      if (m !== null) last = Math.max(last, T.onTimeline(m, anchor));
+    });
+    return new Date(base.getFullYear(), base.getMonth(), base.getDate(), 0, last).getTime();
+  }
+
+  /**
+   * Was ein Knopf in einer Benachrichtigung auslöst — erst nachdem geprüft
+   * ist, ob er noch passt. Gilt für das offene Fenster wie für den Link
+   * #/notify/…, den sw.js ohne offenes Fenster öffnet.
+   *   info:  { kind, date, at } aus der Benachrichtigung (at: gezeigt um, ms);
+   *          link: true für #/notify/… — der muss Tag und Zeitpunkt tragen
+   *   state: { date (aktiver Stempeltag), running, onBreak,
+   *            now (ms), changedAt (ms, jüngste Stempelzeit — stampedAt) }
    * → { stamp: "out"|"break" } | { snooze: min, kind } | { skip: Grund } | { open: true }
    */
   function route(action, info, state) {
@@ -373,11 +407,35 @@
     }
     var stamp = { "stamp-out": "out", "end-break": "break", "start-break": "break" }[action];
     if (!stamp) return { open: true };
+    if (info.link && !(info.date && info.at > 0)) return { skip: "stale" };
     if (info.date && state.date && info.date !== state.date) return { skip: "stale" };
     if (!state.running) return { skip: "notRunning" };
     if (action === "end-break" && !state.onBreak) return { skip: "noBreak" };
     if (action === "start-break" && state.onBreak) return { skip: "onBreak" };
+    if (outdated(info.at, state.now)) return { skip: "stale" };
+    // Seither gestempelt (Pause genommen, neue Pause …): der Knopf meint einen alten Stand
+    if (info.at > 0 && state.changedAt > info.at) return { skip: "stale" };
     return { stamp: stamp };
+  }
+
+  /**
+   * Gehört eine noch sichtbare Benachrichtigung weg, weil ihr Anlass vorbei
+   * ist? Fremde Tags (z. B. die Probe) bleiben.
+   *   data:  { kind, date, at } der Meldung
+   *   state: wie bei route, dazu breakDue (Pflichtpause steht noch aus)
+   */
+  function staleNotice(tag, data, state) {
+    data = data || {};
+    state = state || {};
+    var known = tag === TAGS.leave || tag === TAGS["break"] || tag === TAGS.breakDue;
+    if (!known) return false;
+    if (data.date && state.date && data.date !== state.date) return true;
+    if (outdated(data.at, state.now)) return true;
+    if (data.at > 0 && state.changedAt > data.at) return true;
+    if (!state.running) return true;
+    if (tag === TAGS["break"]) return !state.onBreak;
+    if (tag === TAGS.breakDue) return !!state.onBreak || !state.breakDue;
+    return false;
   }
 
   /* Suchwörter der Palette, unabhängig von der eingestellten Sprache */
@@ -433,7 +491,10 @@
     formatOver: formatOver,
     channel: channel,
     notice: notice,
+    NOTICE_FRESH_MS: NOTICE_FRESH_MS,
+    stampedAt: stampedAt,
     route: route,
+    staleNotice: staleNotice,
     matches: matches
   };
 });
@@ -705,6 +766,22 @@
   function setText(node, text) { if (node.textContent !== text) node.textContent = text; }
   function setAttr(node, name, value) { if (node.getAttribute(name) !== value) node.setAttribute(name, value); }
 
+  /* Zwei Fassungen eines Textes im selben Feld (views.css: .bt-alt) — das
+     Feld ist so hoch wie die längere. Ist die Pause um, wechselt der Text,
+     ohne dass die Karte ihre Höhe ändert (schmale Handys, lange Sprachen). */
+  function altText(node) {
+    var a = D.el("span"), b = D.el("span", { "aria-hidden": "true" });
+    node.classList.add("bt-alt");
+    node.appendChild(a);
+    node.appendChild(b);
+    return function (first, second, showSecond) {
+      setText(a, first);
+      setText(b, second);
+      setAttr(a, "aria-hidden", showSecond ? "true" : "false");
+      setAttr(b, "aria-hidden", showSecond ? "false" : "true");
+    };
+  }
+
   function renderCard(host, ctx) {
     var App = ctx.App;
     var c = sync(App);
@@ -727,6 +804,12 @@
     main.appendChild(value);
     main.appendChild(sub);
     main.appendChild(missing);
+    var paintLabel = altText(label);
+    var paintSub = altText(sub);
+    /* Die fehlende Pflichtpause schwindet mit der Pause — meist genau dann
+       auf null, wenn die Zeit um ist. Ihre Zeile bleibt deshalb reserviert,
+       solange die Karte steht, sonst rückt alles darunter nach oben. */
+    var missingShown = false;
 
     var side = D.el("div.bt-side");
     var chips = D.el("div.segmented.bt-chips", { role: "group", "aria-label": I.t("bt.durations") });
@@ -735,9 +818,10 @@
       b.addEventListener("click", function () { setMinutes(m); });
       chips.appendChild(b);
     });
-    /* Ist die Zeit um, tritt „+5 min“ an die Stelle der Chips. „Pause
-       beenden“ steht schon gross in der Stempelleiste darüber. */
-    var acts = D.el("div.bt-acts", { hidden: true });
+    /* Ist die Zeit um, tritt „+5 min“ an die Stelle der Chips — im selben
+       Feld, die Karte behält ihre Höhe (views.css). „Pause beenden“ steht
+       schon gross in der Stempelleiste darüber. */
+    var acts = D.el("div.bt-acts");
     var moreBtn = D.el("button.btn.sm", { type: "button", html: D.icon("plus") + "<span>" + D.esc(I.t("bt.minutes", { n: BT.SNOOZE["break"] })) + "</span>" });
     moreBtn.addEventListener("click", function () { snoozeBreak(BT.SNOOZE["break"]); });
     acts.appendChild(moreBtn);
@@ -761,18 +845,20 @@
       var end = T.formatHHMM(BT.endTl(cur.ob, cur.plan));
 
       node.classList.toggle("is-over", over);
-      setText(label, I.t(over ? "bt.overTitle" : "bt.left"));
+      paintLabel(I.t("bt.left"), I.t("bt.overTitle"), over);
       setText(value, over ? BT.formatOver(left) : BT.formatLeft(left));
-      setText(sub, I.t(over ? "bt.planOver" : "bt.plan", { v: App.fmt(total), time: cur.ob.start, end: end }));
+      var vars = { v: App.fmt(total), time: cur.ob.start, end: end };
+      paintSub(I.t("bt.plan", vars), I.t("bt.planOver", vars), over);
       var miss = Math.max(0, cur.missing - Math.floor(nowSec / 60 - cur.ob.startTl));
-      missing.hidden = !(miss > 0);
-      if (miss > 0) setText(missing, I.t("bt.missing", { v: App.fmt(miss) }));
-      arc.style.strokeDashoffset = (RING_C * (1 - BT.progress(cur.ob, cur.plan, nowSec))).toFixed(2);
+      if (miss > 0) { missingShown = true; setText(missing, I.t("bt.missing", { v: App.fmt(miss) })); }
+      missing.hidden = !missingShown;
+      missing.classList.toggle("is-done", !(miss > 0));
+      setAttr(missing, "aria-hidden", miss > 0 ? "false" : "true");
+      // Höchstens einmal je Sekunde und nur, wenn sich etwas ändert (überzogen: voller Ring)
+      setAttr(arc, "stroke-dashoffset", (RING_C * (1 - BT.progress(cur.ob, cur.plan, nowSec))).toFixed(1));
       D.qsa("button", chips).forEach(function (b) {
         setAttr(b, "aria-pressed", +b.getAttribute("data-min") === cur.plan.minutes && !cur.plan.extra ? "true" : "false");
       });
-      chips.hidden = over;
-      acts.hidden = !over;
     }
 
     st.card = { node: node, paint: paintCard };
