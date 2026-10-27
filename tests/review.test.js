@@ -88,7 +88,7 @@ test("Lieblingstag ignoriert einzelne Samstagseinsätze", () => {
   const st = RV.yearStats(seedLike(), S, 2026, NOW);
   assert.equal(st.favoriteWeekday.weekday, 2);   // Di beginnt 06:45
   assert.equal(st.shortestWeekday.weekday, 5);   // Fr endet 16:00
-  assert.equal(st.weekdays[6].count, 1);
+  assert.equal(st.weekdays[6].count, 0, "ein Samstagseinsatz ohne Soll ist kein voller Arbeitstag");
   const tue = E.computeDay(seedLike()["2026-10-13"], { settings: S, now: NOW });
   assert.equal(st.favoriteWeekday.avg, tue.net);
 });
@@ -446,4 +446,24 @@ test("Momente als Text in vier Sprachen", () => {
     });
   });
   I.setLang("de");
+});
+
+test("Lieblingstag und „längste Tage“ der Erkenntnisse: dieselbe Grundlage, derselbe Tag", () => {
+  const X = require("../assets/js/core/insights.js");
+  const days = seedLike();
+  // Lange Kurstage am Mittwoch zählen nicht als Arbeitstag — sonst gewönne der Mittwoch
+  Object.keys(days).forEach((iso) => {
+    if (T.weekdayOf(iso) === 3 && iso < "2026-05-01" && days[iso].start) days[iso] = Object.assign({}, days[iso], { type: "training", start: "07:00", end: "20:00" });
+  });
+  const st = RV.yearStats(days, S, 2026, NOW);
+  const range = E.computeRange("2026-01-01", "2026-10-16", (iso) => days[iso], S, NOW);
+  const fact = X.rhythm(range.days).facts.find((f) => f.id === "longest");
+  assert.equal(st.favoriteWeekday.weekday, 2, "Dienstag (06:45–17:00)");
+  assert.ok(fact, "die Erkenntnisse nennen einen längsten Tag");
+  assert.equal(fact.weekday, st.favoriteWeekday.weekday);
+  assert.equal(fact.avg, st.favoriteWeekday.avg);
+  // Ø Beginn und Feierabend wie die Kennzahlen der Statistik und die Erkenntnisse
+  const rh = X.rhythm(range.days);
+  assert.equal(st.avgStart, rh.avg.arrive);
+  assert.equal(st.avgEnd, rh.avg.leave);
 });

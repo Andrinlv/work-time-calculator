@@ -556,6 +556,7 @@
     var entries = Rota.plan(from, to, {
       rota: s.rota,
       templates: s.shiftTemplates || [],
+      override: function (iso) { return Rota.overrideOf(s, iso); },
       record: function (iso) { return App.store.getDay(iso); },
       holiday: function (iso) { return App.holiday(iso); }
     });
@@ -591,24 +592,68 @@
     return windowPlan(App, T.addDays(start, -1), T.addDays(start, 7));
   }
 
+  /* ---- Ältere Stände: Abweichungen aus den Tagesdatensätzen ------------ */
+
+  var migratedRev = null;
+
+  /**
+   * Bis 1.3 lag eine Abweichung als `plan` im Tagesdatensatz — ein nur
+   * geplanter Tag zählte so als erfasst („N Tage“, „Alle“ in den
+   * Berichten). Beim ersten Zeichnen der Kopfzeile, also noch vor jeder
+   * Ansicht, und nach Import oder Übernahme aus einem anderen Fenster zieht
+   * sie in die Einstellungen um: still, ohne Rückgängig-Schritt.
+   * Abgeschlossene Monate bleiben unberührt (ihre Prüfsumme gälte sonst
+   * als verändert); dort liest dayPlan den alten Wert weiter.
+   * → true, wenn etwas umgezogen ist
+   */
+  function migrateLegacy(App) {
+    var rev = revOf(App);
+    if (rev === migratedRev) return false;
+    migratedRev = rev;
+    var store = App.store;
+    var m = Rota.migrateRecords(store.allDays(), settingsOf(App), {
+      today: T.todayISO(),
+      locked: function (iso) { return store.isLocked ? store.isLocked(iso) : false; }
+    });
+    if (!m.count) return false;
+    if (Object.keys(m.settings).length) store.updateSettings(m.settings, { undo: false });
+    store.setDays(m.days, { label: "plan", undo: false });
+    migratedRev = revOf(App);
+    return true;
+  }
+
+  /* Die Kopfzeile zeigt hier nichts — der Slot ist nur der früheste Moment
+     mit App. Die Navigation (Anzahl Tage) war da schon gezeichnet. */
+  ZK.Ext.register("header.actions", {
+    id: "rota-migrate",
+    order: -100,
+    when: function (ctx) {
+      if (migrateLegacy(ctx.App)) setTimeout(function () { ctx.App.renderChrome(); }, 0);
+      return false;
+    }
+  });
+
   /* ---- Einen Tag planen ----------------------------------------------- */
+
+  /** Abweichung für `iso` → Vorlagen-id | "free" | null (nicht umgezogene aus dem Datensatz inbegriffen) */
+  function overrideAt(App, iso) {
+    var rec = App.store.getDay(iso);
+    return Rota.overrideOf(settingsOf(App), iso) || (rec && rec.plan ? rec.plan : null);
+  }
 
   /**
    * Abweichung speichern (target: Vorlagen-id | "free" | null = laut Rhythmus).
-   * Ein Tag, der nur die Planung trug, verschwindet beim Zurücksetzen ganz.
+   * Sie liegt in den Einstellungen, nicht bei den Tagen: ein Plan ist keine
+   * Erfassung. Rückgängig nimmt sie wie jede Einstellung zurück.
    */
   function setPlan(App, iso, target) {
-    var value = Rota.overrideFor(settingsOf(App).rota, iso, target === "reset" ? null : target, App.holiday(iso));
-    var rec = App.store.getDay(iso);
-    var current = rec && rec.plan ? rec.plan : null;
-    if (value === current) return false;
-    if (value === null) {
-      if (Rota.onlyPlan(rec)) App.clearDay(iso);
-      else App.saveDay(iso, { plan: null }, { label: "plan" });
-    } else {
-      App.saveDay(iso, { plan: value }, { label: "plan" });
-    }
-    var e = Rota.dayPlan(iso, { rota: settingsOf(App).rota, templates: templatesOf(App), record: App.store.getDay(iso), holiday: App.holiday(iso) });
+    migrateLegacy(App);
+    var s = settingsOf(App);
+    var value = Rota.overrideFor(s.rota, iso, target === "reset" ? null : target, App.holiday(iso));
+    if (value === overrideAt(App, iso)) return false;
+    App.store.updateSettings(Rota.overridePatch(s, iso, value, T.todayISO()));
+    App.afterChange();
+    var e = Rota.dayPlanOf(settingsOf(App), iso, App.store.getDay(iso), App.holiday(iso));
     D.toast(I.t(value === null ? "rota.restored" : "rota.changed", { date: shortDate(iso) }), {
       sub: planText(e),
       icon: "calendar",
@@ -629,8 +674,7 @@
     var s = settingsOf(App);
     var rota = Rota.normalize(s.rota);
     var tpls = s.shiftTemplates || [];
-    var rec = App.store.getDay(iso);
-    var current = rec && rec.plan ? rec.plan : null;
+    var current = overrideAt(App, iso);
     var baseId = Rota.cycleId(rota, iso);
     var baseTpl = Rota.findTemplate(tpls, baseId);
 
@@ -1343,8 +1387,9 @@
           run: function () { D.toast(I.t("rota.cmd.past"), { tone: "warn", icon: "info" }); } }];
       }
       var rota = rotaOf(App);
-      var rec = App.store.getDay(iso);
-      var e = Rota.dayPlan(iso, { rota: rota, templates: tpls, record: rec, holiday: App.holiday(iso) });
+      var e = Rota.dayPlan(iso, {
+        rota: rota, templates: tpls, override: overrideAt(App, iso), record: App.store.getDay(iso), holiday: App.holiday(iso)
+      });
       var currentId = Rota.hasShift(e) ? e.id : (e.free || e.off ? Rota.FREE : null);
       /* Ganz ausgeschrieben („plan 23.10. nacht“) ist es keine Auswahl mehr,
          sondern DIE Antwort auf die Eingabe: zweizeilig und zuoberst, Enter führt sie aus */
@@ -1361,7 +1406,7 @@
       }
       var out = [];
       var targets = cmd.target ? [cmd.target] : tpls.map(function (t) { return t.id; }).concat([Rota.FREE]);
-      if (!cmd.target && rec && rec.plan) targets.push("reset");
+      if (!cmd.target && overrideAt(App, iso)) targets.push("reset");
       targets.forEach(function (tg) {
         if (tg === Rota.FREE) { out.push(item(tg, I.t("rota.free"), "")); return; }
         if (tg === "reset") {

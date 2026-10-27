@@ -1226,8 +1226,9 @@
           m.dot = "minus";
           m.tone = "minus";
           m.timeTone = "mute";
-          m.note = D.esc(I.t("day.missingEndHint", { time: res.start }));
-          m.fix = true;
+          // Abgeschlossener Monat: nichts mehr nachzutragen (der Speicher nähme es nicht an)
+          m.fix = !(App.store.isLocked && App.store.isLocked(iso));
+          m.note = D.esc(I.t(m.fix ? "day.missingEndHint" : "day.missingEndLocked", { time: res.start }));
           break;
 
         case "absence":

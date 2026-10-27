@@ -424,7 +424,7 @@
     });
 
     refs.apply.addEventListener("click", function () {
-      if (!sc || idx < 0) return;
+      if (!sc || idx < 0 || isLocked(App, iso)) return;
       var p = sc.points[idx];
       memo = { iso: iso, tl: p.endTl, off: sc.lo + idx };
       App.saveDay(iso, { end: p.end });
@@ -744,5 +744,16 @@
     return { update: refresh };
   }
 
-  ZK.Ext.register("today.cards", { id: "whatif", order: 40, render: build });
+  /* Ein Tag eines abgeschlossenen Monats ändert sich nicht mehr — und bewegt
+     das Konto nicht: kein Schieber, kein „So eintragen“, keine Erinnerung. */
+  function isLocked(App, iso) {
+    return !!(App.store && App.store.isLocked && App.store.isLocked(iso));
+  }
+
+  ZK.Ext.register("today.cards", {
+    id: "whatif",
+    order: 40,
+    when: function (ctx) { return !isLocked(ctx.App, ctx.iso); },
+    render: build
+  });
 })(typeof self !== "undefined" ? self : this);

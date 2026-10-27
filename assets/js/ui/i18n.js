@@ -882,6 +882,17 @@
     "kbd.close": "Dialog oder Menü schliessen",
     "common.fileUnreadable": "Datei konnte nicht gelesen werden",
     "toast.storageFullSub": "Neue Eingaben gehen beim Schliessen verloren. Daten sichern und alte Jahre löschen.",
+    "lock.status": "abgeschlossen",
+    "lock.dayHint": "Monat abgeschlossen — bleibt, wie er ist",
+    "lock.skipped": "{n} Tage liegen in abgeschlossenen Monaten und bleiben unverändert.",
+    "lock.skipped.one": "1 Tag liegt in einem abgeschlossenen Monat und bleibt unverändert.",
+    "tools.qeErr.locked": "Diese Tage liegen in einem abgeschlossenen Monat. Zum Ändern zuerst den Monat wieder öffnen.",
+    "set.importClosingsKept": "Bestehende Abschlüsse beibehalten: {months}",
+    "set.importClosingsKept.one": "Bestehender Abschluss beibehalten: {months}",
+    "day.missingEndLocked": "Kommen um {time} ist erfasst, Gehen fehlt. Der Monat ist abgeschlossen — der Tag bleibt, wie er ist.",
+    "ol.closedTitle": "{n} Tage in abgeschlossenen Monaten",
+    "ol.closedTitle.one": "1 Tag in einem abgeschlossenen Monat",
+    "ol.closedHint": "Der Abgleich lässt sie unverändert. Wer den Kalender dort übernehmen will, öffnet zuerst den Monat wieder.",
   };
 
   /* ==================================================================== */
@@ -1589,6 +1600,17 @@
     "kbd.close": "Close dialog or menu",
     "common.fileUnreadable": "The file could not be read",
     "toast.storageFullSub": "New entries will be lost when you close the app. Back up your data and delete old years.",
+    "lock.status": "closed",
+    "lock.dayHint": "Month closed — stays as it is",
+    "lock.skipped": "{n} days are in closed months and stay as they are.",
+    "lock.skipped.one": "1 day is in a closed month and stays as it is.",
+    "tools.qeErr.locked": "These days are in a closed month. Reopen the month first to change them.",
+    "set.importClosingsKept": "Kept existing closings: {months}",
+    "set.importClosingsKept.one": "Kept existing closing: {months}",
+    "day.missingEndLocked": "Clock-in at {time} is recorded, clock-out is missing. The month is closed — the day stays as it is.",
+    "ol.closedTitle": "{n} days in closed months",
+    "ol.closedTitle.one": "1 day in a closed month",
+    "ol.closedHint": "The sync leaves them unchanged. To apply the calendar there, reopen the month first.",
   };
 
   /* ==================================================================== */
@@ -2296,6 +2318,17 @@
     "kbd.close": "Fermer le dialogue ou le menu",
     "common.fileUnreadable": "Impossible de lire le fichier",
     "toast.storageFullSub": "Les nouvelles saisies seront perdues à la fermeture. Sauvegardez puis supprimez les anciennes années.",
+    "lock.status": "clôturé",
+    "lock.dayHint": "Mois clôturé — reste inchangé",
+    "lock.skipped": "{n} jours sont dans des mois clôturés et restent inchangés.",
+    "lock.skipped.one": "1 jour est dans un mois clôturé et reste inchangé.",
+    "tools.qeErr.locked": "Ces jours sont dans un mois clôturé. Pour les modifier, rouvrez d'abord le mois.",
+    "set.importClosingsKept": "Clôtures existantes conservées : {months}",
+    "set.importClosingsKept.one": "Clôture existante conservée : {months}",
+    "day.missingEndLocked": "Arrivée à {time} saisie, départ manquant. Le mois est clôturé — le jour reste inchangé.",
+    "ol.closedTitle": "{n} jours dans des mois clôturés",
+    "ol.closedTitle.one": "1 jour dans un mois clôturé",
+    "ol.closedHint": "La synchronisation les laisse inchangés. Pour y reprendre le calendrier, rouvrez d'abord le mois.",
   };
 
   /* ==================================================================== */
@@ -3003,6 +3036,17 @@
     "kbd.close": "Chiudi finestra o menu",
     "common.fileUnreadable": "Impossibile leggere il file",
     "toast.storageFullSub": "I nuovi dati andranno persi alla chiusura. Esporta i dati ed elimina gli anni vecchi.",
+    "lock.status": "chiuso",
+    "lock.dayHint": "Mese chiuso — resta invariato",
+    "lock.skipped": "{n} giorni sono in mesi chiusi e restano invariati.",
+    "lock.skipped.one": "1 giorno è in un mese chiuso e resta invariato.",
+    "tools.qeErr.locked": "Questi giorni sono in un mese chiuso. Per modificarli, riapri prima il mese.",
+    "set.importClosingsKept": "Chiusure esistenti mantenute: {months}",
+    "set.importClosingsKept.one": "Chiusura esistente mantenuta: {months}",
+    "day.missingEndLocked": "Entrata alle {time} registrata, manca l'uscita. Il mese è chiuso — il giorno resta invariato.",
+    "ol.closedTitle": "{n} giorni in mesi chiusi",
+    "ol.closedTitle.one": "1 giorno in un mese chiuso",
+    "ol.closedHint": "La sincronizzazione li lascia invariati. Per riprendere lì il calendario, riapri prima il mese.",
   };
 
   /* ==================================================================== */

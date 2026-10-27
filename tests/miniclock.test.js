@@ -272,7 +272,7 @@ test("Texte in allen vier Sprachen, gleiche Platzhalter, Schweizer Schreibweise"
 test("Skript ist nach „Heute“ und vor dem App-Start eingebunden und im Offline-Paket", () => {
   const root = path.join(__dirname, "..");
   const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
-  const at = (f) => html.indexOf('<script src="' + f + '"></script>');
+  const at = (f) => html.search(new RegExp('<script src="' + f.replace(/\./g, "\\.") + '(\\?v=[^"]*)?"></script>'));
   assert.ok(at("assets/js/ui/features/miniclock.js") > at("assets/js/ui/views/today.js"));
   assert.ok(at("assets/js/ui/features/miniclock.js") < at("assets/js/ui/app.js"));
   assert.ok(at("assets/js/ui/views/today.js") > 0);

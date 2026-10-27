@@ -694,3 +694,85 @@ test("quotaUsage zählt unbezahlte Tage auf Arbeitstagen unter „other“", () 
   const q = E.quotaUsage({ "2026-08-03": { date: "2026-08-03", type: "unpaid" } }, 2026, settings());
   assert.equal(q.other, 1);
 });
+
+/* ---------------------------------------------------------------------- */
+/* Gemeinsame Definitionen: Lücken, Erfassungsbeginn, Ø Beginn/Feierabend  */
+/* ---------------------------------------------------------------------- */
+
+const NOW_OCT = new Date(2026, 9, 16, 14, 23);     // Fr 16.10.2026
+const workRec = (date, start, end) => ({ date, start, end, breaks: [{ id: "m", start: "12:00", end: "12:30" }] });
+
+test("Lücken zählen erst ab dem Erfassungsbeginn", () => {
+  const days = { "2026-10-12": workRec("2026-10-12", "08:00", "17:00") };
+  const get = (iso) => days[iso];
+  const all = E.computeRange("2026-10-01", "2026-10-15", get, settings(), NOW_OCT);
+  assert.equal(all.totals.gapDays, 10, "ohne Angabe: jeder leere Arbeitstag");
+  const since = E.computeRange("2026-10-01", "2026-10-15", get, settings(), NOW_OCT, { since: "2026-10-12" });
+  assert.deepEqual(since.totals.gaps, ["2026-10-13", "2026-10-14", "2026-10-15"]);
+  const none = E.computeRange("2026-10-01", "2026-10-15", () => undefined, settings(), NOW_OCT, { since: null });
+  assert.equal(none.totals.gapDays, 0, "noch kein eigener Eintrag: keine Lücken");
+});
+
+test("Ein Tag ohne Gehen ist offen, keine Lücke", () => {
+  const days = {
+    "2026-10-13": workRec("2026-10-13", "08:00", "17:00"),
+    "2026-10-14": { date: "2026-10-14", start: "07:05", end: "", breaks: [] }
+  };
+  const r = E.computeRange("2026-10-13", "2026-10-15", (iso) => days[iso], settings(), NOW_OCT, { since: "2026-10-13" });
+  assert.equal(r.days[1].incomplete, true);
+  assert.deepEqual(r.totals.gaps, ["2026-10-15"]);
+  assert.equal(E.isGap(r.days[1], "2026-10-16", "2026-10-01"), false);
+  assert.equal(E.isGap(r.days[2], "2026-10-16", "2026-10-01"), true);
+  assert.equal(E.isGap(r.days[2], "2026-10-16", "2026-10-16"), false, "vor dem Erfassungsbeginn");
+  assert.equal(E.isGap(r.days[2], "2026-10-15", "2026-10-01"), false, "heute ist noch keine Lücke");
+});
+
+test("Erfassungsbeginn: erster eigener Eintrag, früherer App-Start, frühestens Kontobeginn", () => {
+  const days = {
+    "2026-09-01": { date: "2026-09-01", type: "vacation", source: "outlook" },
+    "2026-09-14": workRec("2026-09-14", "08:00", "17:00")
+  };
+  assert.equal(E.trackingStart({}, settings(), null), null);
+  assert.equal(E.trackingStart(days, settings(), null), "2026-09-14", "aus Outlook übernommen zählt nicht");
+  assert.equal(E.trackingStart(days, settings(), { createdAt: "2026-09-07T06:00:00Z" }), "2026-09-07");
+  assert.equal(E.trackingStart(days, settings(), { createdAt: "2026-09-20T06:00:00Z" }), "2026-09-14");
+  assert.equal(E.trackingStart(days, settings({ carryOverFrom: "2026-09-21" }), { createdAt: "2026-09-07T06:00:00Z" }), "2026-09-21");
+  assert.equal(E.trackingStart(days, settings(), { createdAt: "kaputt" }), "2026-09-14");
+});
+
+test("Ø Beginn und Feierabend ohne Nachtschicht — sie wird gezählt, nicht gemittelt", () => {
+  const days = {
+    "2026-10-05": workRec("2026-10-05", "07:40", "17:00"),
+    "2026-10-06": workRec("2026-10-06", "08:10", "17:20"),
+    "2026-10-07": { date: "2026-10-07", start: "22:00", end: "06:00", breaks: [{ id: "n", start: "02:00", end: "02:30" }] }
+  };
+  const t = E.computeRange("2026-10-05", "2026-10-07", (iso) => days[iso], settings(), NOW_OCT).totals;
+  assert.equal(t.avgStart, 475, "07:55 aus 07:40 und 08:10, nicht 12:37 mit der Nacht");
+  assert.equal(t.avgEnd, 1030);
+  assert.equal(t.nightShifts, 1);
+  assert.equal(t.shiftWork, false);
+  assert.equal(t.latestEnd, 30 * 60, "späteste bleibt die echte: 06:00 am Folgetag");
+});
+
+test("Wechselnde Schichten ergeben keinen Ø Beginn (statt „18:00“)", () => {
+  // Oktober eines Dreischicht-Plans: 2 × Spät, 5 × Nacht, 1 × Früh
+  const plan = [["2026-10-01", "14:00", "22:30"], ["2026-10-02", "14:00", "22:30"],
+    ["2026-10-05", "22:00", "06:00"], ["2026-10-06", "22:00", "06:00"], ["2026-10-07", "22:00", "06:00"],
+    ["2026-10-08", "22:00", "06:00"], ["2026-10-09", "22:00", "06:00"], ["2026-10-12", "06:00", "14:30"]];
+  const days = {};
+  plan.forEach(([d, a, b]) => { days[d] = { date: d, start: a, end: b, breaks: [] }; });
+  const t = E.computeRange("2026-10-01", "2026-10-15", (iso) => days[iso], settings(), NOW_OCT).totals;
+  assert.equal(t.shiftWork, true);
+  assert.equal(t.avgStart, null);
+  assert.equal(t.avgEnd, null);
+  // Früh und Spät ohne Nächte streuen ebenso zu stark für einen Mittelwert
+  const twoShift = E.clockAverages([
+    { net: 480, startTod: 360, endTl: 870, complete: true }, { net: 480, startTod: 840, endTl: 1350, complete: true },
+    { net: 480, startTod: 360, endTl: 870, complete: true }, { net: 480, startTod: 840, endTl: 1350, complete: true }
+  ]);
+  assert.equal(twoShift.shifts, true);
+  // Gleitzeit zwischen 07:00 und 09:00 ist dagegen ein ganz normaler Schnitt
+  const flex = E.clockAverages([420, 450, 480, 510, 540].map((s) => ({ net: 480, startTod: s, endTl: s + 510, complete: true })));
+  assert.equal(flex.shifts, false);
+  assert.equal(flex.avgStart, 480);
+});

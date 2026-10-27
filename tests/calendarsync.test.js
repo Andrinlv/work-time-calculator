@@ -314,8 +314,15 @@ test("buildPatch löscht mit null", () => {
 });
 
 test("buildPatch rührt bei Ortsänderung nichts anderes an", () => {
-  const patch = C.buildPatch([{ date: "2026-08-05", action: "location", location: "home" }]);
+  const before = { type: null, factor: 1, start: "08:00", end: "17:00", location: "office", source: null, edited: false };
+  const patch = C.buildPatch([{ date: "2026-08-05", action: "location", location: "home", before }]);
   assert.deepEqual(Object.keys(patch["2026-08-05"]).sort(), ["location", "outlookSyncedAt"]);
+});
+
+test("buildPatch: ein neuer Datensatz nur für den Ort gehört dem Kalender", () => {
+  const patch = C.buildPatch([{ date: "2026-08-05", action: "location", location: "home", before: null }]);
+  assert.deepEqual(Object.keys(patch["2026-08-05"]).sort(), ["location", "outlookSyncedAt", "source"]);
+  assert.equal(patch["2026-08-05"].source, C.SOURCE);
 });
 
 /* ====================================================================== */

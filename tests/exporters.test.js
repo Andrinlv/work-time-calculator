@@ -381,3 +381,52 @@ test("Auch ohne Rohdaten (nur Berechnungsergebnis) bleibt der Saldo beim Wiedere
   Object.keys(res.days).forEach((iso) => { restored[iso] = Object.assign({ date: iso }, res.days[iso]); });
   assert.equal(rangeWith(restored, settings).totals.balance, before.totals.balance);
 });
+
+test("CSV schützt auch Kommen, Gehen und Pausenzeiten aus einer Sicherung vor Formeln", () => {
+  // Solche Werte übersteht store.cleanDay beim Einlesen einer JSON-Sicherung (beliebiger Text)
+  const days = {
+    "2026-08-03": { date: "2026-08-03", start: "=HYPERLINK(\"http://x\")", end: "-2+3", breaks: [{ id: "a", start: "+1", end: "@SUM(1)" }] },
+    "2026-08-04": { date: "2026-08-04", start: "08:00", end: "17:00", breaks: [{ id: "b", start: "12:00", end: "12:30" }] }
+  };
+  const csv = X.toCSV(buildRange(days).days, { getRecord: (iso) => days[iso] || null });
+  const lines = csv.replace(/^﻿/, "").split("\r\n");
+  const bad = splitRespectingQuotes(lines.filter((l) => l.startsWith("2026-08-03"))[0], ";");
+  const col = (id) => X.CSV_COLUMNS.findIndex((c) => c[0] === id);
+  [col("start"), col("end"), col("breakTimes")].forEach((i) => {
+    const cell = bad[i].replace(/^"|"$/g, "");
+    assert.ok(cell === "" || cell.charAt(0) === "'", "Zelle beginnt nicht mit einer Formel: " + bad[i]);
+  });
+  assert.equal(bad[col("end")], "'-2+3");
+  // Gewöhnliche Zeiten bleiben unverändert — und kommen beim Einlesen genau so zurück
+  const ok = splitRespectingQuotes(lines.filter((l) => l.startsWith("2026-08-04"))[0], ";");
+  assert.equal(ok[col("start")], "08:00");
+  assert.equal(ok[col("breakTimes")], "12:00-12:30");
+  const rows = X.parseCSV(csv).rows;
+  const back = rows.filter((r) => r.date === "2026-08-04")[0];
+  assert.equal(back.start, "08:00");
+  assert.deepEqual(back.breakTimes, [{ start: "12:00", end: "12:30", paid: false }]);
+  // Der Import entfernt den Schutz-Apostroph: dasselbe Ergebnis wie ohne ihn
+  const raw = X.parseCSV("Datum;Kommen;Gehen\r\n2026-08-03;-2+3;-2+3").rows[0];
+  const escaped = rows.filter((r) => r.date === "2026-08-03")[0];
+  assert.equal(escaped.end, raw.end);
+  const quoted = X.parseCSV("Datum;Kommen;Gehen;Pausenzeiten (* bezahlt)\r\n2026-08-05;'=07:30;'+16:30;'-12:00-12:30*").rows[0];
+  assert.deepEqual(quoted.breakTimes, [{ start: "12:00", end: "12:30", paid: true }]);
+});
+
+test("Textzusammenfassung und Kalender übernehmen übersetzte Texte, ohne Texte bleibt Deutsch", () => {
+  const range = buildRange(SAMPLE);
+  const text = { title: "ZEITKONTO · {from} to {to}", net: "Net", target: "Target", actual: "Actual", balance: "Balance",
+    breaks: "Breaks", days: "Days", daysLine: "{recorded} recorded · {worked} worked", netOf: "{v} net" };
+  const weekdays = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const txt = X.toText(range, { labels: { work: "Work", vacation: "Vacation" }, weekdays, text, formatDate: (iso) => iso.split("-").reverse().join("/") });
+  assert.ok(txt.startsWith("ZEITKONTO · 03/08/2026 to 04/08/2026"), txt);
+  assert.ok(txt.indexOf("Mon") >= 0 && txt.indexOf("[Vacation]") >= 0);
+  assert.ok(/^Balance\s+\+0:06$/m.test(txt), txt);
+  assert.ok(/^Days\s+2 recorded · 1 worked$/m.test(txt), txt);
+  const ics = X.toICS(range.days, { labels: { work: "Work" }, text }).replace(/\r\n /g, "");
+  assert.ok(ics.indexOf("SUMMARY:Work · 8:30 net") >= 0, ics);
+  assert.ok(ics.indexOf("DESCRIPTION:Net 8:30 · Target 8:24 · Balance +0:06 · Breaks 30 min") >= 0, ics);
+  // Ohne übersetzte Texte wie bisher Deutsch
+  assert.ok(X.toText(range, {}).indexOf("ZEITKONTO · 2026-08-03 bis 2026-08-04") === 0);
+  assert.ok(X.toICS(range.days, {}).indexOf("Netto 8:30 · Soll 8:24") >= 0);
+});

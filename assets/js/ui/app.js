@@ -15,7 +15,7 @@
   var E = ZK.Engine;
   var I = ZK.I18n;
 
-  var APP_VERSION = "1.2.0";
+  var APP_VERSION = "1.3.0";
 
   ZK.Views = ZK.Views || {};
 
@@ -77,29 +77,60 @@
     return E.activeShiftDate(function (iso) { return store.getDay(iso); });
   };
 
-  App.range = function (from, to) {
-    return E.computeRange(from, to, function (iso) { return store.getDay(iso); }, App.settings());
+  /** opts geht an E.computeRange — { since: Erfassungsbeginn } für die Lücken. */
+  App.range = function (from, to, opts) {
+    return E.computeRange(from, to, function (iso) { return store.getDay(iso); }, App.settings(), undefined, opts);
   };
 
   /* ---- Kontostand, je Datenstand nur einmal gerechnet ----------------
-     accountBalance() geht über alle erfassten Tage; Kopfzeile, Statistik
-     und Berichte fragen ihn bei jedem Zeichnen ab. Der Zwischenspeicher
-     gilt, bis der Store eine Änderung meldet, der Tag wechselt oder eine
-     Minute vergeht (ein laufender Tag ändert sich minütlich). */
+     accountBalance() geht über alle erfassten Tage — auf einem Handy mit
+     fünf Jahren Daten ein spürbarer Brocken. Kopfzeile, Statistik und
+     Berichte fragen ihn bei jedem Zeichnen ab, je Stichtag. Deshalb ein
+     Zwischenspeicher je Stichtag: Eine Änderung an einem Tag macht nur die
+     Stände ab diesem Tag ungültig. Gestempelt wird fast immer heute — der
+     Saldo bis gestern (Kopfzeile) bleibt dann einfach stehen. Einstellungen,
+     Import, Rückgängig usw. leeren ihn ganz. Nach der Uhr richtet sich ein
+     Stand nur, solange ein Tag darin noch läuft (heute oder die Nachtschicht
+     von gestern): dann gilt er eine Minute lang, sonst den ganzen Tag. */
   var dataRev = 0;
-  var balanceCache = { stamp: null, values: {} };
+  var achEvents = 0;
+  var balances = {};
 
   store.subscribe(function (evt) {
-    if (evt && (evt.type === "error" || evt.type === "achievements")) return;
+    if (evt && evt.type === "achievements") { achEvents++; return; }
+    if (evt && evt.type === "error") return;
     dataRev++;
+    forgetBalances(evt);
   });
+
+  function forgetBalances(evt) {
+    var from = null;
+    if (evt && evt.type === "day" && evt.date) from = evt.date;
+    else if (evt && evt.type === "external" && !evt.settings && evt.days && evt.days.length) from = evt.days.slice().sort()[0];
+    if (from === null) { balances = {}; return; }
+    Object.keys(balances).forEach(function (k) { if (balances[k].upto >= from) delete balances[k]; });
+  }
 
   /** Zähler, der bei jeder Daten- oder Einstellungsänderung steigt —
       der des Stores (zählt auch Übernahmen aus anderen Fenstern) plus ein
-      eigener für Laden und ältere Store-Stände ohne rev(). */
+      eigener für Laden und ältere Store-Stände ohne rev(). Die Buchhaltung
+      der Abzeichen zählt nicht: Sie ändert keine Daten, würde aber jeden
+      Zwischenspeicher leeren, der sich nach diesem Zähler richtet. */
   App.dataRevision = function () {
-    return (typeof store.rev === "function" ? store.rev() : 0) + "/" + dataRev;
+    return (typeof store.rev === "function" ? store.rev() - achEvents : 0) + "/" + dataRev;
   };
+
+  /** Gültigkeit eines Kontostands bis `until`: der Tag — und die Minute, solange darin ein Tag läuft. */
+  function balanceStamp(until, now) {
+    var today = T.todayISO(now);
+    if (until < T.addDays(today, -1)) return today;
+    var open = function (iso) {
+      var r = store.getDay(iso);
+      return !!r && !!String(r.start || "").trim() && !String(r.end || "").trim();
+    };
+    var live = (until >= today && open(today)) || open(T.addDays(today, -1));
+    return live ? today + "|" + now.getHours() + ":" + now.getMinutes() : today;
+  }
 
   /**
    * @param {String} [upto]  einschliesslich, Standard heute
@@ -109,13 +140,17 @@
    */
   App.accountBalance = function (upto, opts) {
     var now = new Date();
-    var stamp = App.dataRevision() + "|" + T.todayISO(now) + "|" + now.getHours() + ":" + now.getMinutes();
-    if (balanceCache.stamp !== stamp) balanceCache = { stamp: stamp, values: {} };
-    var key = (upto || "") + "|" + (opts && opts.includeRunning ? "run" : "");
-    if (!balanceCache.values[key]) {
-      balanceCache.values[key] = (ZK.Closing ? ZK.Closing.accountBalance : E.accountBalance)(store.allDays(), App.settings(), upto, undefined, opts);
+    var until = upto || T.todayISO(now);
+    var key = until + "|" + (opts && opts.includeRunning ? "run" : "");
+    var stamp = balanceStamp(until, now);
+    var hit = balances[key];
+    if (!hit || hit.stamp !== stamp) {
+      hit = balances[key] = {
+        upto: until, stamp: stamp,
+        value: (ZK.Closing ? ZK.Closing.accountBalance : E.accountBalance)(store.allDays(), App.settings(), upto, undefined, opts)
+      };
     }
-    return Object.assign({}, balanceCache.values[key]);
+    return Object.assign({}, hit.value);
   };
 
   /**
@@ -192,8 +227,15 @@
   /* Navigation                                                          */
   /* ================================================================== */
 
+  /* Nur eigene Einträge von ZK.Views sind Ansichten — „#/constructor“ oder
+     „#/toString“ fänden sonst Object.prototype und hielten den Start an. */
+  function isView(key) {
+    return typeof key === "string" && Object.prototype.hasOwnProperty.call(ZK.Views, key) &&
+      !!ZK.Views[key] && typeof ZK.Views[key].render === "function";
+  }
+
   App.go = function (view, opts) {
-    if (!ZK.Views[view]) view = "today";
+    if (!isView(view)) view = "today";
     var fromDrawer = navIsOpen();
     App.view = view;
     if (opts && opts.date) App.date = opts.date;
@@ -230,7 +272,7 @@
   function readHash() {
     var m = /^#\/([a-z]+)(?:\/(\d{4}-\d{2}-\d{2}))?/.exec(location.hash || "");
     if (!m) return false;
-    if (ZK.Views[m[1]]) App.view = m[1];
+    if (isView(m[1])) App.view = m[1];
     if (!m[2] || !T.isValidISO(m[2])) return false;
     /* Kalender und Woche schreiben ihre Blätterposition in die Adresse.
        Die gilt nur für sie — sonst öffnete „Heute“ nach dem Neuladen auf
@@ -298,7 +340,8 @@
      je Datenstand, nicht bei jedem Zeichnen der Navigation. */
   var diagCache = { rev: -1, value: null };
   function diagnostics() {
-    var rev = App.dataRevision();
+    // Nach dem Store-Zähler: Auch die Abzeichen belegen Speicher
+    var rev = (typeof store.rev === "function" ? store.rev() : 0) + "/" + dataRev;
     if (diagCache.rev !== rev || !diagCache.value) diagCache = { rev: rev, value: store.diagnostics() };
     return diagCache.value;
   }
@@ -627,6 +670,19 @@
   /* ---- Erinnerung, bevor die Pflichtpause fällig wird ---------------- */
   var breakWarnedAt = null;
 
+  /**
+   * Nächste Pausenstufe, deren Pause noch nicht erfasst ist — oder null.
+   * Die Staffeln gelten für die Arbeitszeit (ohne Pausen), und jede Pause
+   * zählt mit, auch eine bezahlte (legalBreak).
+   */
+  function pendingBreakTier(res, s) {
+    var worked = res.workingTime !== undefined ? res.workingTime : res.presence;
+    var tier = R.nextBreakTier(worked, s.breakRuleset, s.customBreakTiers);
+    if (!tier) return null;
+    if ((res.legalBreak !== undefined ? res.legalBreak : res.breakTotal) >= tier.require) return null;   // Pause ist schon erfasst
+    return tier;
+  }
+
   function checkBreakDue() {
     var s = App.settings();
     if (s.breakReminder === false) return;
@@ -636,13 +692,10 @@
     if (!res.running) { breakWarnedAt = null; return; }
 
     if (res.openBreak) return;                         // gerade in der Pause
-    /* Die Staffeln gelten für die Arbeitszeit (ohne Pausen), und jede
-       Pause zählt mit, auch eine bezahlte (legalBreak). */
-    var worked = res.workingTime !== undefined ? res.workingTime : res.presence;
-    var tier = R.nextBreakTier(worked, s.breakRuleset, s.customBreakTiers);
+    var tier = pendingBreakTier(res, s);
     if (!tier) return;
-    if ((res.legalBreak !== undefined ? res.legalBreak : res.breakTotal) >= tier.require) return;   // Pause ist schon erfasst
 
+    var worked = res.workingTime !== undefined ? res.workingTime : res.presence;
     var minutesToTier = tier.over - worked;
     if (minutesToTier > 10 || minutesToTier < 0) return;
     if (breakWarnedAt === tier.over) return;         // je Stufe nur einmal
@@ -699,13 +752,13 @@
        zuerst sichern — vor dem Abriss, auch beim Wechsel der Ansicht.
        Löst das Sichern selbst ein Neuzeichnen aus, übernimmt das dieser
        Aufruf hier. */
-    var leaving = renderedView && ZK.Views[renderedView];
+    var leaving = renderedView && isView(renderedView) ? ZK.Views[renderedView] : null;
     if (leaving && typeof leaving.flush === "function") {
       flushingView = true;
       try { leaving.flush(); } catch (e) { if (root.console) console.error(e); }
       finally { flushingView = false; }
     }
-    var key = ZK.Views[App.view] ? App.view : "today";
+    var key = isView(App.view) ? App.view : "today";
     var refresh = renderedView === key && !!host.firstChild;
     var firstEver = renderedView === null;
     renderedView = key;
@@ -1261,13 +1314,34 @@
     App.setDate(App.activeStampDate(), { view: "today" });
     if (kind === "toggle") App.stampSmart();
     else App.stamp(kind);
-    if (navigator.vibrate) { try { navigator.vibrate(40); } catch (e) { /* egal */ } }
+    // Ohne Berührung der Seite (NFC, frisch geöffnet) blockiert der Browser — und meckert in der Konsole
+    var touched = !navigator.userActivation || navigator.userActivation.hasBeenActive;
+    if (navigator.vibrate && touched) { try { navigator.vibrate(40); } catch (e) { /* egal */ } }
     return true;
   };
 
   App.stampLink = function (kind) {
     return location.href.split("#")[0] + "#/stamp" + (kind && kind !== "toggle" ? "/" + kind : "");
   };
+
+  /* ---- Knopf einer Benachrichtigung ohne offenes Fenster --------------
+     sw.js öffnet dann #/notify/<Knopf>/<Tag>/<gezeigt um, ms> — nie einen
+     Direktlink, der sofort stempelt. Der Link wird wie ein Klick bei
+     offenem Fenster geprüft (App.handleNotificationAction): Passt er nicht
+     mehr, zeigt die App nur den Tag mit einem Hinweis. Auch er verschwindet
+     sofort aus der Adresse — ein Neuladen wiederholt nichts. */
+  function takeNoticeLink() {
+    var m = /^#\/notify(?:\/([a-z-]*))?(?:\/([0-9-]*))?(?:\/(\d*))?/.exec(location.hash || "");
+    if (!m) return null;
+    try { history.replaceState(null, "", location.pathname + location.search + "#/today"); }
+    catch (e) { location.hash = "#/today"; }
+    App.view = "today";
+    return { action: m[1] || "", date: T.isValidISO(m[2]) ? m[2] : "", at: +m[3] || 0 };
+  }
+
+  function runNoticeLink(link) {
+    if (link) App.handleNotificationAction(link.action, { kind: "", date: link.date, at: link.at, link: true });
+  }
 
   App.copyPreviousDay = function () {
     var iso = App.date;
@@ -1355,9 +1429,18 @@
 
   var achTimer = null;
 
+  /* Die Prüfung geht über alle Tage (auf einem älteren Handy mit Jahren an
+     Daten eine Viertelsekunde). Sie wartet deshalb, bis das Stempeln
+     gezeichnet ist und der Browser Luft hat — spätestens nach 2 s. Mehrere
+     Änderungen kurz hintereinander prüfen nur einmal. */
+  function whenIdle(fn) {
+    if (typeof root.requestIdleCallback === "function") root.requestIdleCallback(function () { fn(); }, { timeout: 1500 });
+    else fn();
+  }
+
   function scheduleAchievementCheck() {
     clearTimeout(achTimer);
-    achTimer = setTimeout(App.checkAchievements, 500);
+    achTimer = setTimeout(function () { achTimer = null; whenIdle(App.checkAchievements); }, 500);
   }
 
   /* Die Kennzahlen laufen über alle Tage. Je Datenstand (und Minute, wegen
@@ -1434,6 +1517,7 @@
     var iso = App.activeStampDate();
     var res = App.day(iso);
     if (!res.running) endLeaveReminder();          // gegangen: Erinnerung erledigt
+    tidyNotices(iso, res);
     if (!s.reminderEnabled) return;
     if (!res.running || res.recommendedLeaveTl === null) return;
 
@@ -1569,17 +1653,52 @@
       .catch(function () { /* nichts zu schliessen */ });
   };
 
+  /** Stand des aktiven Stempeltags, an dem Benachrichtigungen gemessen werden (ZK.BreakTimer.route/staleNotice). */
+  function noticeState(iso, res) {
+    var onBreak = !!(res.running && res.openBreak);
+    return {
+      date: iso,
+      running: !!res.running,
+      onBreak: onBreak,
+      breakDue: !!(res.running && !onBreak && pendingBreakTier(res, App.settings())),
+      now: Date.now(),
+      changedAt: ZK.BreakTimer && ZK.BreakTimer.stampedAt ? ZK.BreakTimer.stampedAt(iso, store.getDay(iso)) : 0
+    };
+  }
+
   /**
-   * Knopf oder Klick aus einer Benachrichtigung. Erst prüfen, ob er noch
-   * passt (ZK.BreakTimer.route) — eine alte Meldung darf nicht stempeln.
-   * info: { kind, date } aus der Benachrichtigung.
+   * Meldungen, deren Anlass vorbei ist, aus der Leiste nehmen — auch die
+   * einer früheren Instanz (Tab verworfen, Update): Gegangen, Pause beendet,
+   * Pause genommen, seither gestempelt oder zu alt.
+   */
+  function tidyNotices(iso, res) {
+    var BT = ZK.BreakTimer;
+    if (!BT || !BT.staleNotice) return;
+    var state = noticeState(iso, res);
+    Object.keys(pageNotices).forEach(function (tag) {
+      if (BT.staleNotice(tag, pageNotices[tag].data, state)) App.closeNotice(tag);
+    });
+    if (!swActive()) return;
+    navigator.serviceWorker.ready
+      .then(function (reg) { return reg.getNotifications ? reg.getNotifications() : []; })
+      .then(function (list) {
+        list.forEach(function (n) { if (BT.staleNotice(n.tag, n.data, state)) n.close(); });
+      })
+      .catch(function () { /* nichts zu schliessen */ });
+  }
+
+  /**
+   * Knopf oder Klick aus einer Benachrichtigung — aus dem offenen Fenster
+   * (Nachricht von sw.js) oder als Link #/notify/… Erst prüfen, ob er noch
+   * passt (ZK.BreakTimer.route): Eine alte Meldung darf nicht stempeln.
+   * info: { kind, date, at, link } aus der Benachrichtigung.
    */
   App.handleNotificationAction = function (action, info) {
     info = info || {};
     var iso = App.activeStampDate();
     var res = App.day(iso);
     var BT = ZK.BreakTimer;
-    var r = BT ? BT.route(action, info, { date: iso, running: !!res.running, onBreak: !!(res.running && res.openBreak) }) : { open: true };
+    var r = BT ? BT.route(action, info, noticeState(iso, res)) : { open: true };
     if (r.snooze) {
       // „+15 min“ holt die App nicht nach vorne und wechselt keine Ansicht
       if (r.kind === "break") { if (BT.snoozeBreak) BT.snoozeBreak(r.snooze); }
@@ -1600,7 +1719,7 @@
         if (!d || d.type !== "notification-action") return;
         (function run() {
           if (!App.booted) { setTimeout(run, 120); return; }
-          App.handleNotificationAction(String(d.action || ""), { kind: d.kind, date: d.date });
+          App.handleNotificationAction(String(d.action || ""), { kind: d.kind, date: d.date, at: +d.at || 0 });
         })();
       });
     }
@@ -2011,6 +2130,7 @@
   App.boot = function () {
     store.load();
     dataRev++;
+    balances = {};
 
     /* Erster Start: Die Standardeinstellungen tragen schon „de“, ohne dass
        das jemand gewählt hat. Solange weder die Einrichtung durchlaufen
@@ -2037,6 +2157,7 @@
     }
 
     var linkAction = takeLinkAction();
+    var noticeLink = takeNoticeLink();
     var dateFromHash = readHash();
     // Läuft eine Nachtschicht vom Vortag, zeigt „Heute“ diese Schicht
     if (!dateFromHash && App.activeStampDate() !== App.date) App.date = App.activeStampDate();
@@ -2049,10 +2170,12 @@
 
     window.addEventListener("hashchange", function () {
       var action = takeLinkAction();
-      if (!action) readHash();
+      var notice = action ? null : takeNoticeLink();
+      if (!action && !notice) readHash();
       App.renderChrome();
       App.renderView();
       if (action) App.runLinkAction(action);
+      runNoticeLink(notice);
     });
 
     document.addEventListener("keydown", onKeydown);
@@ -2128,17 +2251,19 @@
     }
 
     if (linkAction) setTimeout(function () { App.runLinkAction(linkAction); }, 60);
+    if (noticeLink) setTimeout(function () { runNoticeLink(noticeLink); }, 60);
 
     setTimeout(function () {
       if (store.dayCount() > 0) App.requestPersistence(false);
       else App.refreshStorageInfo();
       if (store.getMeta().recoveredFromCorruption) offerRecovery();
       else App.runOnboarding();
-      App.checkAchievements();
       App.scheduleReminder();
       store.makeBackup();
       App.autoSyncOutlook();
       App.checkBackupReminder();
+      // Die Abzeichen über alle Tage in einem eigenen Schritt, sobald der Browser Luft hat
+      whenIdle(App.checkAchievements);
     }, 320);
   };
 

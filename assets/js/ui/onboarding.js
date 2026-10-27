@@ -461,7 +461,8 @@
       content.appendChild(preview);
 
       function previewText() {
-        var weekly = draft.weeklyTargets.reduce(function (a, b) { return a + b; }, 0) * (draft.workloadPercent / 100);
+        // Wochensoll wie überall: Summe der gerundeten Tagessollzeiten
+        var weekly = R.weeklyTargetMinutes(draft);
         var perDay = draft.weeklyTargets[workdays[0]] * (draft.workloadPercent / 100);
         return I.t("set.weeklyTotal") + ": " + T.formatDuration(Math.round(weekly), "clock") +
           " · " + I.t("day.target") + ": " + T.formatDuration(Math.round(perDay), "clock");

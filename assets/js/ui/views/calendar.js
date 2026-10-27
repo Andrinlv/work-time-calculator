@@ -40,31 +40,14 @@
     return res.startTod !== null && res.startTod !== undefined && res.endTod === null && !res.complete;
   }
 
-  function isoOf(dateLike) {
-    var d = new Date(dateLike);
-    return isNaN(d.getTime()) ? null : T.todayISO(d);
-  }
-
   /**
-   * Ab wann fehlende Arbeitstage als Lücke gelten. Vor dem ersten eigenen
-   * Eintrag (bzw. dem Start der App) gibt es nichts zu vermissen — sonst
-   * sieht jemand gleich nach dem Einrichten elf rote Striche. Der Kontostart
-   * (carryOverFrom) ist die Untergrenze. Ohne jeden eigenen Eintrag: keine Lücken.
-   * Aus Outlook übernommene Abwesenheiten zählen nicht als „angefangen“.
+   * Ab wann fehlende Arbeitstage als Lücke gelten — Engine.trackingStart,
+   * dieselbe Regel wie in Statistik, Rapport, Monatscheck und Lückenhilfe:
+   * erster eigener Eintrag bzw. Start der App, frühestens Kontobeginn.
+   * Ohne jeden eigenen Eintrag: keine Lücken.
    */
   function trackingStart(days, settings, meta) {
-    var first = null;
-    Object.keys(days || {}).forEach(function (iso) {
-      var rec = days[iso];
-      if (!rec || rec.source === "outlook" || !T.isValidISO(iso)) return;
-      if (first === null || iso < first) first = iso;
-    });
-    if (!first) return null;
-    var created = meta && meta.createdAt ? isoOf(meta.createdAt) : null;
-    var begin = created && created < first ? created : first;
-    var from = settings && settings.carryOverFrom && T.isValidISO(settings.carryOverFrom) ? settings.carryOverFrom : null;
-    if (from && from > begin) begin = from;
-    return begin;
+    return ZK.Engine.trackingStart(days, settings, meta);
   }
 
   /** running | incomplete | recorded | gap | empty */
@@ -72,7 +55,7 @@
     if (isProvisional(res)) return "running";
     if (isIncomplete(res)) return "incomplete";
     if (res.recorded) return "recorded";
-    if (res.target > 0 && res.date < today && start && res.date >= start) return "gap";
+    if (ZK.Engine.isGap(res, today, start || null)) return "gap";
     return "empty";
   }
 
@@ -867,10 +850,12 @@
         plan.list.forEach(function (iso) {
           patch[iso] = { type: chosen, absenceFactor: f, start: "", end: "", breaks: [] };
         });
-        App.store.setDays(patch, { label: "bulk" });
+        // Gemeldet wird, was der Speicher angenommen hat
+        var written = App.store.setDays(patch, { label: "bulk" }).written;
         App.afterChange();
         m.close();
-        D.toast(I.tn("cal.bulkDone", plan.list.length), {
+        if (!written) return;
+        D.toast(I.tn("cal.bulkDone", written), {
           tone: "plus",
           action: { label: I.t("common.undo"), onClick: function () { App.undo(); } }
         });
@@ -901,13 +886,15 @@
     /** Welche Tage würden gesetzt — und welche davon tragen schon Zeiten? */
     function compute() {
       var from = fromField.input.value, to = toField.input.value;
-      var plan = { list: [], timed: [], credit: 0 };
+      var plan = { list: [], timed: [], credit: 0, locked: 0 };
       if (!T.isValidISO(from) || !T.isValidISO(to) || from > to) return plan;
       var days = T.rangeDays(from, to);
       if (days.length > 400) return plan;
       days.forEach(function (iso) {
         var res = App.day(iso);
         if (skip.input.checked && !(res.baseTarget > 0 && !res.holiday)) return;
+        // Abgeschlossene Monate nehmen nichts mehr an: übersprungen und benannt
+        if (App.store.isLocked && App.store.isLocked(iso)) { plan.locked++; return; }
         var rec = App.record(iso);
         var hasTimes = !!(rec.start || rec.end || (rec.breaks || []).some(function (b) { return b.start || b.end; }));
         if (hasTimes) plan.timed.push(iso);
@@ -922,7 +909,8 @@
       var plan = compute();
       summary.innerHTML = D.icon("info") + "<div><strong>" +
         D.esc(plan.list.length ? I.tn("cal.bulkPreview", plan.list.length) : I.t("cal.bulkNone")) + "</strong>" +
-        (plan.credit ? '<div class="sub">' + D.esc(I.t("day.credited") + " " + App.fmt(plan.credit)) + "</div>" : "") + "</div>";
+        (plan.credit ? '<div class="sub">' + D.esc(I.t("day.credited") + " " + App.fmt(plan.credit)) + "</div>" : "") +
+        (plan.locked ? '<div class="sub">' + D.esc(I.tn("lock.skipped", plan.locked)) + "</div>" : "") + "</div>";
       if (plan.timed.length) {
         conflict.hidden = false;
         conflict.innerHTML = D.icon("alert") + "<div><strong>" + D.esc(I.tn("cal.bulkConflicts", plan.timed.length)) + "</strong>" +

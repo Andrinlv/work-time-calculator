@@ -184,6 +184,11 @@
     var detected = options.backend ? { backend: options.backend, full: false } : detectBackend();
     var backend = detected.backend;
     var defaults = options.defaultSettings || function () { return {}; };
+    /* Prüfer für die Einstellungen (R.sanitizeSettings): beim Laden und beim
+       Einlesen — eine Stelle, damit kaputte Werte aus einer Sicherung keine
+       Ansicht zum Absturz bringen. Er hängt auch an R.defaultSettings. */
+    var sanitize = options.sanitizeSettings ||
+      (typeof defaults.sanitize === "function" ? defaults.sanitize : function (x) { return x; });
     var clock = options.clock || function () { return Date.now(); };
 
     var state = null;
@@ -260,7 +265,7 @@
         if (!has(KNOWN_PARTS, k)) s[k] = parsed[k];
       });
       s.version = +parsed.version || 1;
-      s.settings = Object.assign(defaults(), isPlainObject(parsed.settings) ? parsed.settings : {});
+      s.settings = sanitize(Object.assign(defaults(), isPlainObject(parsed.settings) ? parsed.settings : {}));
       s.days = isPlainObject(parsed.days) ? parsed.days : {};
       s.achievements = Object.assign({ earned: {}, xp: 0, bestStreak: 0, seen: {} }, isPlainObject(parsed.achievements) ? parsed.achievements : {});
       s.meta = Object.assign(s.meta, isPlainObject(parsed.meta) ? parsed.meta : {});
@@ -361,7 +366,10 @@
       var mine = state;
       // Einstellungen zuerst: ob ein Tag gesperrt ist, entscheidet der zusammengeführte Stand
       var changedSettings = [];
-      Object.keys(ext.settings).forEach(function (k) {
+      /* Beide Seiten: auch ein dort entfernter Schlüssel ist eine Änderung
+         (z. B. ein wieder geöffneter Monat) — sonst merkte dieses Fenster
+         nichts und zeigte ihn weiter als abgeschlossen. */
+      Object.keys(Object.assign({}, mine.settings, ext.settings)).forEach(function (k) {
         if (pending.settings[k]) return;
         if (stable(ext.settings[k]) !== stable(mine.settings[k])) changedSettings.push(k);
       });
@@ -832,7 +840,7 @@
         }
         out[k] = v;
       });
-      return out;
+      return sanitize(out, { partial: true });
     }
 
     function cleanAchievements(a) {
@@ -923,8 +931,22 @@
         updated++;
       });
 
+      /* Abschlüsse gehören zu den Tagen, die das Zusammenführen ohnehin
+         schützt: Ein bestehender Abschluss bleibt, wie er ist — eine ältere
+         Sicherung setzte sonst still den eingefrorenen Saldo zurück, während
+         die korrigierten Tage blieben. Neue Abschlüsse aus der Datei kommen
+         dazu. Ersetzen geht nur mit „Alles ersetzen“. */
+      var closingsKept = [];
       if (mode === "merge" && settings) {
-        Object.keys(settings).forEach(function (k) { trackSetting(entry, k); pending.settings[k] = true; });
+        Object.keys(settings).forEach(function (k) {
+          if (guardPrefix && k.indexOf(guardPrefix) === 0 && state.settings[k] !== undefined) {
+            if (stable(settings[k]) !== stable(state.settings[k])) closingsKept.push(k.slice(guardPrefix.length));
+            delete settings[k];
+            return;
+          }
+          trackSetting(entry, k);
+          pending.settings[k] = true;
+        });
         Object.assign(state.settings, settings);
       }
       if (achievements && mode !== "merge-keep") {
@@ -942,7 +964,10 @@
       persist(true);
       emit({ type: "import" });
       emitLocked(locked, added + updated > 0 || !!settings || !!achievements);
-      return { added: added, updated: updated, skipped: skipped, invalid: invalid, newer: version > SCHEMA, locked: locked.length };
+      return {
+        added: added, updated: updated, skipped: skipped, invalid: invalid, newer: version > SCHEMA, locked: locked.length,
+        closingsKept: closingsKept.sort()   // Monate, deren Abschluss in der Datei anders lautete
+      };
     }
 
     /** Alles löschen — vollständig umkehrbar (Tage, Einstellungen, Erfolge, Meta). */

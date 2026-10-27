@@ -73,7 +73,10 @@
       "stats.vacLine": "{taken} bezogen · {planned} geplant · {left} offen",
       "stats.vacLineNoPlan": "{taken} bezogen · {left} offen",
       "stats.holidayAhead": "{n} folgen noch",
-      "stats.periodDays": "{from} – {to}"
+      "stats.periodDays": "{from} – {to}",
+      "stats.avgNoNights": "Ø ohne {n} Nachtschichten",
+      "stats.avgNoNights.one": "Ø ohne 1 Nachtschicht",
+      "stats.avgShifts": "Schichten wechseln – kein Ø"
     },
     en: {
       "stats.pMonth": "Month",
@@ -132,7 +135,10 @@
       "stats.vacLine": "{taken} taken · {planned} planned · {left} left",
       "stats.vacLineNoPlan": "{taken} taken · {left} left",
       "stats.holidayAhead": "{n} still to come",
-      "stats.periodDays": "{from} – {to}"
+      "stats.periodDays": "{from} – {to}",
+      "stats.avgNoNights": "avg. excl. {n} night shifts",
+      "stats.avgNoNights.one": "avg. excl. 1 night shift",
+      "stats.avgShifts": "rotating shifts – no avg."
     },
     fr: {
       "stats.pMonth": "Mois",
@@ -191,7 +197,10 @@
       "stats.vacLine": "{taken} pris · {planned} prévus · {left} restants",
       "stats.vacLineNoPlan": "{taken} pris · {left} restants",
       "stats.holidayAhead": "encore {n} à venir",
-      "stats.periodDays": "{from} – {to}"
+      "stats.periodDays": "{from} – {to}",
+      "stats.avgNoNights": "moy. sans {n} services de nuit",
+      "stats.avgNoNights.one": "moy. sans 1 service de nuit",
+      "stats.avgShifts": "horaires alternés – pas de moy."
     },
     it: {
       "stats.pMonth": "Mese",
@@ -250,7 +259,10 @@
       "stats.vacLine": "{taken} godute · {planned} pianificate · {left} rimanenti",
       "stats.vacLineNoPlan": "{taken} godute · {left} rimanenti",
       "stats.holidayAhead": "ancora {n} in arrivo",
-      "stats.periodDays": "{from} – {to}"
+      "stats.periodDays": "{from} – {to}",
+      "stats.avgNoNights": "media senza {n} turni di notte",
+      "stats.avgNoNights.one": "media senza 1 turno di notte",
+      "stats.avgShifts": "turni alterni – nessuna media"
     }
   });
 
@@ -288,9 +300,10 @@
    * Säulen „Stunden pro Woche/Monat“. Jede Säule trägt ihr eigenes Soll:
    * nur die Tage, die wirklich im Zeitraum (und nicht in der Zukunft)
    * liegen — eine angeschnittene Woche wird nicht am vollen Wochensoll
-   * gemessen.
+   * gemessen. `deltas` (ZK.Closing.dayDeltas): abgeschlossene Monate mit
+   * ihrem eingefrorenen Saldo, wie im Kalender.
    */
-  function groupBars(days, bucket) {
+  function groupBars(days, bucket, deltas) {
     var map = {}, order = [];
     days.forEach(function (r) {
       var key = bucket === "month" ? T.monthKey(r.date) : T.startOfWeek(r.date, 1);
@@ -303,7 +316,7 @@
       b.count++;
       b.value += (r.net || 0) + (r.credited || 0);
       b.ref += r.target || 0;
-      b.balance += r.balance || 0;
+      b.balance += (r.balance || 0) + ((deltas && deltas[r.date]) || 0);
     });
     return order.map(function (k) {
       var b = map[k];
@@ -318,14 +331,16 @@
    * Tag oder pro Woche bis `until`. `slots` ist die Länge der ganzen Achse.
    * Ein laufender Tag ist noch nicht abgerechnet (wie im Konto): er bewegt
    * die Linie nicht, sein Zwischenstand steht als `provisional` am Punkt.
+   * `deltas` (ZK.Closing.dayDeltas): Tage abgeschlossener Monate zählen
+   * eingefroren — die Linie endet so beim Zeitkonto der Kennzahl.
    */
-  function trendSeries(days, before, period) {
+  function trendSeries(days, before, period, deltas) {
     var points = [{ date: period.from, start: true, value: before }];
     var running = before;
     var weekKey = null;
     days.forEach(function (r) {
       var open = !!(r.provisional || r.running);
-      if (!open) running += r.balance || 0;
+      if (!open) running += (r.balance || 0) + ((deltas && deltas[r.date]) || 0);
       var pt;
       if (period.grain === "week") {
         var wk = T.startOfWeek(r.date, 1);
@@ -353,13 +368,15 @@
     return { points: points, slots: Math.max(points.length, slots) };
   }
 
-  /** Art einer Heatmap-Zelle — eine Definition für Farbe, Legende und Tooltip. */
-  function heatKind(r, today) {
+  /** Art einer Heatmap-Zelle — eine Definition für Farbe, Legende und Tooltip.
+      since: Erfassungsbeginn — davor ist ein leerer Arbeitstag keine Lücke
+      (Engine.isGap, wie Kalender und Kennzahlen); ohne Angabe ohne Grenze. */
+  function heatKind(r, today, since) {
     if (r.provisional || r.running) return "running";
     if (r.date > today) return r.recorded ? "planned" : "future";
     if (r.incomplete) return "open";
     if (r.recorded) return r.balance ? "value" : "zero";
-    if (r.target > 0 && r.date < today) return "gap";
+    if (ZK.Engine.isGap(r, today, since)) return "gap";
     return "off";
   }
 
@@ -467,8 +484,23 @@
     return memo.data[name];
   }
 
+  /** Erfassungsbeginn (Engine.trackingStart) — ab hier zählen fehlende
+      Arbeitstage als Lücke, wie in Kalender, Woche und Monatscheck. */
+  function trackingStart(App) {
+    return cached(App, "tstart", function () {
+      return ZK.Engine.trackingStart(App.store.allDays(), App.settings(), App.store.getMeta ? App.store.getMeta() : null);
+    });
+  }
+
+  /** Zeitraum mit Lücken ab Erfassungsbeginn — derselbe Eintrag im Zwischenspeicher für Statistik und Berichte. */
+  function rangeOf(App, from, to) {
+    return cached(App, "range|" + from + "|" + to, function () {
+      return App.range(from, to, { since: trackingStart(App) });
+    });
+  }
+
   // Gemeinsam mit „Berichte“ (gleicher Zwischenspeicher, gleiche Definitionen)
-  ZK.Insight = { cached: cached, calc: calc };
+  ZK.Insight = { cached: cached, calc: calc, trackingStart: trackingStart, range: rangeOf };
 
   /* -------------------------------------------------------------------- */
   function render(host, App) {
@@ -505,9 +537,7 @@
       return;
     }
 
-    var range = cached(App, "range|" + period.from + "|" + period.until, function () {
-      return App.range(period.from, period.until);
-    });
+    var range = rangeOf(App, period.from, period.until);
     var days = range.days;
     var totals = range.totals;
     var sum = summarize(days, function (iso) { return App.hasRecord(iso); });
@@ -520,10 +550,15 @@
       account.minutes > 0 ? "plus" : account.minutes < 0 ? "minus" : "");
     kpi(kpis, I.t("stats.avgNet"), sum.worked ? App.fmt(totals.avgNet) : "–",
       sum.worked ? I.tn("stats.nWorked", sum.worked) : "");
+    /* Ø Beginn/Feierabend wie Erkenntnisse und Rückblick (Engine.clockAverages):
+       Nachtschichten zählen nicht und werden genannt; bei wechselnden
+       Schichten gibt es keinen Mittelwert. */
+    var clockNote = totals.shiftWork ? I.t("stats.avgShifts")
+      : totals.nightShifts ? I.tn("stats.avgNoNights", totals.nightShifts) : "";
     kpi(kpis, I.t("stats.avgStart"), totals.avgStart === null || totals.avgStart === undefined ? "–" : T.formatHHMM(totals.avgStart),
-      totals.earliestStart === null || totals.earliestStart === undefined ? "" : I.t("stats.earliest", { t: T.formatHHMM(totals.earliestStart) }));
+      clockSub(totals.shiftWork || totals.earliestStart === null || totals.earliestStart === undefined ? "" : I.t("stats.earliest", { t: T.formatHHMM(totals.earliestStart) }), clockNote));
     kpi(kpis, I.t("stats.avgEnd"), totals.avgEnd === null || totals.avgEnd === undefined ? "–" : clock(totals.avgEnd),
-      totals.latestEnd === null || totals.latestEnd === undefined ? "" : I.t("stats.latest", { t: clock(totals.latestEnd) }));
+      clockSub(totals.shiftWork || totals.latestEnd === null || totals.latestEnd === undefined ? "" : I.t("stats.latest", { t: clock(totals.latestEnd) }), clockNote));
     kpi(kpis, I.t("stats.longestDay"), sum.longest ? App.fmt(sum.longest) : "–",
       sum.longestDate ? I.t("stats.longestOn", { date: I.formatDate(sum.longestDate, dd) }) : "");
     kpi(kpis, I.t("stats.overtimeDays"), String(sum.plus), I.tn("stats.nMinus", sum.minus));
@@ -541,7 +576,11 @@
     var before = cached(App, "acc|" + T.addDays(period.from, -1), function () {
       return App.accountBalance(T.addDays(period.from, -1));
     }).minutes;
-    var trend = trendSeries(days, before, period);
+    /* Abgeschlossene Monate zählen eingefroren (wie Kopfzeile und Kennzahl) */
+    var deltas = ZK.Closing ? cached(App, "frz|" + period.from + "|" + period.until, function () {
+      return ZK.Closing.dayDeltas(App.store.allDays(), App.settings(), period.from, period.until);
+    }) : null;
+    var trend = trendSeries(days, before, period, deltas);
     var trendCard = card(I.t("stats.balanceTrend"), I.t("stats.trendStart", { v: App.fmtSigned(before) }));
     var trendHost = D.el("div");
     trendCard.body.appendChild(trendHost);
@@ -600,7 +639,7 @@
     /* 2 · Stunden pro Woche / pro Monat                                 */
     /* ================================================================ */
     var monthly = period.bucket === "month";
-    var groups = groupBars(days, period.bucket);
+    var groups = groupBars(days, period.bucket, deltas);
     var multiYear = monthly && groups.length && groups[0].key.slice(0, 4) !== groups[groups.length - 1].key.slice(0, 4);
     /* Wochensoll des Modells am Anfang und am Ende — wechselt es im
        Zeitraum, zeigt die Unterzeile beide Werte. */
@@ -769,13 +808,13 @@
     /* ================================================================ */
     var year = T.yearOf(period.until);
     var heatFrom = T.startOfWeek(year + "-01-01", 1);
-    var yearRange = cached(App, "year|" + year, function () { return App.range(heatFrom, year + "-12-31"); });
+    var yearRange = cached(App, "year|" + year, function () { return App.range(heatFrom, year + "-12-31", { since: trackingStart(App) }); });
     var heatCard = card(I.t("stats.heatmap"), String(year));
     var heatHost = D.el("div");
     heatCard.body.appendChild(heatHost);
     host.appendChild(heatCard.node);
 
-    var heat = buildHeatCells(App, yearRange.days, year, today);
+    var heat = buildHeatCells(App, yearRange.days, year, today, trackingStart(App));
     ZK.Charts.heatmap(heatHost, heat.cells, {
       dayLabels: [1, 2, 3, 4, 5, 6, 0].map(function (wd, i) { return i % 2 === 0 && i < 6 ? I.weekdayName(wd, "short") : ""; }),
       initialIndex: heat.todayIndex,
@@ -879,10 +918,12 @@
     return row;
   }
 
+  function clockSub(a, b) { return a && b ? a + " · " + b : (a || b); }
+
   function pct(v, total) { return total > 0 ? Math.max(0, Math.min(100, (v / total) * 100)) : 0; }
   function fmtDays(v) { return String(Math.round(v * 100) / 100); }
 
-  function buildHeatCells(App, days, year, today) {
+  function buildHeatCells(App, days, year, today, since) {
     var jan1 = year + "-01-01";
     var cells = [];
     var todayIndex = -1;
@@ -890,7 +931,7 @@
     days.forEach(function (r) {
       if (r.date < jan1) { cells.push({ blank: true }); return; }
       if (r.date === today) todayIndex = cells.length;
-      var kind = heatKind(r, today);
+      var kind = heatKind(r, today, since);
       var typeName = r.type && r.type !== "work" && r.type !== "free"
         ? (r.type === "holiday" && r.holiday ? r.holiday.name : I.t("type." + r.type)) : "";
       var state = "", sub = "";

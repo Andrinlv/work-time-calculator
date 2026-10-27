@@ -463,3 +463,51 @@ test("Korridor-Hinweis: jetzt oder bis zu einem Datum, mit Korrektur pro Arbeits
   const h = UI.hintText({ at: "month", side: "below", value: -420, limit: -300, date: "2026-10-31", perDay: 12 }, fmt, signed);
   assert.equal(h, "Bei diesem Tempo fällst du bis zum 31. Oktober unter den Korridor (−7:00). Rund 12 min mehr pro Arbeitstag hält dich drin.");
 });
+
+/* ---------------------------------------------------------------------- */
+/* Eine Definition: Kennzahlen der Statistik = Erkenntnisse = Rückblick    */
+/* ---------------------------------------------------------------------- */
+
+test("Ø Kommen/Gehen der Erkenntnisse = Ø Beginn/Feierabend der Statistik, auch mit Nachtschicht", () => {
+  const recs = workdays("2026-06-01", "2026-07-31", (iso, i) => work(iso, hm(450 + jitter(i) * 3), hm(1020 + jitter(i + 3) * 2)));
+  recs["2026-06-05"] = { date: "2026-06-05", start: "22:00", end: "06:00", breaks: [{ id: "n", start: "02:00", end: "02:30" }] };
+  const r = E.computeRange("2026-06-01", "2026-07-31", (iso) => recs[iso], settings(), NOW);
+  const rh = X.rhythm(r.days);
+  assert.equal(rh.avg.arrive, r.totals.avgStart);
+  assert.equal(rh.avg.leave, r.totals.avgEnd);
+  assert.equal(rh.nights, r.totals.nightShifts);
+  assert.equal(rh.nights, 1);
+  assert.ok(r.totals.avgStart < 8 * 60, "die Nacht zieht den Schnitt nicht Richtung Abend");
+});
+
+test("Wechselnde Schichten: weder Statistik noch Erkenntnisse nennen einen Schnitt", () => {
+  const recs = workdays("2026-09-07", "2026-10-02", (iso, i, wd) => {
+    const late = Math.floor(i / 5) % 2 === 1;
+    return work(iso, late ? "14:00" : "06:00", late ? "22:30" : "14:30", { breaks: [] });
+  });
+  const r = E.computeRange("2026-09-07", "2026-10-02", (iso) => recs[iso], settings(), NOW);
+  const rh = X.rhythm(r.days);
+  assert.equal(r.totals.shiftWork, true);
+  assert.equal(rh.shifts, true);
+  assert.equal(rh.avg.arrive, null);
+  assert.equal(rh.avg.leave, null);
+  assert.ok(rh.n.arrive > 0, "die Uhr zeigt die Verteilung trotzdem");
+});
+
+test("Wochentagsprofil: volle Arbeitstage, genug Tage je Wochentag, Montag zuerst bei Gleichstand", () => {
+  const recs = workdays("2026-06-01", "2026-08-28", (iso, i, wd) =>
+    work(iso, "08:00", wd === 3 ? "17:45" : "17:00"));
+  // Halbe Ferientage am Mittwoch und Kurstage am Donnerstag zählen nicht
+  recs["2026-06-10"] = Object.assign(work("2026-06-10", "13:00", "17:00", { breaks: [] }), { type: "vacation", absenceFactor: 0.5 });
+  ["2026-06-11", "2026-06-18", "2026-06-25"].forEach((d) => { recs[d] = Object.assign(work(d, "07:00", "20:00"), { type: "training" }); });
+  recs["2026-06-13"] = work("2026-06-13", "08:00", "18:00");      // Samstagseinsatz
+  const days = E.computeRange("2026-06-01", "2026-08-28", (iso) => recs[iso], settings(), NOW).days;
+  const p = X.weekdayProfile(days);
+  assert.equal(p.top, 3, "Mittwoch");
+  assert.equal(p.days[6].count, 0, "Samstag ohne Soll ist kein voller Arbeitstag");
+  assert.ok(p.eligible.indexOf(6) < 0);
+  assert.equal(p.days[4].count, 13 - 3, "Kurstage fehlen");
+  const longest = X.rhythm(days).facts.find((f) => f.id === "longest");
+  assert.ok(longest, "Aussage erwartet");
+  assert.equal(longest.weekday, p.top);
+});

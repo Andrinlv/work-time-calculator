@@ -38,10 +38,17 @@
                        Anwesenheit; konform ist legalBreak >= requiredBreak.
      workingTime       Anwesenheit minus Pausen (inkl. Manko) — darauf
                        beziehen sich R.requiredBreak / R.nextBreakTier.
-   computeRange(...).totals:
+   computeRange(from, to, getRecord, settings, now, opts).totals:
      balance           abgerechnet: laufende Tage zählen NICHT mit
      provisionalBalance inkl. laufender Tage (Zwischenstand)
      runningDays       Anzahl laufender Tage im Zeitraum
+     gapDays / gaps    nicht erfasste Arbeitstage nach isGap(): ab
+                       opts.since (Erfassungsbeginn, trackingStart()) —
+                       ein Tag mit Kommen ohne Gehen ist unvollständig,
+                       keine Lücke. opts.since === null: keine Lücken.
+     avgStart / avgEnd Ø Beginn und Ø Feierabend nach clockAverages():
+                       ohne Nachtschichten (nightShifts zählt sie), bei
+                       wechselnden Schichten null (shiftWork = true).
    accountBalance(records, settings, uptoISO, now, opts):
      zählt einen laufenden Tag standardmässig NICHT (abgerechneter Saldo);
      opts.includeRunning === true nimmt ihn mit. Zusätzlich im Ergebnis:
@@ -412,9 +419,12 @@
    * totals.balance ist abgerechnet (ohne laufende Tage), der Zwischenstand
    * mit laufendem Tag steht in totals.provisionalBalance.
    * @param {Function} getRecord  (iso) => record | undefined
+   * @param {Object} [opts]  { since: Erfassungsbeginn (trackingStart) —
+   *                         ohne Angabe zählt jeder vergangene Tag }
    */
-  function computeRange(fromISO, toISO, getRecord, settings, now) {
+  function computeRange(fromISO, toISO, getRecord, settings, now, opts) {
     var s = settings || R.defaultSettings();
+    var since = opts && Object.prototype.hasOwnProperty.call(opts, "since") ? opts.since : undefined;
     var dates = T.rangeDays(fromISO, toISO);
     var today = T.todayISO(now);
     var results = [];
@@ -466,25 +476,128 @@
       if (!res.running && res.balance > 0) totals.overtimeDays++;
       if (!res.running && res.balance < 0) totals.undertimeDays++;
 
-      // Lücke: vergangener Arbeitstag mit Soll, aber ohne jede Erfassung
-      if (res.target > 0 && !res.recorded && iso < today) {
+      if (isGap(res, today, since)) {
         totals.gapDays++;
         if (totals.gaps.length < 200) totals.gaps.push(iso);
       }
     });
 
     totals.avgNet = totals.workedDays ? Math.round(totals.net / totals.workedDays) : 0;
-    totals.avgStart = null;
-    var starts = results.filter(function (r) { return r.startTod !== null && r.net > 0; });
-    if (starts.length) {
-      totals.avgStart = Math.round(starts.reduce(function (a, r) { return a + r.startTod; }, 0) / starts.length);
-    }
-    var ends = results.filter(function (r) { return r.complete && r.net > 0; });
-    totals.avgEnd = ends.length
-      ? Math.round(ends.reduce(function (a, r) { return a + r.endTl; }, 0) / ends.length)
-      : null;
+    var clock = clockAverages(results);
+    totals.avgStart = clock.avgStart;
+    totals.avgEnd = clock.avgEnd;
+    totals.nightShifts = clock.nights;
+    totals.shiftWork = clock.shifts;
 
     return { days: results, totals: totals, from: fromISO, to: toISO };
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Gemeinsame Definitionen (Statistik, Rapport, Kalender, Erkenntnisse) */
+  /* ------------------------------------------------------------------ */
+
+  /**
+   * Ab wann fehlende Arbeitstage als Lücke gelten: erster eigener Eintrag
+   * bzw. der Start der App, falls früher — davor gibt es nichts zu
+   * vermissen, sonst sieht jemand gleich nach dem Einrichten elf rote
+   * Striche. Der Kontostart (carryOverFrom) ist die Untergrenze.
+   * Eigen heisst: gestempelt, oder eigener Inhalt (Tagesart, Pause, Notiz,
+   * Tagessoll) — nicht eine aus Outlook übernommene Absenz und nicht ein
+   * Datensatz, der nur einen Ort (Homeoffice-Termin) oder einen Plan trägt.
+   * Ohne jeden eigenen Eintrag: null (keine Lücken).
+   * @param {Object} records  { iso: Tageseintrag }
+   * @param {Object} meta     Store-Meta ({ createdAt }) oder null
+   */
+  function trackingStart(records, settings, meta) {
+    var first = null;
+    Object.keys(records || {}).forEach(function (iso) {
+      var rec = records[iso];
+      if (!rec || !T.isValidISO(iso) || !ownEntry(rec)) return;
+      if (first === null || iso < first) first = iso;
+    });
+    if (!first) return null;
+    var created = null;
+    if (meta && meta.createdAt) {
+      var d = new Date(meta.createdAt);
+      if (!isNaN(d.getTime())) created = T.todayISO(d);
+    }
+    var begin = created && created < first ? created : first;
+    var from = settings && settings.carryOverFrom && T.isValidISO(settings.carryOverFrom) ? settings.carryOverFrom : null;
+    if (from && from > begin) begin = from;
+    return begin;
+  }
+
+  function ownEntry(rec) {
+    if (String(rec.start || "").trim() || String(rec.end || "").trim()) return true;
+    if (rec.source === "outlook") return false;
+    return !!(rec.type || (rec.breaks && rec.breaks.length) || String(rec.note || "").trim() ||
+      (rec.targetOverride !== null && rec.targetOverride !== undefined));
+  }
+
+  /**
+   * Lücke: vergangener Arbeitstag mit Soll, aber ohne jede Erfassung.
+   * Ein angefangener Tag ohne Gehen ist unvollständig — er meldet sich als
+   * Fehler und zählt nicht zusätzlich als Lücke; ein laufender Tag ist
+   * erfasst. `since`: Erfassungsbeginn (null = noch kein eigener Eintrag,
+   * also keine Lücke; undefined = ohne Untergrenze).
+   */
+  function isGap(res, today, since) {
+    if (!res || res.recorded || res.running || res.incomplete || !(res.target > 0)) return false;
+    if (!(res.date < today) || since === null) return false;
+    return since === undefined || res.date >= since;
+  }
+
+  /* Ab dieser Streuung des Beginns (Standardabweichung) ist ein Mittelwert
+     nichtssagend: Früh 06:00 und Spät 14:00 ergeben „Ø 10:00“. */
+  var SHIFT_SPREAD = 150;
+  var NIGHT_SHARE = 0.2;
+
+  /**
+   * Ø Beginn und Ø Feierabend über gearbeitete Tage — eine Definition für
+   * Statistik, Erkenntnisse und Jahresrückblick. Nachtschichten (Ende am
+   * Folgetag) zählen nicht: eine Schicht 22:00–06:00 zöge den Schnitt auf
+   * eine Uhrzeit, zu der niemand kommt; `nights` nennt ihre Zahl. Der
+   * Feierabend zählt nur bei abgeschlossenen Tagen. Wechseln die Schichten
+   * (Beginn streut stark, oder mehr als jeder fünfte Tag ist eine Nacht —
+   * ab zwei Nächten, eine einzelne ist eine Ausnahme), gibt es keinen
+   * ehrlichen Mittelwert: beide Werte null, shifts = true.
+   * → { avgStart, avgEnd, starts, ends, nights, shifts }
+   */
+  function clockAverages(days) {
+    var starts = [], ends = [], nights = 0, nightDays = 0;
+    (days || []).forEach(function (r) {
+      if (!r || !(r.net > 0) || r.startTod === null || r.startTod === undefined) return;
+      if (r.endTl !== null && r.endTl !== undefined && r.endTl > T.DAY) {
+        nightDays++;
+        if (r.complete) nights++;
+        return;
+      }
+      starts.push(r.startTod);
+      if (r.complete && r.endTl !== null && r.endTl !== undefined) ends.push(r.endTl);
+    });
+    var out = { avgStart: null, avgEnd: null, starts: starts.length, ends: ends.length, nights: nights, shifts: false };
+    var all = starts.length + nightDays;
+    if (!all) return out;
+    var mean = avgOf(starts);
+    var spread = 0;
+    if (starts.length > 1) {
+      var sq = 0;
+      starts.forEach(function (v) { sq += (v - mean) * (v - mean); });
+      spread = Math.sqrt(sq / (starts.length - 1));
+    }
+    if ((nightDays > 1 && nightDays / all > NIGHT_SHARE) || spread > SHIFT_SPREAD) {
+      out.shifts = true;
+      return out;
+    }
+    out.avgStart = starts.length ? Math.round(mean) : null;
+    out.avgEnd = ends.length ? Math.round(avgOf(ends)) : null;
+    return out;
+  }
+
+  function avgOf(list) {
+    var s = 0;
+    for (var i = 0; i < list.length; i++) s += list[i];
+    return list.length ? s / list.length : 0;
   }
 
   /* ------------------------------------------------------------------ */
@@ -647,6 +760,9 @@
     deriveType: deriveType,
     computeDay: computeDay,
     computeRange: computeRange,
+    trackingStart: trackingStart,
+    isGap: isGap,
+    clockAverages: clockAverages,
     accountBalance: accountBalance,
     quotaUsage: quotaUsage
   };

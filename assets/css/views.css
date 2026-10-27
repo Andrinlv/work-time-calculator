@@ -1967,7 +1967,7 @@
 .qe-card .chip.mono { font-size: var(--fs-2xs); }
 
 /* Schnellerfassung in der Befehlspalette: Hinweis, dass erst geprüft wird */
-.palette-item .sub.warn { color: var(--warn); }
+.palette-item .sub.warn { color: var(--warn-ink); }
 .palette-item.warn .ic { color: var(--warn); }
 
 /* ---- Gleitzeit-Planer ----------------------------------------------- */
@@ -2824,7 +2824,11 @@ body.mini-pip::before { display: none; }
 @keyframes rv-fill { from { width: 0 } to { width: 100% } }
 
 .rv-modal .modal-body { padding: 0 12px; display: flex; flex-direction: column; overflow: hidden; }
-.rv-modal .modal-foot { padding: 10px 12px calc(10px + env(safe-area-inset-bottom, 0px)); border-top: 0; background: transparent; flex-wrap: nowrap; }
+.rv-modal .modal-foot { padding: 10px 12px calc(10px + env(safe-area-inset-bottom, 0px)); border-top: 0; background: transparent; }
+/* Passen die Knöpfe nicht in eine Zeile (lange Beschriftungen wie im
+   Italienischen), bricht „Teilen“ in eine zweite Zeile um — rechtsbündig,
+   statt links über den Dialogrand hinauszuschieben. */
+.rv-modal .modal-foot { flex-wrap: wrap; row-gap: 6px; }
 .rv-navbtns { display: flex; gap: 6px; }
 .rv-copy .short, .rv-share .short { display: none; }
 .rv-share, .rv-copy { white-space: nowrap; }
@@ -2997,12 +3001,54 @@ body.mini-pip::before { display: none; }
   .rv-copy .long, .rv-share .long { display: none; }
   .rv-share .short { display: inline; }
 }
-/* Handy quer: wenig Höhe — Kopf und Fuss schmal */
+/* Handy quer: wenig Höhe — Kopf, Fuss und Karte rücken zusammen. Die
+   Knöpfe zeigen ihre Kurzform (eine Zeile), Wert und Datum einer Zeile
+   stehen nebeneinander, der Einleitungssatz nutzt die ganze Breite. */
 @media (max-height: 500px) and (orientation: landscape) {
   .modal.rv-modal { height: calc(100dvh - 16px); }
+  .rv-progress { padding-top: calc(8px + env(safe-area-inset-top, 0px)); }
   .rv-modal .modal-head { padding-top: 4px; padding-bottom: 4px; }
-  .rv-modal .modal-foot { padding-top: 6px; padding-bottom: 6px; }
+  /* „Dein Jahr · 3 von 9“ in einer Zeile */
+  .rv-modal .modal-head > div:first-child { display: flex; align-items: baseline; gap: 10px; }
+  .rv-modal .modal-head .sub { margin-top: 0; white-space: nowrap; }
+  .rv-modal .modal-foot { padding-top: 6px; padding-bottom: 6px; flex-wrap: nowrap; }
+  .rv-copy { padding: 0; width: 40px; min-width: 40px; }
+  .rv-copy .long, .rv-share .long { display: none; }
+  .rv-share .short { display: inline; }
+  .rv-card { padding: min(10px, 3cqh) 18px min(8px, 2.4cqh); gap: min(6px, 1.8cqh); }
+  .rv-lead { max-width: none; margin-top: 4px; }
+  .rv-unit { font-size: max(11px, min(6.4cqi, 3.6cqh)); }
+  .rv-rows > div { padding: 3px 0; }
+  .rv-rows dd { display: flex; align-items: baseline; gap: 8px; }
+  .rv-rows dd b { font-size: 15px; }
+  .rv-rows dd span { order: -1; margin-top: 0; }
 }
+/* Sehr niedrig (kleines Handy quer): die Zierringe des Titelblatts weichen
+   dem Inhalt — oben rechts stehen sie ohnehin. */
+@media (max-height: 360px) and (orientation: landscape) {
+  .rv-rings-hero { display: none; }
+}
+/* Rollt eine Karte trotzdem, zeigt ein Verlauf am unteren Rand, dass es
+   weitergeht. Er hängt an der Rollposition der Karte: Passt alles, gibt es
+   keine Zeitachse und damit keinen Verlauf; ganz unten blendet er aus. */
+@supports (animation-timeline: scroll()) {
+  @media (max-height: 500px) and (orientation: landscape) {
+    .rv-card::after {
+      content: "";
+      position: sticky;
+      bottom: 0;
+      flex: none;
+      height: 22px;
+      margin-top: calc(-22px - min(6px, 1.8cqh));
+      background: linear-gradient(to bottom, transparent, var(--rv-bg2));
+      pointer-events: none;
+      opacity: 0;
+      animation: rv-more linear both;
+      animation-timeline: scroll(nearest block);
+    }
+  }
+}
+@keyframes rv-more { 0%, 80% { opacity: 1 } 100% { opacity: 0 } }
 
 /* ---- Einstieg in der Statistik --------------------------------------------- */
 .rv-entry {
@@ -3360,7 +3406,10 @@ body.mini-pip::before { display: none; }
 .bt-ring svg { display: block; width: 100%; height: 100%; transform: rotate(-90deg); }
 .bt-ring circle { fill: none; stroke-width: 4; }
 .bt-ring .bt-track { stroke: var(--ring-track); }
-.bt-ring .bt-arc { stroke: var(--warn); stroke-linecap: round; transition: stroke-dashoffset 1s linear; }
+/* Ohne Übergang: Der Bogen rückt im Sekundentakt um Bruchteile eines
+   Pixels vor. Ein Übergang dorthin liefe ohne Pause und zeichnete die
+   Karte die ganze Pause lang mit 60 Bildern pro Sekunde neu. */
+.bt-ring .bt-arc { stroke: var(--warn); stroke-linecap: round; }
 .bt-ring .ic { position: absolute; inset: 0; margin: auto; width: 20px; height: 20px; color: var(--warn-ink); }
 .bt-main { grid-area: main; min-width: 0; display: grid; gap: 2px; }
 .bt-label {
@@ -3379,7 +3428,16 @@ body.mini-pip::before { display: none; }
 }
 .bt-sub, .bt-missing { font-size: var(--fs-xs); font-weight: 600; color: var(--ink-3); line-height: 1.4; }
 .bt-missing { color: var(--warn-ink); }
-.bt-side { grid-area: side; display: flex; justify-content: flex-end; min-width: 0; }
+/* Zwei Fassungen im selben Feld (Pause läuft / ist um): so hoch wie die längere */
+.bt-alt { display: grid; }
+.bt-alt > * { grid-area: 1 / 1; min-width: 0; }
+.bt-alt > [aria-hidden="true"], .bt-missing.is-done { visibility: hidden; }
+/* Chips und „+5 min“ teilen sich denselben Platz: Ist die Zeit um, tritt
+   der Knopf an die Stelle der Chips, ohne dass die Karte schrumpft — die
+   Karten darunter sprängen sonst genau dann, wenn man tippen will. */
+.bt-side { grid-area: side; display: grid; justify-items: end; align-items: center; min-width: 0; }
+.bt-side > * { grid-area: 1 / 1; }
+.bt-card.is-over .bt-chips, .bt-card:not(.is-over) .bt-acts { visibility: hidden; }
 .bt-chips button { white-space: nowrap; }
 .bt-acts { display: flex; flex-wrap: wrap; gap: var(--gap-2); justify-content: flex-end; }
 
@@ -3395,12 +3453,11 @@ body.mini-pip::before { display: none; }
     padding: var(--gap-4);
   }
   .bt-value { font-size: var(--fs-xl); }
-  .bt-side { justify-content: stretch; }
+  .bt-side { justify-items: stretch; }
   .bt-chips { display: flex; width: 100%; }
   .bt-chips button { flex: 1 1 0; min-width: 0; min-height: 36px; padding-inline: 6px; }
-  /* Zeit um: nur noch „+5 min“ — der passt neben den Text */
-  .bt-card.is-over { grid-template-columns: auto minmax(0, 1fr) auto; grid-template-areas: "ring main side"; }
-  .bt-acts .btn { min-height: 40px; }
+  /* Zeit um: „+5 min“ über die ganze Zeile, wo eben noch die Chips standen */
+  .bt-acts .btn { flex: 1 1 auto; min-height: 40px; }
 }
 
 /* Meldung „Pause ist um“: Knöpfe in eigener Zeile unter dem Text, das X bleibt oben */
@@ -3416,10 +3473,6 @@ body.mini-pip::before { display: none; }
 .bt-honest { margin-top: var(--gap-3); }
 .bt-honest .bt-ios { margin-top: 6px; }
 .bt-test { margin-top: var(--gap-3); }
-
-@media (prefers-reduced-motion: reduce) {
-  .bt-ring .bt-arc { transition: none; }
-}
 
 /* ===== FEATURE: closing ===== */
 /* Monatsabschluss und Lohnmeldung: Knöpfe und Abzeichen in „Berichte“,
@@ -3606,6 +3659,16 @@ body.mini-pip::before { display: none; }
   .cal-cell .rota-times { display: none; }
   .cal-cell .rota-badge { min-width: 15px; height: 15px; padding: 0 3px; font-size: 9px; }
   .rota-cal-notice .sub { display: none; }
+  /* Passt das Kürzel nicht mehr neben die Tageszahl (eigene Kürzel mit zwei
+     Zeichen), rückt es unter sie, statt am Zellrand abgeschnitten zu werden */
+  .cal-cell .d:has(.rota-badge) { flex-wrap: wrap; column-gap: 3px; row-gap: 3px; }
+}
+/* 320 px: Tageszahl und Kürzel brauchen zusammen mehr als die Zelle hat —
+   das Kürzel steht dann immer in einer eigenen Zeile, in jeder Zelle gleich */
+@media (max-width: 359px) {
+  .cal-cell .d:has(.rota-badge) { row-gap: 0; }
+  .cal-cell .d:has(.rota-badge)::after { content: ""; flex: 0 0 100%; order: 1; height: 0; }
+  .cal-cell .d .rota-badge { order: 2; margin-top: 4px; }
 }
 
 /* Konflikte: Sprünge zu den betroffenen Tagen */

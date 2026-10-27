@@ -625,6 +625,10 @@
       day: function (iso) { return App.day(iso); },
       range: function (from, to) { return App.range(from, to); },
       accountBalance: function (upto) { return App.accountBalance(upto); },
+      /* Abgeschlossene Monate mit ihrem eingefrorenen Saldo — wie Kalender und Kopfzeile */
+      periodBalance: ZK.Closing ? function (from, to, live) {
+        return ZK.Closing.periodBalance(App.store.allDays(), s, from, to, live);
+      } : null,
       settledBalance: function () { return App.settledBalance(); },
       activeDate: function () { return App.activeStampDate ? App.activeStampDate() : today; },
       holiday: function (iso) { return App.holiday(iso); },

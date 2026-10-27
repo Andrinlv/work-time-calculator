@@ -10,8 +10,19 @@
                        name, skipHolidays }
                      Der Rhythmus (1–42 Tage) wiederholt sich ab `anchor` (Tag 1)
                      endlos, auch rückwärts. null = frei.
-     rec.plan      = Vorlagen-id | "free" — Abweichung für genau diesen Tag
-                     (Schicht getauscht, Einsatz am Samstag …).
+     settings["rota:override:YYYY-MM-DD"] = Vorlagen-id | "free"
+                     Abweichung für genau diesen Tag (Schicht getauscht,
+                     Einsatz am Samstag …). Je Tag ein eigener Schlüssel:
+                     Einstellungen werden über Fenster hinweg je Schlüssel
+                     zusammengeführt — planen zwei Fenster verschiedene Tage
+                     um, bleiben so beide stehen. Ein Plan ist keine
+                     Erfassung, darum liegt er nicht bei den Tagen (dort
+                     zählte er als erfasster Tag und dehnte „Alle“ in den
+                     Berichten bis zum geplanten Datum). Abweichungen, die
+                     mehr als 60 Tage zurückliegen, räumt das nächste
+                     Speichern weg.
+     Bis Version 1.3 lag die Abweichung als `plan` im Tagesdatensatz; solche
+     Datensätze zieht migrateRecords() um und dayPlan() liest sie bis dahin.
 
    Der Plan ändert das Soll NICHT, das kommt weiter aus dem Arbeitsmodell.
    Er zeigt, was ansteht, füllt Tage mit einem Tipp aus und warnt früh.
@@ -33,6 +44,8 @@
   var MAX_CYCLE = 42;
   var FREE = "free";
   var DEFAULT_REST_HOURS = 11;
+  var OVERRIDE_PREFIX = "rota:override:";
+  var KEEP_OVERRIDES = 60;       // so viele Tage zurück bleiben Abweichungen stehen
 
   function week(id) { return [id, id, id, id, id, null, null]; }
 
@@ -164,9 +177,10 @@
 
   /**
    * Was ist an `iso` geplant?
-   *   ctx: { rota, templates, record (Tagesdatensatz oder null), holiday (wahr an Feiertagen) }
+   *   ctx: { rota, templates, override (Abweichung aus den Einstellungen, s. overrideOf),
+   *          record (Tagesdatensatz oder null), holiday (wahr an Feiertagen) }
    * → { date, id, tpl, source, free, missing, off, index }
-   *   source   "override" (Abweichung im Datensatz) | "cycle" (Rhythmus) | null (kein Plan)
+   *   source   "override" (Abweichung für den Tag) | "cycle" (Rhythmus) | null (kein Plan)
    *   free     laut Plan frei
    *   missing  geplante Vorlage gibt es nicht mehr
    *   off      geplant, fällt aber aus: "absence" (Ferien, krank …) | "holiday"
@@ -179,7 +193,8 @@
     if (!n.enabled || !n.anchor || !n.cycle.length) return out;
     out.index = cycleIndex(n, iso);
     var rec = ctx.record || null;
-    var override = rec ? cleanPlan(rec.plan) : null;
+    // Noch nicht umgezogene Abweichung im Datensatz (bis 1.3) gilt, bis es eine neue gibt
+    var override = cleanPlan(ctx.override) || (rec ? cleanPlan(rec.plan) : null);
     var id;
     if (override) {
       out.source = "override";
@@ -212,7 +227,7 @@
 
   /**
    * Plan für einen Zeitraum, beide Grenzen inklusive.
-   *   ctx: { rota, templates, record(iso), holiday(iso) }
+   *   ctx: { rota, templates, override(iso), record(iso), holiday(iso) }
    * → [dayPlan + { iv: interval | null }]
    */
   function plan(from, to, ctx) {
@@ -223,11 +238,24 @@
       var e = dayPlan(iso, {
         rota: ctx.rota,
         templates: ctx.templates,
+        override: ctx.override ? ctx.override(iso) : null,
         record: ctx.record ? ctx.record(iso) : null,
         holiday: ctx.holiday ? ctx.holiday(iso) : null
       });
       e.iv = hasShift(e) ? interval(iso, e.tpl) : null;
       return e;
+    });
+  }
+
+  /** dayPlan direkt aus den Einstellungen: Rhythmus, Vorlagen und Abweichung des Tages. */
+  function dayPlanOf(settings, iso, record, holiday) {
+    var s = settings || {};
+    return dayPlan(iso, {
+      rota: s.rota,
+      templates: s.shiftTemplates || [],
+      override: overrideOf(s, iso),
+      record: record || null,
+      holiday: holiday || null
     });
   }
 
@@ -419,8 +447,8 @@
   var PLAIN_KEYS = { date: 1, plan: 1, updatedAt: 1, createdAt: 1 };
 
   /**
-   * Trägt der Datensatz ausser der Planung nichts? Dann darf er beim
-   * Zurücksetzen ganz weg — sonst bleibt ein leerer Tag liegen.
+   * Trägt der Datensatz ausser der Planung (bis 1.3) nichts? Dann darf er
+   * beim Umziehen der Abweichung ganz weg — sonst bliebe ein leerer Tag liegen.
    */
   function onlyPlan(rec) {
     if (!rec) return false;
@@ -442,7 +470,7 @@
    * wählt, braucht die Abweichung.
    *   target: Vorlagen-id | "free" | null (zurück zum Rhythmus)
    *   holiday: wahr, wenn `iso` ein Feiertag ist
-   * → Wert für rec.plan
+   * → Wert der Abweichung (null = keine)
    */
   function overrideFor(rota, iso, target, holiday) {
     var t = cleanPlan(target);
@@ -452,10 +480,85 @@
     return t;
   }
 
+  /* ==================================================================== */
+  /* Abweichungen in den Einstellungen                                     */
+  /* ==================================================================== */
+
+  function overrideKey(iso) { return OVERRIDE_PREFIX + iso; }
+
+  /** Datum eines Abweichungs-Schlüssels → iso | null */
+  function overrideDate(key) {
+    if (typeof key !== "string" || key.indexOf(OVERRIDE_PREFIX) !== 0) return null;
+    var iso = key.slice(OVERRIDE_PREFIX.length);
+    return T.isValidISO(iso) ? iso : null;
+  }
+
+  /** Abweichung für `iso` → Vorlagen-id | "free" | null */
+  function overrideOf(settings, iso) {
+    return settings ? cleanPlan(settings[OVERRIDE_PREFIX + iso]) : null;
+  }
+
+  /** Alle Abweichungen → { iso: Vorlagen-id | "free" } */
+  function overridesIn(settings) {
+    var out = {};
+    Object.keys(settings || {}).forEach(function (k) {
+      var iso = overrideDate(k);
+      var v = iso ? cleanPlan(settings[k]) : null;
+      if (v) out[iso] = v;
+    });
+    return out;
+  }
+
+  /**
+   * Einstellungs-Patch für eine Abweichung (value null = zurück zum
+   * Rhythmus). Räumt dabei Abweichungen weg, die mehr als 60 Tage vor
+   * `today` liegen — sie zeigt keine Ansicht mehr. undefined entfernt
+   * einen Schlüssel (Speichern, Zusammenführen und Rückgängig kennen das).
+   */
+  function overridePatch(settings, iso, value, today) {
+    var patch = {};
+    var oldest = T.isValidISO(today) ? T.addDays(today, -KEEP_OVERRIDES) : null;
+    Object.keys(settings || {}).forEach(function (k) {
+      var d = overrideDate(k);
+      if (d && oldest && d < oldest && settings[k] !== undefined) patch[k] = undefined;
+    });
+    var v = cleanPlan(value);
+    if (v) patch[overrideKey(iso)] = v;
+    else if (settings && settings[overrideKey(iso)] !== undefined) patch[overrideKey(iso)] = undefined;
+    return patch;
+  }
+
+  /**
+   * Abweichungen aus Tagesdatensätzen (bis 1.3: rec.plan) in die
+   * Einstellungen umziehen. Ein Datensatz, der nur die Planung trug, fällt
+   * weg; einer mit echtem Inhalt verliert nur das Feld `plan`.
+   *   opts: { today (ältere als 60 Tage ziehen nicht mehr um),
+   *           locked(iso) → wahr = Tag gesperrt (abgeschlossener Monat bleibt unberührt) }
+   * Eine schon gesetzte Abweichung in den Einstellungen geht vor.
+   * → { settings: Patch, days: { iso: null (löschen) | { plan: undefined } }, count }
+   */
+  function migrateRecords(days, settings, opts) {
+    opts = opts || {};
+    var oldest = T.isValidISO(opts.today) ? T.addDays(opts.today, -KEEP_OVERRIDES) : null;
+    var out = { settings: {}, days: {}, count: 0 };
+    Object.keys(days || {}).forEach(function (iso) {
+      var rec = days[iso];
+      if (!rec || rec.plan === undefined || !T.isValidISO(iso)) return;
+      if (opts.locked && opts.locked(iso)) return;
+      var value = cleanPlan(rec.plan);
+      if (value && (!oldest || iso >= oldest) && !overrideOf(settings, iso)) out.settings[overrideKey(iso)] = value;
+      out.days[iso] = onlyPlan(rec) ? null : { plan: undefined };
+      out.count++;
+    });
+    return out;
+  }
+
   return {
     MAX_CYCLE: MAX_CYCLE,
     FREE: FREE,
     DEFAULT_REST_HOURS: DEFAULT_REST_HOURS,
+    OVERRIDE_PREFIX: OVERRIDE_PREFIX,
+    KEEP_OVERRIDES: KEEP_OVERRIDES,
     PRESETS: PRESETS,
     normalize: normalize,
     isActive: isActive,
@@ -467,6 +570,7 @@
     interval: interval,
     isAbsence: isAbsence,
     dayPlan: dayPlan,
+    dayPlanOf: dayPlanOf,
     hasShift: hasShift,
     plan: plan,
     restConflicts: restConflicts,
@@ -481,6 +585,12 @@
     anchorForWeek: anchorForWeek,
     codes: codes,
     onlyPlan: onlyPlan,
-    overrideFor: overrideFor
+    overrideFor: overrideFor,
+    overrideKey: overrideKey,
+    overrideDate: overrideDate,
+    overrideOf: overrideOf,
+    overridesIn: overridesIn,
+    overridePatch: overridePatch,
+    migrateRecords: migrateRecords
   };
 });

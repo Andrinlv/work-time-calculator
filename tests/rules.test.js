@@ -71,7 +71,9 @@ test("weeklyTargetMinutes berücksichtigt das Pensum", () => {
   const s = R.defaultSettings();
   assert.equal(R.weeklyTargetMinutes(s), 2520);
   s.workloadPercent = 80;
-  assert.equal(R.weeklyTargetMinutes(s), 2016);
+  // Summe der je Tag gerundeten Sollzeiten (5 × 403) — wie Woche und Tage
+  assert.equal(R.weeklyTargetMinutes(s), 2015);
+  assert.equal(R.weeklyTargetMinutes(s), R.contractFor("2026-11-02", "2026-11-08", s).minutes);
 });
 
 test("Tagesarten tragen die richtige Wirkung", () => {
@@ -164,4 +166,32 @@ test("Standardeinstellungen sind vollständig und plausibel", () => {
   assert.equal(s.roundStep, 0);
   assert.ok(s.maxDailyMinutes > 0);
   assert.ok(s.minRestHours > 0);
+});
+
+/* ---------------------------------------------------------------------- */
+/* Einstellungen säubern                                                    */
+/* ---------------------------------------------------------------------- */
+
+test("sanitizeSettings: gültige Standardeinstellungen bleiben unverändert", () => {
+  const s = R.defaultSettings();
+  const copy = JSON.parse(JSON.stringify(s));
+  assert.deepEqual(R.sanitizeSettings(s), copy);
+  assert.equal(R.defaultSettings.sanitize, R.sanitizeSettings, "der Store findet den Prüfer an den Standardwerten");
+});
+
+test("sanitizeSettings: Schichtvorlagen nur als Objekte mit Kennung und Zeiten", () => {
+  const s = R.sanitizeSettings({ shiftTemplates: [null, 5, "x", [], { id: 7, start: "6:00", end: "14:30", breakStart: "zz", nameKey: 3 },
+    { id: "", start: "08:00", end: "17:00" }, { id: "a", start: "08:00" }, { id: "7", start: "07:00", end: "15:00" }] }, { partial: true });
+  assert.equal(s.shiftTemplates.length, 1, "doppelte Kennung zählt einmal");
+  assert.deepEqual(s.shiftTemplates[0], { id: "7", name: "", start: "6:00", end: "14:30", breakStart: "", breakEnd: "" });
+});
+
+test("sanitizeSettings: Einlesen verwirft Unbrauchbares, Laden setzt den Standard", () => {
+  const partial = R.sanitizeSettings({ theme: 5, roundStep: 7, workloadPercent: 90, x: "neu" }, { partial: true });
+  assert.deepEqual(partial, { workloadPercent: 90, x: "neu" });
+  const full = R.sanitizeSettings(Object.assign(R.defaultSettings(), { theme: 5, roundStep: 7, weeklyTargets: [0, 480, 480, 480, 480, 0, 0], workdays: null }));
+  assert.equal(full.theme, "auto");
+  assert.equal(full.roundStep, 0);
+  assert.deepEqual(full.workdays, [1, 2, 3, 4], "Arbeitstage aus den Sollzeiten abgeleitet");
+  assert.equal(R.sanitizeSettings(null).breakRuleset, "ch");
 });

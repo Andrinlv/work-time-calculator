@@ -248,6 +248,87 @@ test("Klick auf die Meldung selbst öffnet nur", () => {
   assert.deepEqual(BT.route("irgendwas", {}, { running: true }), { open: true });
 });
 
+/* Die Lage aus stale.js: Die Meldung stand noch in der Leiste, die App, die
+   sie gezeigt hatte, war längst ersetzt (Tab verworfen). Knopf → #/notify/…
+   oder Nachricht ans offene Fenster — beide laufen über route(). */
+const at = (h, m) => new Date(2026, 9, 16, h, m).getTime();
+
+test("Jüngste Stempelzeit eines Tages — auch nach Mitternacht und mit offener Pause", () => {
+  assert.equal(BT.stampedAt(FR, { start: "07:42", end: "17:00", breaks: [LUNCH] }), at(17, 0));
+  assert.equal(BT.stampedAt(FR, { start: "07:42", end: "", breaks: [LUNCH, COFFEE] }), at(14, 10), "offene Pause zählt mit ihrem Beginn");
+  assert.equal(BT.stampedAt(FR, { start: "07:42", end: "", breaks: [] }), at(7, 42));
+  assert.equal(BT.stampedAt(FR, { start: "22:00", end: "", breaks: [{ start: "02:10", end: "02:40" }] }), at(26, 40), "Nachtschicht: 02:40 am Folgetag");
+  assert.equal(BT.stampedAt(FR, { start: "", end: "", breaks: [] }), 0);
+  assert.equal(BT.stampedAt(FR, null), 0);
+  assert.equal(BT.stampedAt("kein-datum", { start: "07:00" }), 0);
+});
+
+test("Alte Meldung ohne offenes Fenster: stempelt nie, wenn sich der Tag seither geändert hat", () => {
+  const leave = { kind: "leave", date: FR, at: at(16, 50), link: true };
+  // 17:00 gegangen, um 18:30 auf „Gehen stempeln“ getippt — darf Gehen nicht verschieben
+  assert.deepEqual(BT.route("stamp-out", leave, { date: FR, running: false, now: at(18, 30), changedAt: at(17, 0) }), { skip: "notRunning" });
+  // Pause schon vorbei, „Pause beenden“ getippt — darf keine neue Pause beginnen
+  const brk = { kind: "break", date: FR, at: at(12, 35), link: true };
+  assert.deepEqual(BT.route("end-break", brk, { date: FR, running: true, onBreak: false, now: at(14, 23), changedAt: at(12, 40) }), { skip: "noBreak" });
+  // Pause beendet und eine neue begonnen: der alte Knopf meint die alte Pause
+  assert.deepEqual(BT.route("end-break", brk, { date: FR, running: true, onBreak: true, now: at(14, 23), changedAt: at(14, 10) }), { skip: "stale" });
+  // „Pause starten“, die Pause ist inzwischen genommen
+  const due = { kind: "breakDue", date: FR, at: at(11, 50), link: true };
+  assert.deepEqual(BT.route("start-break", due, { date: FR, running: true, onBreak: false, now: at(13, 0), changedAt: at(12, 40) }), { skip: "stale" });
+  // Nach Feierabend gestempelt: notRunning
+  assert.deepEqual(BT.route("start-break", due, { date: FR, running: false, now: at(18, 30), changedAt: at(17, 0) }), { skip: "notRunning" });
+});
+
+test("Frische Meldung: der Knopf stempelt — mit und ohne offenes Fenster", () => {
+  const leave = { kind: "leave", date: FR, at: at(16, 50) };
+  const state = { date: FR, running: true, onBreak: false, now: at(16, 55), changedAt: at(12, 40) };
+  assert.deepEqual(BT.route("stamp-out", leave, state), { stamp: "out" });
+  assert.deepEqual(BT.route("stamp-out", Object.assign({ link: true }, leave), state), { stamp: "out" });
+  const brk = { kind: "break", date: FR, at: at(14, 25), link: true };
+  assert.deepEqual(BT.route("end-break", brk, { date: FR, running: true, onBreak: true, now: at(14, 30), changedAt: at(14, 10) }), { stamp: "break" });
+  // Gleiche Minute: eine im Sekundenbruchteil vorher gestempelte Pause macht die Meldung nicht alt
+  assert.deepEqual(BT.route("stamp-out", { date: FR, at: at(14, 10) + 30000 }, { date: FR, running: true, now: at(14, 11), changedAt: at(14, 10) }), { stamp: "out" });
+});
+
+test("Zu alte, verstellte oder unvollständige Meldung stempelt nicht", () => {
+  const working = { date: FR, running: true, onBreak: false, now: at(18, 0), changedAt: at(7, 42) };
+  const H6 = BT.NOTICE_FRESH_MS;
+  assert.equal(H6, 6 * 3600 * 1000);
+  assert.deepEqual(BT.route("stamp-out", { date: FR, at: working.now - H6 - 1000 }, working), { skip: "stale" }, "älter als 6 h");
+  assert.deepEqual(BT.route("stamp-out", { date: FR, at: working.now - H6 + 60000 }, working), { stamp: "out" }, "knapp unter 6 h");
+  assert.deepEqual(BT.route("stamp-out", { date: FR, at: working.now + 5 * 60000 }, working), { skip: "stale" }, "aus der Zukunft");
+  assert.deepEqual(BT.route("stamp-out", { date: "2026-10-15", at: working.now - 60000, link: true }, working), { skip: "stale" }, "anderer Tag");
+  // Der Link muss Tag und Zeitpunkt tragen — sonst wäre er ein Direktlink
+  assert.deepEqual(BT.route("stamp-out", { date: FR, at: 0, link: true }, working), { skip: "stale" });
+  assert.deepEqual(BT.route("stamp-out", { date: "", at: working.now, link: true }, working), { skip: "stale" });
+  assert.deepEqual(BT.route("", { link: true }, working), { open: true }, "Klick auf den Text öffnet nur");
+});
+
+test("Meldungen, deren Anlass vorbei ist, gehören aus der Leiste", () => {
+  const T6 = BT.TAGS;
+  const base = { date: FR, running: true, onBreak: false, breakDue: true, now: at(14, 23), changedAt: at(12, 40) };
+  const fresh = { date: FR, at: at(14, 0) };
+  // Alles passt noch: nichts schliessen
+  assert.equal(BT.staleNotice(T6.leave, fresh, base), false);
+  assert.equal(BT.staleNotice(T6.breakDue, fresh, base), false);
+  assert.equal(BT.staleNotice(T6["break"], fresh, Object.assign({}, base, { onBreak: true, breakDue: false })), false);
+  // Gegangen: alle drei weg
+  const off = Object.assign({}, base, { running: false, breakDue: false });
+  for (const tag of [T6.leave, T6["break"], T6.breakDue]) assert.equal(BT.staleNotice(tag, fresh, off), true, tag);
+  // Pause beendet / Pause genommen / gerade in der Pause
+  assert.equal(BT.staleNotice(T6["break"], fresh, base), true, "keine offene Pause mehr");
+  assert.equal(BT.staleNotice(T6.breakDue, fresh, Object.assign({}, base, { breakDue: false })), true, "Pflichtpause erfasst");
+  assert.equal(BT.staleNotice(T6.breakDue, fresh, Object.assign({}, base, { onBreak: true })), true, "Pause läuft schon");
+  // Seither gestempelt, anderer Tag, zu alt
+  assert.equal(BT.staleNotice(T6.leave, fresh, Object.assign({}, base, { changedAt: at(14, 10) })), true);
+  assert.equal(BT.staleNotice(T6.leave, { date: "2026-10-15", at: at(14, 0) }, base), true);
+  assert.equal(BT.staleNotice(T6.leave, { date: FR, at: at(7, 0) }, Object.assign({}, base, { changedAt: 0 })), true);
+  // Fremde Meldungen (Probe) bleiben, Meldungen ohne Daten nur nach dem Stand
+  assert.equal(BT.staleNotice("zeitkonto-test", {}, off), false);
+  assert.equal(BT.staleNotice(T6.leave, undefined, base), false);
+  assert.equal(BT.staleNotice(T6.leave, undefined, off), true);
+});
+
 /* ---------------------------------------------------------------------- */
 /* Palette                                                                 */
 /* ---------------------------------------------------------------------- */
@@ -305,7 +386,7 @@ test("Jeder benutzte Text existiert — in der Funktion und in den Erinnerungen 
 
 test("Eingebunden nach „Heute“ (TodayState) und vor app.js, im Offline-Cache", () => {
   const html = fs.readFileSync(path.join(__dirname, "../index.html"), "utf8");
-  const at = (f) => html.indexOf('src="assets/js/' + f + '"');
+  const at = (f) => html.search(new RegExp('src="assets/js/' + f.replace(/\./g, "\\.") + '(\\?v=[^"]*)?"'));
   assert.ok(at("ui/features/breaktimer.js") > at("ui/views/today.js"));
   assert.ok(at("ui/features/breaktimer.js") > at("ui/ext.js"));
   assert.ok(at("ui/features/breaktimer.js") < at("ui/app.js"));

@@ -340,7 +340,7 @@
   /** Monatscheck wie in „Werkzeuge“ — plus laufende Tage. */
   function monthCheck(App, month) {
     var range = monthRange(App, month);
-    var since = C.auditSince(App.store.allDays(), App.settings());
+    var since = C.auditSince(App.store.allDays(), App.settings(), App.store.getMeta ? App.store.getMeta() : null);
     return { range: range, check: C.check(range.days, T.todayISO(), since || T.todayISO()) };
   }
 

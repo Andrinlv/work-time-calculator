@@ -5,27 +5,34 @@
    die kleinen Hinweise auf „Heute“. Gerechnet wird ausschliesslich mit der
    Engine und mit denselben Definitionen wie in der Statistik — eine Zahl
    im Rückblick darf nie anders lauten als dort:
-     · Netto, gearbeitete Tage, Ø pro Tag, frühester Beginn, spätester
-       Feierabend und längster Tag: computeRange() vom 1.1. bis heute
-       (vergangene Jahre bis 31.12.), wie „Statistik · Jahr“
+     · Netto, gearbeitete Tage, Ø pro Tag, Ø Beginn und Feierabend
+       (Engine.clockAverages: ohne Nachtschichten, keine bei wechselnden
+       Schichten), frühester Beginn, spätester Feierabend und längster
+       Tag: computeRange() vom 1.1. bis heute (vergangene Jahre bis
+       31.12.), wie „Statistik · Jahr“
+     · Lieblingstag: Insights.weekdayProfile, wie „deine längsten Tage“
+       in den Erkenntnissen
      · erfasste Tage: nur Tage mit eigenem Eintrag (ein automatischer
        Feiertag ist keine Erfassung)
      · Ferientage: quotaUsage().vacationTaken („bezogen“ im Kontingent)
      · Zeitkonto: accountBalance() abgerechnet — ein laufender Tag zählt
-       nicht, wie in Kopfzeile und Statistik
+       nicht, abgeschlossene Monate zählen eingefroren (ZK.Closing), wie in
+       Kopfzeile und Statistik; Monatssaldi ebenso
      · Serie: wie bei den Erfolgen — Arbeitstage mit Erfassung; freie Tage
        und Feiertage ohne Eintrag unterbrechen nicht
    Krankheitstage stehen bewusst nirgends: Ein Rückblick zum Teilen soll
    nichts Persönliches über die Gesundheit erzählen.
    ========================================================================== */
 (function (root, factory) {
+  /* Den Monatsabschluss erst beim Rechnen holen: closing.js lädt nach dieser Datei */
   if (typeof module === "object" && module.exports) {
-    module.exports = factory(require("./time.js"), require("./rules.js"), require("./engine.js"), require("./planner.js"));
+    module.exports = factory(require("./time.js"), require("./rules.js"), require("./engine.js"), require("./planner.js"),
+      function () { return require("./closing.js"); }, require("./insights.js"));
   } else {
     root.ZK = root.ZK || {};
-    root.ZK.Review = factory(root.ZK.Time, root.ZK.Rules, root.ZK.Engine, root.ZK.Planner);
+    root.ZK.Review = factory(root.ZK.Time, root.ZK.Rules, root.ZK.Engine, root.ZK.Planner, function () { return root.ZK.Closing; }, root.ZK.Insights);
   }
-})(typeof self !== "undefined" ? self : globalThis, function (T, R, E, P) {
+})(typeof self !== "undefined" ? self : globalThis, function (T, R, E, P, closing, X) {
   "use strict";
 
   /* Ab so vielen erfassten Tagen lohnt sich ein Rückblick. */
@@ -44,6 +51,24 @@
   /* ------------------------------------------------------------------ */
 
   function todayOf(now) { return T.todayISO(now); }
+
+  /* Abgeschlossene Monate zählen eingefroren — wie Kopfzeile, Kalender und
+     Statistik (ZK.Closing). Ohne closing.js rechnet die Engine allein. */
+  function closingOf() {
+    var C = closing ? closing() : null;
+    return C && C.accountBalance ? C : null;
+  }
+
+  function accountOf(records, s, upto, now) {
+    var C = closingOf();
+    return (C ? C.accountBalance : E.accountBalance)(records, s, upto, now).minutes;
+  }
+
+  /** Saldo eines Zeitraums aus der Summe der Tagessaldi (`live`). */
+  function periodOf(records, s, from, to, live, now) {
+    var C = closingOf();
+    return C && C.periodBalance ? C.periodBalance(records, s, from, to, live, now) : live;
+  }
 
   /** Jeder Tag höchstens einmal gerechnet (Serien, Brücken, Momente). */
   function dayMemo(records, s, now) {
@@ -232,7 +257,7 @@
       longest: null,        // { minutes, date }
       earlyStarts: 0,       // Beginn vor 07:00
       lateEnds: 0,          // Feierabend ab 19:00 (auch am Folgetag)
-      weekdays: [],         // 0 = So … 6 = Sa: { weekday, count, total, avg }
+      weekdays: [],         // 0 = So … 6 = Sa: { weekday, count, total, avg } — volle Arbeitstage
       favoriteWeekday: null,
       shortestWeekday: null,
       months: [],           // 0 … 11: { month, net, credited, value, target, balance, days, future }
@@ -277,9 +302,6 @@
       if (!(r.net > 0)) return;
 
       mo.days++;
-      var wd = st.weekdays[r.weekday];
-      wd.count++;
-      wd.total += r.net;
       // Gleiche Reihenfolge wie Engine/Statistik: der erste Tag gewinnt bei Gleichstand
       if (!st.longest || r.net > st.longest.minutes) st.longest = { minutes: r.net, date: r.date };
       if (r.startTod !== null && (!st.earliest || r.startTod < st.earliest.minutes)) st.earliest = { minutes: r.startTod, date: r.date };
@@ -292,25 +314,23 @@
     });
     st.empty = st.recordedDays === 0;
 
-    /* Wochentage: Ø netto wie „Durchschnitt nach Wochentag“. Ein einzelner
-       Samstagseinsatz soll weder Lieblings- noch kürzester Tag werden —
-       nur Wochentage mit genug Tagen kommen in Frage. */
-    var maxCount = 0;
+    /* Wochentage: Ø netto voller Arbeitstage — dieselbe Grundlage wie
+       „deine längsten Tage“ in den Erkenntnissen. Ein Samstagseinsatz, ein
+       halber Ferientag oder ein Kurstag soll weder Lieblings- noch
+       kürzester Tag werden; nur Wochentage mit genug Tagen kommen in Frage. */
+    var profile = X.weekdayProfile(range.days);
     st.weekdays.forEach(function (w) {
-      w.avg = w.count ? Math.round(w.total / w.count) : 0;
-      if (w.count > maxCount) maxCount = w.count;
+      var p = profile.days[w.weekday];
+      w.count = p.count;
+      w.total = p.total;
+      w.avg = p.avg;
     });
-    var minCount = Math.max(3, Math.ceil(maxCount / 4));
-    var eligible = st.weekdays.filter(function (w) { return w.count >= minCount; });
-    // Montag zuerst, damit Gleichstände nicht am Sonntag hängen bleiben
-    eligible.sort(function (a, b) { return ((a.weekday + 6) % 7) - ((b.weekday + 6) % 7); });
-    eligible.forEach(function (w) {
-      if (!st.favoriteWeekday || w.avg > st.favoriteWeekday.avg) st.favoriteWeekday = w;
-      if (!st.shortestWeekday || w.avg < st.shortestWeekday.avg) st.shortestWeekday = w;
-    });
-    if (eligible.length < 2) st.shortestWeekday = null;
+    st.favoriteWeekday = profile.top === null ? null : st.weekdays[profile.top];
+    st.shortestWeekday = profile.bottom === null ? null : st.weekdays[profile.bottom];
 
     st.months.forEach(function (mo) {
+      var first = year + "-" + (mo.month < 9 ? "0" : "") + (mo.month + 1) + "-01";
+      if (!mo.future) mo.balance = periodOf(records, s, first, T.endOfMonth(first), mo.balance, now);
       mo.value = mo.net + mo.credited;
       if (mo.net > 0 && (!st.busiestMonth || mo.net > st.busiestMonth.net)) st.busiestMonth = mo;
     });
@@ -332,8 +352,8 @@
     st.bridge = bestBridge(day, year, today);
 
     /* Zeitkonto: abgerechnet am Jahresende (bzw. heute) und am Vorjahresende */
-    st.balanceEnd = E.accountBalance(records, s, until, now).minutes;
-    st.balanceStart = E.accountBalance(records, s, (year - 1) + "-12-31", now).minutes;
+    st.balanceEnd = accountOf(records, s, until, now);
+    st.balanceStart = accountOf(records, s, (year - 1) + "-12-31", now);
     st.balanceDelta = st.balanceEnd - st.balanceStart;
     st.balanceDays = st.dayTarget > 0 ? Math.floor(Math.abs(st.balanceEnd) / st.dayTarget * 2) / 2 : 0;
 
@@ -458,7 +478,8 @@
     var range = E.computeRange(prevStart, prevEnd, function (iso) { return records[iso]; }, s, now);
     var own = range.days.filter(function (r) { return r.recorded && records[r.date]; }).length;
     if (!own) return null;
-    return { kind: "month", key: "mo:" + T.monthKey(today), vars: { month: prevStart, balance: range.totals.balance } };
+    var balance = periodOf(records, s, prevStart, prevEnd, range.totals.balance, now);
+    return { kind: "month", key: "mo:" + T.monthKey(today), vars: { month: prevStart, balance: balance } };
   }
 
   var MOMENT_ORDER = ["record", "vacation", "weekend", "bridge", "month"];

@@ -20,6 +20,39 @@
 
   var DOW_DE = ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"];
 
+  /* Texte von Textzusammenfassung und Kalenderdatei. Deutsch, solange die
+     Oberfläche nichts anderes mitgibt (opts.text, gleiche Schlüssel). */
+  var TEXT_DE = {
+    title: "ZEITKONTO · {from} bis {to}",
+    net: "Netto",
+    target: "Soll",
+    actual: "Ist",
+    balance: "Saldo",
+    breaks: "Pausen",
+    days: "Tage",
+    daysLine: "{recorded} erfasst · {worked} gearbeitet",
+    netOf: "{v} netto"
+  };
+
+  function textOf(opts) {
+    var out = {};
+    var own = (opts && opts.text) || {};
+    Object.keys(TEXT_DE).forEach(function (k) { out[k] = own[k] ? String(own[k]) : TEXT_DE[k]; });
+    return out;
+  }
+
+  function fill(s, vars) {
+    return String(s).replace(/\{(\w+)\}/g, function (m, k) {
+      return vars[k] === undefined || vars[k] === null ? m : String(vars[k]);
+    });
+  }
+
+  /** Feiertagsname in der Sprache der Oberfläche (opts.lang), sonst Deutsch. */
+  function holidayName(h, lang) {
+    if (!h) return "";
+    return (lang && h.names && h.names[lang]) || h.name || "";
+  }
+
   /* ------------------------------------------------------------------ */
   /* CSV                                                                 */
   /* ------------------------------------------------------------------ */
@@ -49,7 +82,9 @@
     return s;
   }
 
-  /** Gegenstück zu csvCell: den Schutz-Apostroph wieder entfernen. */
+  /** Gegenstück zu csvCell: den Schutz-Apostroph wieder entfernen.
+      Gilt für jede Textzelle — auch Kommen, Gehen und Pausenzeiten, die
+      aus einer eingelesenen Sicherung beliebigen Text tragen können. */
   function unescapeText(s) {
     return FORMULA_START.test(s) && s.charAt(0) === "'" ? s.slice(1) : s;
   }
@@ -76,9 +111,15 @@
    *   headers         Spalten-ID -> Überschrift (sonst Deutsch, siehe CSV_COLUMNS)
    *   weekdays        7 Kurznamen ab Sonntag (sonst Deutsch)
    *   locationLabels  Ort -> Bezeichnung (sonst der Schlüssel)
-   *   hintLabels      Hinweis-Code -> Text (sonst der Code)
+   *   hintLabels      Hinweis-Code -> kurzer Text (sonst der Code); mehrere
+   *                   Hinweise eines Tages stehen mit „ · “ getrennt
+   *   lang            Sprache der Feiertagsnamen (sonst Deutsch)
    *   getRecord       (iso) => gespeicherter Tag; liefert Pausen samt bezahlten
    * }
+   * Jede Zelle, die Text aus Eingaben oder Bezeichnungen trägt, wird gegen
+   * Formeln geschützt („'=…“) — auch Kommen, Gehen und Pausenzeiten: Eine
+   * eingelesene Sicherung kann dort beliebigen Text ablegen. Der Import
+   * entfernt den Apostroph wieder.
    */
   function toCSV(dayResults, opts) {
     opts = opts || {};
@@ -105,8 +146,8 @@
         [r.isoWeek],
         [labels[r.type] || r.type, true],
         [locLabels[r.location] || r.location || "", true],
-        [r.start || ""],
-        [r.end || ""],
+        [r.start || "", true],
+        [r.end || "", true],
         [T.formatDuration(r.presence, "clock")],
         [r.breakTotal],
         [r.requiredBreak],
@@ -117,17 +158,30 @@
         [T.formatDuration(r.credited, "clock")],
         [T.formatSigned(r.balance, "clock")],
         [r.balance],
-        [r.holiday ? r.holiday.name : "", true],
+        [holidayName(r.holiday, opts.lang), true],
         [r.note || "", true],
-        [r.warnings.map(function (w) { return hintLabels[w.code] || w.code; }).join(" "), true],
+        [hintsOf(r.warnings, hintLabels), true],
         [credits && r.absenceFactor !== undefined ? percent(r.absenceFactor) : ""],
-        [r.start ? formatBreakTimes(breakList) : ""]
+        [r.start ? formatBreakTimes(breakList) : "", true]
       ];
       lines.push(row.map(function (c) { return csvCell(c[0], d, c[1]); }).join(d));
     });
 
     var body = lines.join("\r\n");
     return (opts.bom === false ? "" : "﻿") + body;
+  }
+
+  /** Hinweise eines Tages lesbar: „Pflichtpause ergänzt · Ruhezeit zu kurz“ (jeder Text einmal). */
+  function hintsOf(warnings, hintLabels) {
+    var seen = {};
+    var out = [];
+    (warnings || []).forEach(function (w) {
+      var text = Object.prototype.hasOwnProperty.call(hintLabels, w.code) && hintLabels[w.code] ? String(hintLabels[w.code]) : w.code;
+      if (seen[text]) return;
+      seen[text] = true;
+      out.push(text);
+    });
+    return out.join(" · ");
   }
 
   /* ------------------------------------------------------------------ */
@@ -158,10 +212,14 @@
 
   function icsDate(iso) { return String(iso).replace(/-/g, ""); }
 
-  /** Kalenderdatei: Arbeitsblöcke als Termine, Abwesenheiten als Ganztages-Einträge. */
+  /**
+   * Kalenderdatei: Arbeitsblöcke als Termine, Abwesenheiten als Ganztages-Einträge.
+   * opts: { labels, calendarName, text (siehe TEXT_DE) }
+   */
   function toICS(dayResults, opts) {
     opts = opts || {};
     var labels = opts.labels || {};
+    var tx = textOf(opts);
     var now = new Date();
     var stamp = now.getUTCFullYear() + T.pad2(now.getUTCMonth() + 1) + T.pad2(now.getUTCDate()) +
       "T" + T.pad2(now.getUTCHours()) + T.pad2(now.getUTCMinutes()) + T.pad2(now.getUTCSeconds()) + "Z";
@@ -188,12 +246,12 @@
           "DTSTAMP:" + stamp,
           "DTSTART:" + icsStamp(r.date, r.startTl),
           "DTEND:" + icsStamp(r.date, r.endTl),
-          "SUMMARY:" + icsEscape((labels[r.type] || r.type) + " · " + T.formatDuration(r.net, "clock") + " netto"),
+          "SUMMARY:" + icsEscape((labels[r.type] || r.type) + " · " + fill(tx.netOf, { v: T.formatDuration(r.net, "clock") })),
           "DESCRIPTION:" + icsEscape(
-            "Netto " + T.formatDuration(r.net, "clock") +
-            " · Soll " + T.formatDuration(r.target, "clock") +
-            " · Saldo " + T.formatSigned(r.balance, "clock") +
-            " · Pausen " + r.breakTotal + " min" +
+            tx.net + " " + T.formatDuration(r.net, "clock") +
+            " · " + tx.target + " " + T.formatDuration(r.target, "clock") +
+            " · " + tx.balance + " " + T.formatSigned(r.balance, "clock") +
+            " · " + tx.breaks + " " + r.breakTotal + " min" +
             (r.note ? "\n" + r.note : "")
           ),
           "CATEGORIES:" + icsEscape(labels[r.type] || r.type),
@@ -258,28 +316,38 @@
   /* Textzusammenfassung                                                 */
   /* ------------------------------------------------------------------ */
 
+  /**
+   * Textzusammenfassung zum Kopieren.
+   * opts: { labels, weekdays (7 Kurznamen ab Sonntag), text (siehe TEXT_DE),
+   *         formatDate(iso) für Titel und Zeilen — sonst ISO }
+   */
   function toText(range, opts) {
     opts = opts || {};
     var labels = opts.labels || {};
+    var weekdays = opts.weekdays || DOW_DE;
+    var tx = textOf(opts);
+    var date = typeof opts.formatDate === "function" ? opts.formatDate : function (iso) { return iso; };
     var t = range.totals;
     var lines = [];
-    lines.push("ZEITKONTO · " + range.from + " bis " + range.to);
+    lines.push(fill(tx.title, { from: date(range.from), to: date(range.to) }));
     lines.push("".padEnd(46, "-"));
     range.days.forEach(function (r) {
       if (!r.recorded) return;
       lines.push(
-        r.date + "  " + DOW_DE[r.weekday] + "  " +
+        date(r.date) + "  " + weekdays[r.weekday] + "  " +
         (r.start || "--:--") + "–" + (r.end || "--:--") + "  " +
-        "Netto " + pad(T.formatDuration(r.net, "clock"), 6) +
-        "  Saldo " + pad(T.formatSigned(r.balance, "clock"), 7) +
+        tx.net + " " + pad(T.formatDuration(r.net, "clock"), 6) +
+        "  " + tx.balance + " " + pad(T.formatSigned(r.balance, "clock"), 7) +
         (r.type !== "work" ? "  [" + (labels[r.type] || r.type) + "]" : "")
       );
     });
     lines.push("".padEnd(46, "-"));
-    lines.push("Soll     " + T.formatDuration(t.target, "clock"));
-    lines.push("Ist      " + T.formatDuration(t.net + t.credited, "clock"));
-    lines.push("Saldo    " + T.formatSigned(t.balance, "clock"));
-    lines.push("Tage     " + t.recordedDays + " erfasst · " + t.workedDays + " gearbeitet");
+    // Bezeichnungen bündig — „Soll“ ist kürzer als „Temps dû“
+    var width = Math.max(8, tx.target.length, tx.actual.length, tx.balance.length, tx.days.length) + 1;
+    lines.push(pad(tx.target, width) + T.formatDuration(t.target, "clock"));
+    lines.push(pad(tx.actual, width) + T.formatDuration(t.net + t.credited, "clock"));
+    lines.push(pad(tx.balance, width) + T.formatSigned(t.balance, "clock"));
+    lines.push(pad(tx.days, width) + fill(tx.daysLine, { recorded: t.recordedDays, worked: t.workedDays }));
     return lines.join("\n");
   }
 
@@ -465,8 +533,8 @@
       var iso = normalizeDate(cell(cells, "date"));
       if (!iso) continue;
       var row = { date: iso, breaks: [] };
-      var start = cell(cells, "start").trim();
-      var end = cell(cells, "end").trim();
+      var start = unescapeText(cell(cells, "start").trim());
+      var end = unescapeText(cell(cells, "end").trim());
       if (start) { var st = T.parseHHMM(start); if (st !== null) row.start = T.formatHHMM(st); }
       if (end) { var en = T.parseHHMM(end); if (en !== null) row.end = T.formatHHMM(en); }
       var note = cell(cells, "note");
@@ -479,7 +547,7 @@
       if (factor !== null) row.factor = factor;
       var mins = parseBreakMinutes(cell(cells, "brk"), idx.brkUnit);
       if (mins) row.breakMinutes = mins;
-      if (idx.breakTimes >= 0) row.breakTimes = parseBreakTimes(cell(cells, "breakTimes"));
+      if (idx.breakTimes >= 0) row.breakTimes = parseBreakTimes(unescapeText(cell(cells, "breakTimes").trim()));
       rows.push(row);
     }
     return { rows: rows, delimiter: delim, columns: idx };
@@ -642,6 +710,7 @@
 
   return {
     CSV_COLUMNS: CSV_COLUMNS,
+    TEXT_DE: TEXT_DE,
     toCSV: toCSV,
     toICS: toICS,
     toText: toText,

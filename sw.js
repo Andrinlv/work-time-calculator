@@ -13,17 +13,23 @@
        Seite steuert. Nach einem Deploy läuft der erste Aufruf deshalb noch
        komplett mit der alten Version, nie mit neuem HTML und alten Skripten.
        Das Netz springt nur ein, wenn eine Datei im Cache fehlt.
+     · index.html bindet jede Datei mit ?v=<Version> ein. Ältere
+       Serviceworker (1.0–1.2) liefern Dateien aus ihrem Cache, die Seite
+       aber vom Netz — mit der Versionsangabe finden sie die neuen Dateien
+       nicht in ihrem Cache und holen sie ebenfalls vom Netz. So läuft auch
+       der erste Aufruf nach dem Update auf 1.3 aus einem Guss.
      · Im Hintergrund prüft der Browser auf eine neue Version. Sie installiert
        sich, übernimmt, und die App lädt beim nächsten Verlassen still neu
        (App.updateReady) — dann vollständig in der neuen Version.
      · Fremde Hosts werden nicht angefasst.
 
-   CACHE_VERSION bei jedem Release erhöhen (tests/sw.test.js prüft, dass sie
-   zur App-Version passt) — sonst bleibt die alte Version im Cache stehen.
+   CACHE_VERSION und die ?v= in index.html bei jedem Release erhöhen
+   (tests/sw.test.js prüft, dass beide zur App-Version passen) — sonst
+   bleibt die alte Version im Cache stehen.
    ========================================================================== */
 "use strict";
 
-const CACHE_VERSION = "zeitkonto-v1.2.0";
+const CACHE_VERSION = "zeitkonto-v1.3.0";
 const SHELL = [
   "./",
   "./index.html",
@@ -98,11 +104,12 @@ function absolute(url) {
 /**
  * Alle lokalen Skripte und Stylesheets, die index.html einbindet — so
  * gelangt auch eine neu hinzugekommene Datei in den Cache, wenn sie in
- * SHELL vergessen wurde.
+ * SHELL vergessen wurde. Die Versionsangabe (?v=…) fällt weg: abgelegt
+ * wird jede Datei einmal, unter ihrem Pfad.
  */
 function referencedAssets(html) {
   const out = [];
-  const re = /\s(?:src|href)="(?:\.\/)?(assets\/[^"?#]+)"/g;
+  const re = /\s(?:src|href)="(?:\.\/)?(assets\/[^"?#]+)(?:[?#][^"]*)?"/g;
   let m;
   while ((m = re.exec(html))) out.push("./" + m[1]);
   return out;
@@ -166,10 +173,25 @@ self.addEventListener("activate", (event) => {
 
 /* ---------------------------------------------------------------------- */
 
+const VERSION = CACHE_VERSION.replace(/^zeitkonto-v/, "");
+
+/**
+ * Verlangt die Seite ausdrücklich eine andere Version (index.html bindet
+ * jede Datei mit ?v=<Version> ein), gehört die Datei nicht in diesen Cache.
+ */
+function otherVersion(url) {
+  const v = new URL(url, self.location.href).searchParams.get("v");
+  return v !== null && v !== VERSION;
+}
+
 /** Nur im Cache DIESER Version suchen — nie in dem einer anderen. */
 function fromCache(request) {
+  const url = typeof request === "string" ? request : request.url;
   return caches.open(CACHE_VERSION).then((cache) =>
-    cache.match(request).then((hit) => hit || cache.match(request, { ignoreSearch: true }))
+    cache.match(request).then((hit) => {
+      if (hit || otherVersion(url)) return hit;
+      return cache.match(request, { ignoreSearch: true });
+    })
   ).catch(() => undefined);
 }
 
@@ -243,22 +265,28 @@ self.addEventListener("message", (event) => {
 /* ---------------------------------------------------------------------- */
 /* Ohne Push-Server zeigt nur die offene App Benachrichtigungen an. Ein
    Klick holt sie nach vorne und meldet die gewählte Aktion; die App prüft
-   dann, ob sie noch passt (Pause schon beendet? anderer Tag?). Ist kein
-   Fenster mehr offen, öffnen die ausdrücklichen Stempel-Knöpfe einen
-   Direktlink (#/stamp/…) — der stempelt sofort, deshalb nur für Knöpfe und
-   nur, solange die Meldung frisch ist. Ein Klick auf die Meldung selbst
+   dann, ob sie noch passt (anderer Tag? Pause schon beendet? seither
+   gestempelt? zu alt?). Ist kein Fenster mehr offen — etwa weil Android
+   den Tab verworfen hat —, öffnen die Stempel-Knöpfe die App mit einem
+   geprüften Link (#/notify/<Knopf>/<Tag>/<Zeitpunkt der Meldung>): Die App
+   prüft ihn genauso und zeigt sonst nur den Tag mit einem Hinweis. Nie die
+   Direktlinks #/stamp/… — die stempeln ohne Rückfrage, eine Meldung aus
+   der Leiste kann aber Stunden alt sein. Ein Klick auf die Meldung selbst
    öffnet bloss „Heute“, „+15 min“ wird dem neuen Fenster nachgereicht. */
-const STAMP_LINKS = { "stamp-out": "#/stamp/out", "end-break": "#/stamp/break", "start-break": "#/stamp/break" };
-const NOTICE_FRESH_MS = 6 * 60 * 60 * 1000;
+const NOTICE_ACTIONS = ["stamp-out", "end-break", "start-break"];
 
-function noticeLink(action, data, now) {
-  const at = data && typeof data.at === "number" ? data.at : 0;
-  const fresh = at > 0 && now - at <= NOTICE_FRESH_MS && now >= at - 60000;
-  return STAMP_LINKS[action] && fresh ? STAMP_LINKS[action] : "#/today";
+function noticeLink(action, data) {
+  const at = data && typeof data.at === "number" && isFinite(data.at) && data.at > 0 ? Math.round(data.at) : 0;
+  const date = data && /^\d{4}-\d{2}-\d{2}$/.test(String(data.date || "")) ? data.date : "";
+  if (NOTICE_ACTIONS.indexOf(action) < 0 || !at || !date) return "#/today";
+  return "#/notify/" + action + "/" + date + "/" + at;
 }
 
 function handleNoticeClick(action, data) {
-  const msg = { type: "notification-action", action: action, kind: data.kind || "", date: data.date || "" };
+  const msg = {
+    type: "notification-action", action: action, kind: data.kind || "", date: data.date || "",
+    at: typeof data.at === "number" ? data.at : 0
+  };
   const scope = self.registration.scope;
   return self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((list) => {
     // Nur Fenster dieser App — auf github.io teilen sich Projekte den Ursprung
@@ -271,7 +299,7 @@ function handleNoticeClick(action, data) {
       return client.focus().then((c) => (c || client).postMessage(msg), () => client.postMessage(msg));
     }
     if (!self.clients.openWindow) return;
-    const url = new URL("./index.html" + noticeLink(action, data, Date.now()), scope).href;
+    const url = new URL("./index.html" + noticeLink(action, data), scope).href;
     return self.clients.openWindow(url).then((c) => {
       if (c && action === "snooze") c.postMessage(msg);
     });
